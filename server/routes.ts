@@ -379,6 +379,178 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Parts Catalog Routes (Customer-facing)
+  app.get('/api/v1/parts/categories', async (req, res) => {
+    try {
+      const categories = await storage.getPartsCategories(true);
+      res.json(categories);
+    } catch (error) {
+      console.error('Error fetching parts categories:', error);
+      res.status(500).json({ message: 'Failed to fetch parts categories' });
+    }
+  });
+
+  app.get('/api/v1/parts', async (req, res) => {
+    try {
+      const { category, sortBy, priceRange, inStock, search } = req.query;
+      
+      // Get parts with filters
+      let parts = await storage.getParts({
+        categoryId: category as string,
+        isActive: true
+      });
+
+      // Filter by stock availability
+      if (inStock === 'true') {
+        parts = parts.filter(part => (part.stock || 0) > 0);
+      }
+
+      // Apply search filtering
+      if (search && typeof search === 'string') {
+        const searchTerm = search.toLowerCase();
+        parts = parts.filter(part => 
+          part.name.toLowerCase().includes(searchTerm) ||
+          part.description?.toLowerCase().includes(searchTerm) ||
+          JSON.stringify(part.specifications || {}).toLowerCase().includes(searchTerm)
+        );
+      }
+      
+      // Apply price filtering
+      if (priceRange && priceRange !== 'all') {
+        parts = parts.filter(part => {
+          const price = parseFloat(part.price);
+          switch (priceRange) {
+            case 'low': return price <= 500;
+            case 'medium': return price > 500 && price <= 2000;
+            case 'high': return price > 2000;
+            default: return true;
+          }
+        });
+      }
+      
+      // Apply sorting
+      if (sortBy) {
+        parts.sort((a, b) => {
+          switch (sortBy) {
+            case 'price-low': return parseFloat(a.price) - parseFloat(b.price);
+            case 'price-high': return parseFloat(b.price) - parseFloat(a.price);
+            case 'rating': return parseFloat(b.rating || '0') - parseFloat(a.rating || '0');
+            case 'popular': return (b.totalSold || 0) - (a.totalSold || 0);
+            case 'newest': return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            default: return 0;
+          }
+        });
+      }
+      
+      res.json(parts);
+    } catch (error) {
+      console.error('Error fetching parts:', error);
+      res.status(500).json({ message: 'Failed to fetch parts' });
+    }
+  });
+
+  app.get('/api/v1/parts/:partId', async (req, res) => {
+    try {
+      const { partId } = req.params;
+      const part = await storage.getPart(partId);
+      
+      if (!part) {
+        return res.status(404).json({ message: 'Part not found' });
+      }
+
+      // Check if part is active and in stock
+      if (!part.isActive) {
+        return res.status(404).json({ message: 'Part not available' });
+      }
+
+      // Get provider information
+      let providerInfo = null;
+      if (part.providerId) {
+        const provider = await storage.getUser(part.providerId);
+        if (provider) {
+          providerInfo = {
+            id: provider.id,
+            name: `${provider.firstName || ''} ${provider.lastName || ''}`.trim(),
+            isVerified: provider.isVerified || false,
+          };
+        }
+      }
+
+      // Get related parts (same category, different provider)
+      const relatedParts = await storage.getParts({
+        categoryId: part.categoryId,
+        isActive: true
+      });
+      
+      const filteredRelated = relatedParts
+        .filter(p => p.id !== part.id && (p.stock || 0) > 0)
+        .slice(0, 4); // Limit to 4 related parts
+
+      res.json({
+        ...part,
+        provider: providerInfo,
+        relatedParts: filteredRelated,
+      });
+    } catch (error) {
+      console.error('Error fetching part:', error);
+      res.status(500).json({ message: 'Failed to fetch part' });
+    }
+  });
+
+  app.post('/api/v1/parts/search', authMiddleware, async (req, res) => {
+    try {
+      const { query, filters } = req.body;
+      
+      // Get all active parts
+      let parts = await storage.getParts({ isActive: true });
+
+      // Apply text search
+      if (query && query.trim()) {
+        const searchTerm = query.toLowerCase();
+        parts = parts.filter(part => 
+          part.name.toLowerCase().includes(searchTerm) ||
+          part.description?.toLowerCase().includes(searchTerm) ||
+          JSON.stringify(part.specifications || {}).toLowerCase().includes(searchTerm)
+        );
+      }
+
+      // Apply filters
+      if (filters) {
+        if (filters.category) {
+          parts = parts.filter(part => part.categoryId === filters.category);
+        }
+        if (filters.priceRange) {
+          const [min, max] = filters.priceRange.split('-').map(Number);
+          parts = parts.filter(part => {
+            const price = parseFloat(part.price);
+            return price >= min && (max ? price <= max : true);
+          });
+        }
+        if (filters.inStock) {
+          parts = parts.filter(part => (part.stock || 0) > 0);
+        }
+      }
+
+      // Score by relevance (basic implementation)
+      if (query && query.trim()) {
+        const searchTerm = query.toLowerCase();
+        parts = parts.map(part => ({
+          ...part,
+          _relevanceScore: (
+            (part.name.toLowerCase().includes(searchTerm) ? 10 : 0) +
+            (part.description?.toLowerCase().includes(searchTerm) ? 5 : 0) +
+            (JSON.stringify(part.specifications || {}).toLowerCase().includes(searchTerm) ? 3 : 0)
+          )
+        })).sort((a, b) => (b._relevanceScore || 0) - (a._relevanceScore || 0));
+      }
+
+      res.json(parts);
+    } catch (error) {
+      console.error('Parts search error:', error);
+      res.status(500).json({ message: 'Parts search failed' });
+    }
+  });
+
   // Order routes
   app.get('/api/v1/orders', authMiddleware, async (req, res) => {
     try {
@@ -407,8 +579,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req, res) => {
     try {
       const userId = req.user?.uid;
+      const { items, totalAmount, ...otherOrderData } = req.body;
+      
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: 'Order must contain at least one item' });
+      }
+
+      // SECURITY: Validate inventory availability before creating order
+      const inventoryValidation = await storage.validateInventoryAvailability(items);
+      if (!inventoryValidation.valid) {
+        return res.status(400).json({
+          message: 'Inventory validation failed',
+          errors: inventoryValidation.errors,
+          unavailableItems: inventoryValidation.unavailableItems
+        });
+      }
+
+      // SECURITY: Validate pricing to prevent fraud
+      const pricingValidation = await storage.validateOrderPricing(items);
+      if (!pricingValidation.valid) {
+        return res.status(400).json({
+          message: 'Price validation failed - prices may have changed',
+          errors: pricingValidation.errors
+        });
+      }
+
+      // SECURITY: Use server-calculated total, not client-provided total
+      const serverCalculatedTotal = pricingValidation.calculatedTotal;
+      const clientProvidedTotal = parseFloat(totalAmount);
+      
+      // Allow small floating-point differences (within 1 cent)
+      if (Math.abs(serverCalculatedTotal - clientProvidedTotal) > 0.01) {
+        return res.status(400).json({
+          message: 'Total amount mismatch. Please refresh and try again.',
+          serverTotal: serverCalculatedTotal.toFixed(2),
+          clientTotal: clientProvidedTotal.toFixed(2)
+        });
+      }
+
       const orderData = {
-        ...req.body,
+        ...otherOrderData,
+        items,
+        totalAmount: serverCalculatedTotal.toFixed(2), // Use server-calculated amount
         userId,
         status: 'pending' as const,
         paymentStatus: 'pending' as const,
@@ -772,7 +984,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // ATOMIC OPERATION: Create transaction + Update wallet + Update order
+      // SECURITY: Final inventory validation just before payment (prevent race conditions)
+      const finalInventoryCheck = await storage.validateInventoryAvailability(order.items || []);
+      if (!finalInventoryCheck.valid) {
+        return res.status(400).json({
+          message: 'Inventory no longer available - order canceled',
+          errors: finalInventoryCheck.errors,
+          unavailableItems: finalInventoryCheck.unavailableItems
+        });
+      }
+
+      // ATOMIC OPERATION: Create transaction + Update wallet + Decrement inventory + Update order
       const transaction = await storage.createWalletTransaction({
         userId,
         type: 'debit',
@@ -786,6 +1008,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Deduct from wallet balance
       await storage.updateWalletBalance(userId, orderAmount, 'debit');
+
+      // SECURITY: Atomically decrement inventory for all parts in the order
+      const partItems = (order.items || [])
+        .filter(item => item.type === 'part')
+        .map(item => ({ partId: item.id, quantity: item.quantity }));
+      
+      if (partItems.length > 0) {
+        const inventoryResult = await storage.atomicDecrementInventory(partItems);
+        if (!inventoryResult.success) {
+          // ROLLBACK: If inventory decrement fails, we need to reverse the wallet deduction
+          await storage.updateWalletBalance(userId, orderAmount, 'credit');
+          return res.status(400).json({
+            message: 'Inventory decrement failed - payment reversed',
+            errors: inventoryResult.errors
+          });
+        }
+      }
       
       // Update order payment status
       await storage.updateOrder(orderId, {

@@ -110,6 +110,11 @@ export interface IStorage {
   updatePart(id: string, data: Partial<Omit<Part, 'id' | 'createdAt'>>): Promise<Part | undefined>;
   getPartsByProvider(providerId: string): Promise<Part[]>;
   getLowStockParts(providerId: string, threshold?: number): Promise<Part[]>;
+  
+  // SECURITY: Inventory and price validation methods
+  validateInventoryAvailability(items: { id: string; quantity: number; type: 'service' | 'part' }[]): Promise<{ valid: boolean; errors: string[]; unavailableItems: { id: string; requested: number; available: number }[] }>;
+  validateOrderPricing(items: { id: string; price: number; quantity: number; type: 'service' | 'part' }[]): Promise<{ valid: boolean; errors: string[]; calculatedTotal: number }>;
+  atomicDecrementInventory(partUpdates: { partId: string; quantity: number }[]): Promise<{ success: boolean; errors: string[] }>;
 
   // Parts Category methods
   getPartsCategories(activeOnly?: boolean): Promise<PartsCategory[]>;
@@ -620,7 +625,7 @@ export class PostgresStorage implements IStorage {
   }
 
   // Parts methods
-  async getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean }): Promise<Part[]> {
+  async getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean; sortBy?: 'newest' | 'oldest' | 'price-asc' | 'price-desc' | 'rating' }): Promise<Part[]> {
     let baseQuery = db.select().from(parts);
     
     const conditions: SQL[] = [];
@@ -635,10 +640,28 @@ export class PostgresStorage implements IStorage {
     }
     
     const whereClause = combineConditions(conditions);
+    
+    // FIXED: Reliable sorting with proper fallbacks
+    let sortedQuery = baseQuery;
     if (whereClause) {
-      return await baseQuery.where(whereClause);
-    } else {
-      return await baseQuery;
+      sortedQuery = baseQuery.where(whereClause);
+    }
+    
+    // Apply sorting (default to newest first)
+    const sortBy = filters?.sortBy || 'newest';
+    switch (sortBy) {
+      case 'newest':
+        return await sortedQuery.orderBy(desc(parts.createdAt));
+      case 'oldest':
+        return await sortedQuery.orderBy(asc(parts.createdAt));
+      case 'price-asc':
+        return await sortedQuery.orderBy(asc(parts.price));
+      case 'price-desc':
+        return await sortedQuery.orderBy(desc(parts.price));
+      case 'rating':
+        return await sortedQuery.orderBy(desc(parts.rating), desc(parts.createdAt));
+      default:
+        return await sortedQuery.orderBy(desc(parts.createdAt));
     }
   }
 
@@ -667,6 +690,133 @@ export class PostgresStorage implements IStorage {
   async getLowStockParts(providerId: string, threshold = 10): Promise<Part[]> {
     return await db.select().from(parts)
       .where(and(eq(parts.providerId, providerId), sql`${parts.stock} < ${threshold}`));
+  }
+
+  // SECURITY: Critical inventory validation to prevent overselling
+  async validateInventoryAvailability(items: { id: string; quantity: number; type: 'service' | 'part' }[]): Promise<{ valid: boolean; errors: string[]; unavailableItems: { id: string; requested: number; available: number }[] }> {
+    const errors: string[] = [];
+    const unavailableItems: { id: string; requested: number; available: number }[] = [];
+
+    // Only validate parts items for stock (services don't have inventory constraints)
+    const partItems = items.filter(item => item.type === 'part');
+    
+    if (partItems.length === 0) {
+      return { valid: true, errors: [], unavailableItems: [] };
+    }
+
+    for (const item of partItems) {
+      const part = await this.getPart(item.id);
+      
+      if (!part) {
+        errors.push(`Part with ID ${item.id} not found`);
+        continue;
+      }
+
+      if (!part.isActive) {
+        errors.push(`Part "${part.name}" is no longer available`);
+        continue;
+      }
+
+      const availableStock = part.stock || 0;
+      if (availableStock < item.quantity) {
+        errors.push(`Insufficient stock for "${part.name}". Requested: ${item.quantity}, Available: ${availableStock}`);
+        unavailableItems.push({
+          id: item.id,
+          requested: item.quantity,
+          available: availableStock
+        });
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      unavailableItems
+    };
+  }
+
+  // SECURITY: Critical price validation to prevent fraud
+  async validateOrderPricing(items: { id: string; price: number; quantity: number; type: 'service' | 'part' }[]): Promise<{ valid: boolean; errors: string[]; calculatedTotal: number }> {
+    const errors: string[] = [];
+    let calculatedTotal = 0;
+
+    for (const item of items) {
+      let actualPrice: number;
+
+      if (item.type === 'part') {
+        const part = await this.getPart(item.id);
+        if (!part) {
+          errors.push(`Part with ID ${item.id} not found`);
+          continue;
+        }
+        actualPrice = parseFloat(part.price);
+      } else if (item.type === 'service') {
+        const service = await this.getService(item.id);
+        if (!service) {
+          errors.push(`Service with ID ${item.id} not found`);
+          continue;
+        }
+        actualPrice = parseFloat(service.basePrice);
+      } else {
+        errors.push(`Invalid item type: ${item.type}`);
+        continue;
+      }
+
+      // Compare client price with database price (allow small floating-point differences)
+      if (Math.abs(item.price - actualPrice) > 0.01) {
+        errors.push(`Price mismatch for item ${item.id}. Expected: ₹${actualPrice}, Received: ₹${item.price}`);
+        continue;
+      }
+
+      calculatedTotal += actualPrice * item.quantity;
+    }
+
+    // Add tax (18% GST)
+    const tax = calculatedTotal * 0.18;
+    const totalWithTax = calculatedTotal + tax;
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      calculatedTotal: totalWithTax
+    };
+  }
+
+  // SECURITY: Atomic inventory decrement to prevent race conditions and overselling
+  async atomicDecrementInventory(partUpdates: { partId: string; quantity: number }[]): Promise<{ success: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    // Use database transaction to ensure atomicity
+    try {
+      await db.transaction(async (trx) => {
+        for (const update of partUpdates) {
+          const part = await trx.select().from(parts).where(eq(parts.id, update.partId)).limit(1);
+          
+          if (!part[0]) {
+            throw new Error(`Part ${update.partId} not found`);
+          }
+
+          const currentStock = part[0].stock || 0;
+          if (currentStock < update.quantity) {
+            throw new Error(`Insufficient stock for part ${part[0].name}. Available: ${currentStock}, Requested: ${update.quantity}`);
+          }
+
+          const newStock = currentStock - update.quantity;
+          await trx.update(parts)
+            .set({ 
+              stock: newStock,
+              totalSold: (part[0].totalSold || 0) + update.quantity
+            })
+            .where(eq(parts.id, update.partId));
+        }
+      });
+
+      return { success: true, errors: [] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      errors.push(errorMessage);
+      return { success: false, errors };
+    }
   }
 
   // Parts Category methods

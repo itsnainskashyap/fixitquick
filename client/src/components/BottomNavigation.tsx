@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import { 
   Home, 
   Wrench, 
+  Package,
   ClipboardList, 
   CreditCard, 
   User,
@@ -29,6 +30,12 @@ const navigationItems: NavigationItem[] = [
     label: 'Services',
     icon: Wrench,
     path: '/services',
+  },
+  {
+    id: 'parts',
+    label: 'Parts',
+    icon: Package,
+    path: '/parts',
   },
   {
     id: 'orders',
