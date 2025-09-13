@@ -66,8 +66,8 @@ function Router() {
       {/* Public Routes */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
       
-      {/* Protected Routes - General */}
-      <Route path="/" component={() => <ProtectedRoute component={Home} />} />
+      {/* Public Routes - Allow guest browsing */}
+      <Route path="/" component={Home} />
       <Route path="/services" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:categoryId" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
