@@ -4,12 +4,17 @@ import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import { storage } from "./storage";
 import { authMiddleware, requireRole } from "./middleware/auth";
-import { firebaseAdmin, db } from "./services/firebase";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
+import {
+  insertUserSchema,
+  insertOrderSchema,
+  insertPartSchema,
+} from "@shared/schema";
 
 // Rate limiting
 const limiter = rateLimit({
@@ -17,6 +22,53 @@ const limiter = rateLimit({
   max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
 });
+
+// Validation schemas for API routes
+const loginSchema = z.object({
+  uid: z.string().min(1, 'User ID is required'),
+  email: z.string().email('Valid email is required'),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  profileImageUrl: z.string().optional(),
+});
+
+const searchSchema = z.object({
+  query: z.string().min(1, 'Search query is required'),
+  filters: z.object({
+    category: z.string().optional(),
+    priceRange: z.string().optional(),
+    location: z.string().optional(),
+  }).optional(),
+});
+
+const walletTopupSchema = z.object({
+  amount: z.number().min(1, 'Amount must be greater than 0').max(50000, 'Amount cannot exceed ₹50,000'),
+});
+
+const iconGenerationSchema = z.object({
+  name: z.string().min(1, 'Service name is required'),
+  category: z.string().min(1, 'Category is required'),
+  style: z.string().optional(),
+});
+
+// Validation middleware factory
+function validateBody(schema: z.ZodSchema) {
+  return (req: any, res: any, next: any) => {
+    try {
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({
+          message: 'Validation failed',
+          errors: result.error.errors
+        });
+      }
+      req.body = result.data;
+      next();
+    } catch (error) {
+      res.status(500).json({ message: 'Validation error' });
+    }
+  };
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Security middleware - more permissive in development
@@ -38,27 +90,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Authentication routes
-  app.post('/api/v1/auth/login', async (req, res) => {
+  app.post('/api/v1/auth/login', validateBody(loginSchema), async (req, res) => {
     try {
-      const { uid, email, displayName, photoURL } = req.body;
+      const { uid, email, firstName, lastName, profileImageUrl } = req.body;
       
-      // Create or update user in Firestore
-      const userData = {
-        id: uid,
-        email,
-        displayName,
-        photoURL,
-        role: 'user',
-        isVerified: false,
-        walletBalance: 0,
-        fixiPoints: 0,
-        isActive: true,
-        updatedAt: new Date(),
-      };
-
-      await db.collection('users').doc(uid).set(userData, { merge: true });
+      // Check if user exists
+      let user = await storage.getUser(uid);
       
-      res.json({ success: true, user: userData });
+      if (!user) {
+        // Create new user
+        user = await storage.createUser({
+          id: uid,
+          email,
+          firstName: firstName || '',
+          lastName: lastName || '',
+          profileImageUrl,
+          role: 'user',
+          isVerified: false,
+          walletBalance: '0.00',
+          fixiPoints: 0,
+          isActive: true,
+        });
+      } else {
+        // Update existing user
+        user = await storage.updateUser(uid, {
+          email,
+          firstName: firstName || user.firstName,
+          lastName: lastName || user.lastName,
+          profileImageUrl: profileImageUrl || user.profileImageUrl,
+        }) || user;
+      }
+      
+      res.json({ success: true, user });
     } catch (error) {
       console.error('Login error:', error);
       res.status(500).json({ message: 'Login failed' });
@@ -72,12 +135,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      const userDoc = await db.collection('users').doc(userId).get();
-      if (!userDoc.exists) {
+      const user = await storage.getUser(userId);
+      if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
 
-      res.json(userDoc.data());
+      res.json(user);
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
@@ -85,7 +148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI Search routes
-  app.post('/api/v1/search', authMiddleware, async (req, res) => {
+  app.post('/api/v1/search', authMiddleware, validateBody(searchSchema), async (req, res) => {
     try {
       const { query, filters } = req.body;
       const results = await aiService.searchServices(query, filters);
@@ -96,7 +159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/ai/generate-icon', authMiddleware, async (req, res) => {
+  app.post('/api/v1/ai/generate-icon', authMiddleware, validateBody(iconGenerationSchema), async (req, res) => {
     try {
       const { name, category, style } = req.body;
       const icon = await aiService.generateServiceIcon({ name, category, style });
@@ -110,15 +173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Service routes
   app.get('/api/v1/services/categories', async (req, res) => {
     try {
-      const categoriesSnapshot = await db.collection('serviceCategories')
-        .where('isActive', '==', true)
-        .get();
-      
-      const categories = categoriesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const categories = await storage.getServiceCategories(true);
       res.json(categories);
     } catch (error) {
       console.error('Error fetching categories:', error);
@@ -129,22 +184,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/services', async (req, res) => {
     try {
       const { category, sortBy, priceRange } = req.query;
-      let query = db.collection('services').where('isActive', '==', true);
       
-      if (category && category !== 'all') {
-        query = query.where('categoryId', '==', category);
-      }
-      
-      const servicesSnapshot = await query.get();
-      let services = servicesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      // Get services with filters
+      let services = await storage.getServices({
+        categoryId: category as string,
+        isActive: true
+      });
       
       // Apply price filtering
       if (priceRange && priceRange !== 'all') {
         services = services.filter(service => {
-          const price = service.basePrice;
+          const price = parseFloat(service.basePrice);
           switch (priceRange) {
             case 'low': return price <= 100;
             case 'medium': return price > 100 && price <= 300;
@@ -158,10 +208,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (sortBy) {
         services.sort((a, b) => {
           switch (sortBy) {
-            case 'price-low': return a.basePrice - b.basePrice;
-            case 'price-high': return b.basePrice - a.basePrice;
-            case 'rating': return b.rating - a.rating;
-            case 'popular': return b.totalBookings - a.totalBookings;
+            case 'price-low': return parseFloat(a.basePrice) - parseFloat(b.basePrice);
+            case 'price-high': return parseFloat(b.basePrice) - parseFloat(a.basePrice);
+            case 'rating': return parseFloat(b.rating || '0') - parseFloat(a.rating || '0');
+            case 'popular': return (b.totalBookings || 0) - (a.totalBookings || 0);
             default: return 0;
           }
         });
@@ -179,15 +229,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.uid;
       
       // Get user's recent orders for personalization
-      const ordersSnapshot = await db.collection('orders')
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(5)
-        .get();
+      const recentOrders = await storage.getRecentOrders(userId, 5);
       
-      const recentCategories = ordersSnapshot.docs.map(doc => 
-        doc.data().category
-      );
+      // Extract categories from recent orders (using items array)
+      const recentCategories = recentOrders
+        .map(order => order.items?.map(item => item.type) || [])
+        .flat();
       
       // Get AI suggestions based on user history
       const suggestions = await aiService.suggestPersonalizedServices(recentCategories);
@@ -205,18 +252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.uid;
       const { status } = req.query;
       
-      let query = db.collection('orders').where('userId', '==', userId);
-      
-      if (status) {
-        query = query.where('status', '==', status);
-      }
-      
-      const ordersSnapshot = await query.orderBy('createdAt', 'desc').get();
-      const orders = ordersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const orders = await storage.getOrdersByUser(userId, status as string);
       res.json(orders);
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -227,18 +263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.uid;
-      
-      const ordersSnapshot = await db.collection('orders')
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(3)
-        .get();
-      
-      const orders = ordersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const orders = await storage.getRecentOrders(userId, 3);
       res.json(orders);
     } catch (error) {
       console.error('Error fetching recent orders:', error);
@@ -246,24 +271,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/orders', authMiddleware, async (req, res) => {
+  app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req, res) => {
     try {
       const userId = req.user?.uid;
       const orderData = {
         ...req.body,
         userId,
-        status: 'pending',
-        paymentStatus: 'pending',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        status: 'pending' as const,
+        paymentStatus: 'pending' as const,
       };
       
-      const orderRef = await db.collection('orders').add(orderData);
+      const order = await storage.createOrder(orderData);
       
       // Send notification to service providers
-      await notificationService.notifyProviders(orderData);
+      await notificationService.notifyProviders(order);
       
-      res.json({ id: orderRef.id, ...orderData });
+      res.json(order);
     } catch (error) {
       console.error('Error creating order:', error);
       res.status(500).json({ message: 'Failed to create order' });
@@ -274,17 +297,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.uid;
-      const userDoc = await db.collection('users').doc(userId).get();
-      
-      if (!userDoc.exists) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-      
-      const userData = userDoc.data();
-      res.json({
-        balance: userData?.walletBalance || 0,
-        fixiPoints: userData?.fixiPoints || 0,
-      });
+      const wallet = await storage.getWalletBalance(userId);
+      res.json(wallet);
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
       res.status(500).json({ message: 'Failed to fetch wallet balance' });
@@ -294,18 +308,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/transactions', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.uid;
-      
-      const transactionsSnapshot = await db.collection('walletTransactions')
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(20)
-        .get();
-      
-      const transactions = transactionsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const transactions = await storage.getWalletTransactions(userId, 20);
       res.json(transactions);
     } catch (error) {
       console.error('Error fetching transactions:', error);
@@ -313,7 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/wallet/topup', authMiddleware, async (req, res) => {
+  app.post('/api/v1/wallet/topup', authMiddleware, validateBody(walletTopupSchema), async (req, res) => {
     try {
       const userId = req.user?.uid;
       const { amount } = req.body;
@@ -343,15 +346,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { userId } = req.params;
       
-      const ordersSnapshot = await db.collection('orders')
-        .where('serviceProviderId', '==', userId)
-        .get();
-      
-      const orders = ordersSnapshot.docs.map(doc => doc.data());
+      const orders = await storage.getOrdersByProvider(userId);
       const completedOrders = orders.filter(order => order.status === 'completed');
       
       const stats = {
-        totalEarnings: completedOrders.reduce((sum, order) => sum + order.totalAmount, 0),
+        totalEarnings: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
         completionRate: orders.length > 0 ? (completedOrders.length / orders.length) * 100 : 0,
         avgRating: 4.5, // TODO: Calculate from reviews
         ordersCompleted: completedOrders.length,
@@ -368,18 +367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/providers/orders/pending/:userId', authMiddleware, requireRole(['service_provider']), async (req, res) => {
     try {
       const { userId } = req.params;
-      
-      const ordersSnapshot = await db.collection('orders')
-        .where('serviceProviderId', '==', userId)
-        .where('status', '==', 'pending')
-        .orderBy('createdAt', 'desc')
-        .get();
-      
-      const orders = ordersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const orders = await storage.getOrdersByProvider(userId, 'pending');
       res.json(orders);
     } catch (error) {
       console.error('Error fetching pending orders:', error);
@@ -392,22 +380,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { userId } = req.params;
       
-      const partsSnapshot = await db.collection('parts')
-        .where('providerId', '==', userId)
-        .get();
+      const [parts, orders] = await Promise.all([
+        storage.getPartsByProvider(userId),
+        storage.getOrdersByProvider(userId)
+      ]);
       
-      const ordersSnapshot = await db.collection('orders')
-        .where('partsProviderId', '==', userId)
-        .get();
-      
-      const orders = ordersSnapshot.docs.map(doc => doc.data());
       const completedOrders = orders.filter(order => order.status === 'completed');
+      const lowStockParts = await storage.getLowStockParts(userId, 10);
       
       const stats = {
-        totalEarnings: completedOrders.reduce((sum, order) => sum + order.totalAmount, 0),
+        totalEarnings: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
         totalOrders: orders.length,
-        activeListings: partsSnapshot.docs.length,
-        lowStockItems: partsSnapshot.docs.filter(doc => doc.data().stock < 10).length,
+        activeListings: parts.length,
+        lowStockItems: lowStockParts.length,
         pendingOrders: orders.filter(order => order.status === 'pending').length,
       };
       
@@ -418,21 +403,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/parts-provider/parts', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+  app.post('/api/v1/parts-provider/parts', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartSchema), async (req, res) => {
     try {
       const userId = req.user?.uid;
       const partData = {
         ...req.body,
         providerId: userId,
-        rating: 0,
+        rating: '0.00',
         totalSold: 0,
         isActive: true,
-        createdAt: new Date(),
       };
       
-      const partRef = await db.collection('parts').add(partData);
-      
-      res.json({ id: partRef.id, ...partData });
+      const part = await storage.createPart(partData);
+      res.json(part);
     } catch (error) {
       console.error('Error adding part:', error);
       res.status(500).json({ message: 'Failed to add part' });
@@ -442,20 +425,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin routes
   app.get('/api/v1/admin/stats', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
-      const [usersSnapshot, ordersSnapshot, providersSnapshot] = await Promise.all([
-        db.collection('users').get(),
-        db.collection('orders').get(),
-        db.collection('users').where('role', 'in', ['service_provider', 'parts_provider']).get(),
+      const [totalUsers, allOrders, serviceProviders, partsProviders] = await Promise.all([
+        storage.getUsersCount(),
+        storage.getOrders(),
+        storage.getUsersByRole('service_provider'),
+        storage.getUsersByRole('parts_provider'),
       ]);
       
-      const orders = ordersSnapshot.docs.map(doc => doc.data());
-      const completedOrders = orders.filter(order => order.status === 'completed');
+      const completedOrders = allOrders.filter(order => order.status === 'completed');
+      const totalProviders = serviceProviders.length + partsProviders.length;
       
       const stats = {
-        totalUsers: usersSnapshot.size,
-        totalRevenue: completedOrders.reduce((sum, order) => sum + order.totalAmount, 0),
-        totalOrders: orders.length,
-        totalProviders: providersSnapshot.size,
+        totalUsers,
+        totalRevenue: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
+        totalOrders: allOrders.length,
+        totalProviders,
         pendingVerifications: 0, // TODO: Implement
         activeDisputes: 0, // TODO: Implement
         monthlyGrowth: 15.5, // TODO: Calculate
@@ -471,23 +455,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/admin/users', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
       const { search, role } = req.query;
-      let query = db.collection('users');
       
-      if (role && role !== 'all') {
-        query = query.where('role', '==', role);
-      }
-      
-      const usersSnapshot = await query.get();
-      let users = usersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      let users;
       if (search) {
-        users = users.filter(user => 
-          user.displayName?.toLowerCase().includes(search.toLowerCase()) ||
-          user.email?.toLowerCase().includes(search.toLowerCase())
-        );
+        users = await storage.searchUsers(search as string, role as string);
+      } else if (role && role !== 'all') {
+        users = await storage.getUsersByRole(role as string);
+      } else {
+        users = await storage.getUsersByRole('user'); // Get all users
+        const providers = await Promise.all([
+          storage.getUsersByRole('service_provider'),
+          storage.getUsersByRole('parts_provider'),
+          storage.getUsersByRole('admin')
+        ]);
+        users = [...users, ...providers.flat()];
       }
       
       res.json(users);
@@ -499,16 +480,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/v1/admin/orders', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
-      const ordersSnapshot = await db.collection('orders')
-        .orderBy('createdAt', 'desc')
-        .limit(100)
-        .get();
-      
-      const orders = ordersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
+      const orders = await storage.getOrders({ limit: 100 });
       res.json(orders);
     } catch (error) {
       console.error('Error fetching orders:', error);
