@@ -1,0 +1,308 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(0, 0%, 100%);
+  --foreground: hsl(262, 83%, 4%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(262, 83%, 4%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(262, 83%, 4%);
+  --primary: hsl(262, 83%, 58%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(210, 40%, 96%);
+  --secondary-foreground: hsl(262, 83%, 4%);
+  --muted: hsl(210, 40%, 96%);
+  --muted-foreground: hsl(215, 16%, 47%);
+  --accent: hsl(210, 40%, 96%);
+  --accent-foreground: hsl(262, 83%, 4%);
+  --destructive: hsl(0, 84%, 60%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(262, 83%, 58%);
+  --input: hsl(214, 32%, 91%);
+  --ring: hsl(262, 83%, 58%);
+  --radius: 0.5rem;
+  --chart-1: hsl(262, 83%, 58%);
+  --chart-2: hsl(159, 100%, 36%);
+  --chart-3: hsl(42, 93%, 56%);
+  --chart-4: hsl(147, 79%, 42%);
+  --chart-5: hsl(341, 75%, 51%);
+  --sidebar: hsl(0, 0%, 100%);
+  --sidebar-foreground: hsl(262, 83%, 4%);
+  --sidebar-primary: hsl(262, 83%, 58%);
+  --sidebar-primary-foreground: hsl(0, 0%, 100%);
+  --sidebar-accent: hsl(210, 40%, 96%);
+  --sidebar-accent-foreground: hsl(262, 83%, 4%);
+  --sidebar-border: hsl(214, 32%, 91%);
+  --sidebar-ring: hsl(262, 83%, 58%);
+  --font-sans: 'Inter', sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: 'Monaco', monospace;
+}
+
+.dark {
+  --background: hsl(0, 0%, 0%);
+  --foreground: hsl(0, 0%, 95%);
+  --card: hsl(262, 83%, 8%);
+  --card-foreground: hsl(0, 0%, 95%);
+  --popover: hsl(0, 0%, 0%);
+  --popover-foreground: hsl(0, 0%, 95%);
+  --primary: hsl(262, 83%, 68%);
+  --primary-foreground: hsl(0, 0%, 0%);
+  --secondary: hsl(262, 83%, 15%);
+  --secondary-foreground: hsl(0, 0%, 95%);
+  --muted: hsl(262, 83%, 10%);
+  --muted-foreground: hsl(215, 16%, 57%);
+  --accent: hsl(262, 83%, 15%);
+  --accent-foreground: hsl(0, 0%, 95%);
+  --destructive: hsl(0, 84%, 60%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(262, 83%, 68%);
+  --input: hsl(262, 83%, 15%);
+  --ring: hsl(262, 83%, 68%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer components {
+  .service-card {
+    @apply bg-card border rounded-lg p-4 text-center cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+    border-color: rgba(147, 51, 234, 0.2);
+  }
+  
+  .service-card:hover {
+    box-shadow: 0 10px 25px rgba(147, 51, 234, 0.1);
+  }
+  
+  .cart-badge {
+    @apply absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full h-5 w-5 flex items-center justify-center;
+    animation: bounceGentle 0.6s ease-in-out;
+  }
+  
+  .install-prompt {
+    animation: slideUp 0.5s ease-out;
+  }
+  
+  .ai-search-bar {
+    @apply relative w-full;
+  }
+  
+  .ai-search-input {
+    @apply w-full pl-10 pr-16 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-background text-foreground placeholder:text-muted-foreground;
+    border-color: rgba(147, 51, 234, 0.3);
+  }
+  
+  .bottom-nav-item {
+    @apply flex flex-col items-center space-y-1 p-2 text-muted-foreground hover:text-primary transition-colors duration-200;
+  }
+  
+  .bottom-nav-item.active {
+    @apply text-primary;
+  }
+  
+  .purple-glow {
+    box-shadow: 0 0 20px hsl(262, 83%, 58%, 0.3);
+  }
+  
+  .fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  .slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes slideUp {
+  from { 
+    transform: translateY(100%); 
+  }
+  to { 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes bounceGentle {
+  0%, 20%, 53%, 80%, 100% { 
+    transform: scale(1); 
+  }
+  40%, 43% { 
+    transform: scale(1.05); 
+  }
+}
+
+/* PWA specific styles */
+.pwa-install-banner {
+  @apply fixed top-0 left-0 right-0 z-50 bg-primary text-primary-foreground p-4 shadow-lg;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Smooth scrolling for better UX */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded-full;
+  background-color: rgba(147, 51, 234, 0.6);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary;
+}
+
+/* Loading spinner */
+.loading-spinner {
+  @apply w-6 h-6 border-2 border-t-primary rounded-full animate-spin;
+  border-color: rgba(147, 51, 234, 0.3);
+  border-top-color: rgb(147, 51, 234);
+}
+
+/* Cart sidebar styles */
+.cart-sidebar {
+  @apply fixed inset-y-0 right-0 w-80 bg-background border-l shadow-xl z-50 transform transition-transform duration-300;
+  border-left-color: rgba(147, 51, 234, 0.2);
+}
+
+.cart-sidebar.open {
+  @apply translate-x-0;
+}
+
+.cart-sidebar.closed {
+  @apply translate-x-full;
+}
+
+/* AI suggestion styles */
+.ai-suggestion {
+  @apply p-3 border rounded-lg cursor-pointer transition-colors;
+  background-color: rgba(147, 51, 234, 0.05);
+  border-color: rgba(147, 51, 234, 0.2);
+}
+
+.ai-suggestion:hover {
+  background-color: rgba(147, 51, 234, 0.1);
+}
+
+.ai-badge {
+  @apply bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full font-medium;
+}
+
+/* Emergency SOS button */
+.emergency-button {
+  @apply fixed top-24 right-4 z-30 bg-destructive text-destructive-foreground w-12 h-12 rounded-full shadow-lg flex items-center justify-center hover:shadow-xl transition-all duration-300 hover:scale-110;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* Service provider status indicators */
+.status-online {
+  @apply bg-green-500 text-white;
+}
+
+.status-offline {
+  @apply bg-gray-500 text-white;
+}
+
+.status-busy {
+  @apply bg-yellow-500 text-white;
+}
+
+/* Order status badges */
+.order-status-pending {
+  @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100;
+}
+
+.order-status-accepted {
+  @apply bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100;
+}
+
+.order-status-in_progress {
+  @apply bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-100;
+}
+
+.order-status-completed {
+  @apply bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100;
+}
+
+.order-status-cancelled {
+  @apply bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100;
+}
+
+/* Responsive design helpers */
+@media (max-width: 768px) {
+  .cart-sidebar {
+    @apply w-full;
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus styles for better accessibility */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --border: hsl(262, 83%, 30%);
+    --primary: hsl(262, 83%, 40%);
+  }
+}
