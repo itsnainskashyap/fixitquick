@@ -89,12 +89,19 @@ export interface IStorage {
   // Order methods
   getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]>;
   getOrder(id: string): Promise<Order | undefined>;
+  getOrderWithDetails(id: string): Promise<any>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
   getOrdersByUser(userId: string, status?: string): Promise<Order[]>;
   getOrdersByProvider(providerId: string, status?: string): Promise<Order[]>;
   getRecentOrders(userId: string, limit?: number): Promise<Order[]>;
   getOrdersCount(): Promise<number>;
+  
+  // Order status and assignment methods
+  validateStatusUpdate(orderId: string, newStatus: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
+  canProviderAcceptOrder(orderId: string, providerId: string): Promise<{ allowed: boolean; reason?: string }>;
+  assignProviderToOrder(orderId: string, providerId: string): Promise<Order | undefined>;
+  canCancelOrder(orderId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
 
   // Parts methods
   getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean }): Promise<Part[]>;
@@ -363,6 +370,253 @@ export class PostgresStorage implements IStorage {
   async getOrdersCount(): Promise<number> {
     const result = await db.select({ count: count() }).from(orders);
     return result[0].count;
+  }
+
+  // Enhanced order methods with joined data
+  async getOrderWithDetails(id: string): Promise<any> {
+    // Get order with user and provider details
+    const orderResult = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+    if (!orderResult[0]) return undefined;
+    
+    const order = orderResult[0];
+    
+    // Get customer details
+    const user = await this.getUser(order.userId!);
+    
+    // Get service provider details if assigned
+    let serviceProvider = null;
+    if (order.serviceProviderId) {
+      const providerUser = await this.getUser(order.serviceProviderId);
+      const providerProfile = await this.getServiceProvider(order.serviceProviderId);
+      serviceProvider = providerUser ? {
+        id: providerUser.id,
+        firstName: providerUser.firstName,
+        lastName: providerUser.lastName,
+        phone: providerUser.phone,
+        email: providerUser.email,
+        rating: providerProfile?.rating || '0.00',
+        isVerified: providerProfile?.isVerified || false,
+      } : null;
+    }
+    
+    // Get parts provider details if assigned
+    let partsProvider = null;
+    if (order.partsProviderId) {
+      const providerUser = await this.getUser(order.partsProviderId);
+      partsProvider = providerUser ? {
+        id: providerUser.id,
+        firstName: providerUser.firstName,
+        lastName: providerUser.lastName,
+        phone: providerUser.phone,
+        email: providerUser.email,
+      } : null;
+    }
+    
+    return {
+      ...order,
+      user: user ? {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        email: user.email,
+      } : null,
+      serviceProvider,
+      partsProvider,
+    };
+  }
+
+  async validateStatusUpdate(orderId: string, newStatus: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { allowed: false, reason: 'Order not found' };
+    }
+
+    const currentStatus = order.status;
+    
+    // Define valid status transitions
+    const validTransitions: Record<string, string[]> = {
+      'pending': ['accepted', 'cancelled'],
+      'accepted': ['in_progress', 'cancelled'],
+      'in_progress': ['completed', 'cancelled'],
+      'completed': [], // Cannot change completed orders
+      'cancelled': [], // Cannot change cancelled orders
+      'refunded': [] // Cannot change refunded orders
+    };
+
+    // Check if transition is valid
+    if (!validTransitions[currentStatus]?.includes(newStatus)) {
+      return { allowed: false, reason: `Cannot change status from ${currentStatus} to ${newStatus}` };
+    }
+
+    // Role-based permissions
+    switch (userRole) {
+      case 'admin':
+        return { allowed: true }; // Admins can make any valid transition
+      
+      case 'service_provider':
+        // Service providers can only update their own orders
+        if (order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+          return { allowed: false, reason: 'Not assigned to this order' };
+        }
+        // Providers can accept, start work, and complete
+        if (['accepted', 'in_progress', 'completed'].includes(newStatus)) {
+          return { allowed: true };
+        }
+        return { allowed: false, reason: 'Service providers cannot set this status' };
+      
+      case 'user':
+        // Users can only cancel pending orders
+        if (order.userId !== userId) {
+          return { allowed: false, reason: 'Not your order' };
+        }
+        if (newStatus === 'cancelled' && currentStatus === 'pending') {
+          return { allowed: true };
+        }
+        return { allowed: false, reason: 'Users can only cancel pending orders' };
+      
+      default:
+        return { allowed: false, reason: 'Invalid user role' };
+    }
+  }
+
+  async canProviderAcceptOrder(orderId: string, providerId: string): Promise<{ allowed: boolean; reason?: string }> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { allowed: false, reason: 'Order not found' };
+    }
+
+    if (order.status !== 'pending') {
+      return { allowed: false, reason: 'Order is no longer available for acceptance' };
+    }
+
+    if (order.serviceProviderId || order.partsProviderId) {
+      return { allowed: false, reason: 'Order already has an assigned provider' };
+    }
+
+    // Check if provider is verified and active
+    const provider = await this.getServiceProvider(providerId);
+    if (!provider) {
+      return { allowed: false, reason: 'Service provider profile not found' };
+    }
+
+    if (!provider.isVerified) {
+      return { allowed: false, reason: 'Provider is not verified' };
+    }
+
+    const user = await this.getUser(providerId);
+    if (!user || !user.isActive) {
+      return { allowed: false, reason: 'Provider account is not active' };
+    }
+
+    // Check if provider's category matches order items (basic check)
+    const hasServiceItems = order.items?.some(item => item.type === 'service');
+    const hasPartItems = order.items?.some(item => item.type === 'part');
+    
+    if (hasServiceItems && order.type === 'service') {
+      // For service orders, check if provider's category matches
+      return { allowed: true };
+    }
+
+    if (hasPartItems && order.type === 'parts') {
+      // For parts orders, any parts provider can accept
+      const userRole = user.role;
+      if (userRole === 'parts_provider') {
+        return { allowed: true };
+      }
+    }
+
+    return { allowed: true }; // Allow by default for now
+  }
+
+  async assignProviderToOrder(orderId: string, providerId: string): Promise<Order | undefined> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      throw new Error('Order not found');
+    }
+
+    // Determine if this is a service or parts provider
+    const user = await this.getUser(providerId);
+    if (!user) {
+      throw new Error('Provider not found');
+    }
+
+    const updateData: Partial<InsertOrder> = {
+      status: 'accepted',
+      updatedAt: new Date()
+    };
+
+    if (user.role === 'service_provider' || order.type === 'service') {
+      updateData.serviceProviderId = providerId;
+    } else if (user.role === 'parts_provider' || order.type === 'parts') {
+      updateData.partsProviderId = providerId;
+    } else {
+      // Default to service provider
+      updateData.serviceProviderId = providerId;
+    }
+
+    return await this.updateOrder(orderId, updateData);
+  }
+
+  async canCancelOrder(orderId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { allowed: false, reason: 'Order not found' };
+    }
+
+    // Check if order is already cancelled or completed
+    if (['cancelled', 'completed', 'refunded'].includes(order.status)) {
+      return { allowed: false, reason: `Cannot cancel ${order.status} order` };
+    }
+
+    // Role-based cancellation rules
+    switch (userRole) {
+      case 'admin':
+        return { allowed: true }; // Admins can cancel any order
+      
+      case 'user':
+        // Users can only cancel their own orders
+        if (order.userId !== userId) {
+          return { allowed: false, reason: 'Not your order' };
+        }
+        
+        // Users can cancel pending orders anytime, accepted orders within time limit
+        if (order.status === 'pending') {
+          return { allowed: true };
+        }
+        
+        if (order.status === 'accepted') {
+          // Check if order was scheduled for future (allow cancellation if more than 2 hours away)
+          if (order.scheduledAt) {
+            const scheduledTime = new Date(order.scheduledAt);
+            const now = new Date();
+            const hoursUntilService = (scheduledTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+            
+            if (hoursUntilService > 2) {
+              return { allowed: true };
+            } else {
+              return { allowed: false, reason: 'Cannot cancel less than 2 hours before scheduled time' };
+            }
+          }
+          return { allowed: true };
+        }
+        
+        return { allowed: false, reason: 'Cannot cancel orders in progress' };
+      
+      case 'service_provider':
+        // Providers can cancel orders assigned to them (with penalties in real app)
+        if (order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+          return { allowed: false, reason: 'Not assigned to this order' };
+        }
+        
+        if (order.status === 'in_progress') {
+          return { allowed: false, reason: 'Cannot cancel orders already in progress' };
+        }
+        
+        return { allowed: true };
+      
+      default:
+        return { allowed: false, reason: 'Invalid user role' };
+    }
   }
 
   // Parts methods

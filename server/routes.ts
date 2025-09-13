@@ -426,6 +426,195 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get specific order details with enhanced data
+  app.get('/api/v1/orders/:orderId', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.uid;
+      const userRole = req.user?.role || 'user';
+      
+      const order = await storage.getOrderWithDetails(orderId);
+      
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Check if user has permission to view this order
+      const canView = 
+        userRole === 'admin' || 
+        order.userId === userId || 
+        order.serviceProviderId === userId || 
+        order.partsProviderId === userId;
+      
+      if (!canView) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      res.json(order);
+    } catch (error) {
+      console.error('Error fetching order details:', error);
+      res.status(500).json({ message: 'Failed to fetch order details' });
+    }
+  });
+
+  // Update order status
+  app.put('/api/v1/orders/:orderId/status', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { status } = req.body;
+      const userId = req.user?.uid;
+      const userRole = req.user?.role || 'user';
+      
+      // Validate status
+      const validStatuses = ['pending', 'accepted', 'in_progress', 'completed', 'cancelled', 'refunded'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ message: 'Invalid status' });
+      }
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Check permissions and validate status transitions
+      const canUpdateStatus = await storage.validateStatusUpdate(orderId, status, userId, userRole);
+      if (!canUpdateStatus.allowed) {
+        return res.status(403).json({ message: canUpdateStatus.reason });
+      }
+      
+      const updatedOrder = await storage.updateOrder(orderId, { 
+        status: status as any,
+        updatedAt: new Date()
+      });
+      
+      // Send notifications on status change
+      await notificationService.notifyStatusChange(updatedOrder!, status);
+      
+      res.json(updatedOrder);
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      res.status(500).json({ message: 'Failed to update order status' });
+    }
+  });
+
+  // Assign service provider to order
+  app.put('/api/v1/orders/:orderId/assign', authMiddleware, requireRole(['admin', 'service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { providerId } = req.body;
+      const userRole = req.user?.role || 'user';
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Auto-assignment for service providers accepting orders
+      if (userRole === 'service_provider') {
+        const userId = req.user?.uid;
+        const canAccept = await storage.canProviderAcceptOrder(orderId, userId);
+        if (!canAccept.allowed) {
+          return res.status(403).json({ message: canAccept.reason });
+        }
+        
+        const updatedOrder = await storage.assignProviderToOrder(orderId, userId);
+        res.json(updatedOrder);
+      } else {
+        // Manual assignment by admin
+        const updatedOrder = await storage.assignProviderToOrder(orderId, providerId);
+        res.json(updatedOrder);
+      }
+    } catch (error) {
+      console.error('Error assigning provider:', error);
+      res.status(500).json({ message: 'Failed to assign provider' });
+    }
+  });
+
+  // Submit order review
+  app.post('/api/v1/orders/:orderId/review', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { rating, comment } = req.body;
+      const userId = req.user?.uid;
+      
+      // Validate input
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).json({ message: 'Rating must be between 1 and 5' });
+      }
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (order.userId !== userId) {
+        return res.status(403).json({ message: 'Only order customer can submit review' });
+      }
+      
+      if (order.status !== 'completed') {
+        return res.status(400).json({ message: 'Can only review completed orders' });
+      }
+      
+      const review = await storage.createReview({
+        orderId,
+        reviewerId: userId,
+        revieweeId: order.serviceProviderId || order.partsProviderId || '',
+        rating,
+        comment: comment || '',
+      });
+      
+      // Update order with review info
+      await storage.updateOrder(orderId, { 
+        rating,
+        review: comment || ''
+      });
+      
+      res.json(review);
+    } catch (error) {
+      console.error('Error submitting review:', error);
+      res.status(500).json({ message: 'Failed to submit review' });
+    }
+  });
+
+  // Cancel order
+  app.delete('/api/v1/orders/:orderId', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.uid;
+      const userRole = req.user?.role || 'user';
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Check cancellation permissions
+      const canCancel = await storage.canCancelOrder(orderId, userId, userRole);
+      if (!canCancel.allowed) {
+        return res.status(403).json({ message: canCancel.reason });
+      }
+      
+      const cancelledOrder = await storage.updateOrder(orderId, {
+        status: 'cancelled',
+        updatedAt: new Date()
+      });
+      
+      // Handle refunds if payment was made
+      if (order.paymentStatus === 'paid') {
+        await paymentService.processRefund(order);
+        await storage.updateOrder(orderId, { paymentStatus: 'refunded' });
+      }
+      
+      // Send cancellation notifications
+      await notificationService.notifyOrderCancellation(cancelledOrder!);
+      
+      res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      res.status(500).json({ message: 'Failed to cancel order' });
+    }
+  });
+
   // Wallet routes
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
     try {

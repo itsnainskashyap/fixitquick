@@ -14,6 +14,7 @@ import ServiceBooking from "@/pages/ServiceBooking";
 import Cart from "@/pages/Cart";
 import Checkout from "@/pages/Checkout";
 import Orders from "@/pages/Orders";
+import OrderDetail from "@/pages/OrderDetail";
 import Wallet from "@/pages/Wallet";
 import Account from "@/pages/Account";
 import ServiceProvider from "@/pages/ServiceProvider";
@@ -78,7 +79,7 @@ function Router() {
       <Route path="/cart" component={() => <ProtectedRoute component={Cart} />} />
       <Route path="/checkout" component={() => <ProtectedRoute component={Checkout} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
-      <Route path="/orders/:orderId" component={() => <ProtectedRoute component={Orders} />} />
+      <Route path="/orders/:orderId" component={() => <ProtectedRoute component={OrderDetail} />} />
       <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
       
