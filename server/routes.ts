@@ -19,8 +19,11 @@ const limiter = rateLimit({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Security middleware
-  app.use(helmet());
+  // Security middleware - more permissive in development
+  app.use(helmet({
+    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+    crossOriginEmbedderPolicy: false,
+  }));
   app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
       ? ['https://fixitquick.vercel.app', 'https://fixitquick.netlify.app']
