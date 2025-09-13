@@ -246,6 +246,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get individual service details
+  app.get('/api/v1/services/:serviceId', async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      const service = await storage.getService(serviceId);
+      
+      if (!service) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+      
+      res.json(service);
+    } catch (error) {
+      console.error('Error fetching service:', error);
+      res.status(500).json({ message: 'Failed to fetch service' });
+    }
+  });
+
+  // Get service providers for a specific service
+  app.get('/api/v1/service-providers/:serviceId', async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      
+      // First get the service to find its category
+      const service = await storage.getService(serviceId);
+      if (!service) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+      
+      // Get providers for this service category
+      const providers = await storage.getServiceProviders({
+        categoryId: service.categoryId,
+        isVerified: true
+      });
+      
+      // Enhance provider data with user information
+      const enhancedProviders = await Promise.all(
+        providers.map(async (provider) => {
+          const user = await storage.getUser(provider.userId);
+          return {
+            ...provider,
+            firstName: user?.firstName || '',
+            lastName: user?.lastName || '',
+            email: user?.email || '',
+            phone: user?.phone || '',
+          };
+        })
+      );
+      
+      res.json(enhancedProviders);
+    } catch (error) {
+      console.error('Error fetching service providers:', error);
+      res.status(500).json({ message: 'Failed to fetch service providers' });
+    }
+  });
+
   // Order routes
   app.get('/api/v1/orders', authMiddleware, async (req, res) => {
     try {

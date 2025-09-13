@@ -55,12 +55,12 @@ export default function Services() {
   }, [categoryFromUrl]);
 
   // Fetch service categories
-  const { data: categories, isLoading: loadingCategories } = useQuery({
+  const { data: categories, isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/services/categories'],
   });
 
   // Fetch services
-  const { data: services, isLoading: loadingServices } = useQuery({
+  const { data: services, isLoading: loadingServices } = useQuery<Service[]>({
     queryKey: ['/api/v1/services', selectedCategory, sortBy, priceRange, searchQuery],
   });
 
@@ -101,7 +101,7 @@ export default function Services() {
     setLocation('/checkout');
   };
 
-  const filteredServices = services?.filter((service: Service) => {
+  const filteredServices = (services || []).filter((service: Service) => {
     const matchesCategory = selectedCategory === 'all' || service.category === selectedCategory;
     const matchesSearch = !searchQuery || 
       service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -112,7 +112,7 @@ export default function Services() {
       (priceRange === 'high' && service.price > 300);
     
     return matchesCategory && matchesSearch && matchesPrice;
-  }) || [];
+  });
 
   const sortedServices = filteredServices.sort((a: Service, b: Service) => {
     switch (sortBy) {
@@ -164,7 +164,7 @@ export default function Services() {
               >
                 All Services
               </Button>
-              {categories.map((category: ServiceCategory) => (
+              {(categories || []).map((category: ServiceCategory) => (
                 <Button
                   key={category.id}
                   variant={selectedCategory === category.id ? 'default' : 'outline'}

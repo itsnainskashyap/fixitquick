@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import Services from "@/pages/Services";
+import ServiceBooking from "@/pages/ServiceBooking";
 import Orders from "@/pages/Orders";
 import Wallet from "@/pages/Wallet";
 import Account from "@/pages/Account";
@@ -70,6 +71,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/services" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:categoryId" component={() => <ProtectedRoute component={Services} />} />
+      <Route path="/services/:serviceId/book" component={() => <ProtectedRoute component={ServiceBooking} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
       <Route path="/orders/:orderId" component={() => <ProtectedRoute component={Orders} />} />
       <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
