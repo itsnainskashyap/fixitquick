@@ -6,10 +6,11 @@ import { ServiceCard } from '@/components/ServiceCard';
 import { CartSidebar } from '@/components/CartSidebar';
 import { BottomNavigation } from '@/components/BottomNavigation';
 import { PWAInstallPrompt } from '@/components/PWAInstallPrompt';
+import { useAuth } from '@/hooks/useAuth';
+import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles, TrendingUp, Clock, Star } from 'lucide-react';
 
@@ -51,8 +52,8 @@ const serviceCategories: ServiceCategory[] = [
 export default function Home() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
+  const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [cartItems, setCartItems] = useState<any[]>([]);
 
   // Fetch suggested services
   const { data: suggestedServices, isLoading: loadingSuggestions } = useQuery({
@@ -77,8 +78,20 @@ export default function Home() {
   };
 
   const handleAddToCart = (serviceId: string) => {
-    // Add service to cart logic
-    console.log('Adding to cart:', serviceId);
+    // Find service in suggested services or static data
+    const suggestedService = suggestedServices?.find((s: any) => s.id === serviceId);
+    if (suggestedService) {
+      addItem({
+        id: suggestedService.id,
+        serviceId: suggestedService.id,
+        name: suggestedService.name,
+        description: suggestedService.description,
+        price: suggestedService.price,
+        type: 'service',
+        category: suggestedService.category,
+        icon: suggestedService.icon,
+      });
+    }
   };
 
   const handleCategoryClick = (categoryId: string) => {
@@ -93,14 +106,6 @@ export default function Home() {
     setLocation('/location');
   };
 
-  const handleApplyCoupon = async (code: string) => {
-    // Apply coupon logic
-    return { success: false, message: 'Invalid coupon code' };
-  };
-
-  const handleProceedToCheckout = () => {
-    setLocation('/checkout');
-  };
 
   const getUserGreeting = () => {
     const hour = new Date().getHours();
@@ -122,7 +127,7 @@ export default function Home() {
         onCartClick={() => setIsCartOpen(true)}
         onLocationClick={handleLocationClick}
         onEmergencyClick={handleEmergencyClick}
-        cartItemsCount={cartItems.length}
+        cartItemsCount={getItemCount()}
       />
 
       <main className="pt-32 px-4 pb-6">
@@ -361,17 +366,6 @@ export default function Home() {
       <CartSidebar
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
-        items={cartItems}
-        onUpdateQuantity={(id, quantity) => {
-          setCartItems(prev => prev.map(item => 
-            item.id === id ? { ...item, quantity } : item
-          ));
-        }}
-        onRemoveItem={(id) => {
-          setCartItems(prev => prev.filter(item => item.id !== id));
-        }}
-        onApplyCoupon={handleApplyCoupon}
-        onProceedToCheckout={handleProceedToCheckout}
       />
 
       <BottomNavigation />

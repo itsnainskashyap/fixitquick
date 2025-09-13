@@ -89,6 +89,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Cart routes
+  app.get('/api/v1/cart', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // For now, return empty cart as cart is managed on frontend with localStorage
+      // This can be extended to store cart in database for cross-device sync
+      res.json({ items: [], subtotal: 0, tax: 0, discount: 0, total: 0 });
+    } catch (error) {
+      console.error('Error fetching cart:', error);
+      res.status(500).json({ message: 'Failed to fetch cart' });
+    }
+  });
+
+  app.post('/api/v1/cart/add', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Cart addition is handled on frontend for now
+      // This endpoint can be extended for server-side cart management
+      res.json({ success: true, message: 'Item added to cart' });
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+      res.status(500).json({ message: 'Failed to add item to cart' });
+    }
+  });
+
+  app.put('/api/v1/cart/update', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Cart updates are handled on frontend for now
+      res.json({ success: true, message: 'Cart updated' });
+    } catch (error) {
+      console.error('Error updating cart:', error);
+      res.status(500).json({ message: 'Failed to update cart' });
+    }
+  });
+
+  app.delete('/api/v1/cart/remove', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Cart item removal is handled on frontend for now
+      res.json({ success: true, message: 'Item removed from cart' });
+    } catch (error) {
+      console.error('Error removing from cart:', error);
+      res.status(500).json({ message: 'Failed to remove item from cart' });
+    }
+  });
+
+  app.delete('/api/v1/cart/clear', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Cart clearing is handled on frontend for now
+      res.json({ success: true, message: 'Cart cleared' });
+    } catch (error) {
+      console.error('Error clearing cart:', error);
+      res.status(500).json({ message: 'Failed to clear cart' });
+    }
+  });
+
   // Authentication routes
   app.post('/api/v1/auth/login', validateBody(loginSchema), async (req, res) => {
     try {

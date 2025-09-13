@@ -4,12 +4,15 @@ import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { CartProvider } from "@/hooks/useCart";
 
 // Import pages
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import Services from "@/pages/Services";
 import ServiceBooking from "@/pages/ServiceBooking";
+import Cart from "@/pages/Cart";
+import Checkout from "@/pages/Checkout";
 import Orders from "@/pages/Orders";
 import Wallet from "@/pages/Wallet";
 import Account from "@/pages/Account";
@@ -72,6 +75,8 @@ function Router() {
       <Route path="/services" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:categoryId" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:serviceId/book" component={() => <ProtectedRoute component={ServiceBooking} />} />
+      <Route path="/cart" component={() => <ProtectedRoute component={Cart} />} />
+      <Route path="/checkout" component={() => <ProtectedRoute component={Checkout} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
       <Route path="/orders/:orderId" component={() => <ProtectedRoute component={Orders} />} />
       <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
@@ -129,10 +134,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <CartProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </CartProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

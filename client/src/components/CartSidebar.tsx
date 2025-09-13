@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Trash2, Sparkles, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -6,51 +6,32 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { useCart } from '@/hooks/useCart';
+import { useLocation } from 'wouter';
 import { aiService, AIBundleSuggestion } from '@/lib/ai';
-
-interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  type: 'service' | 'part';
-  category: string;
-  icon?: string;
-}
 
 interface CartSidebarProps {
   isOpen: boolean;
   onClose: () => void;
-  items: CartItem[];
-  onUpdateQuantity: (id: string, quantity: number) => void;
-  onRemoveItem: (id: string) => void;
-  onApplyCoupon: (code: string) => Promise<{ success: boolean; discount?: number; message?: string }>;
-  onProceedToCheckout: () => void;
 }
 
 export function CartSidebar({
   isOpen,
   onClose,
-  items,
-  onUpdateQuantity,
-  onRemoveItem,
-  onApplyCoupon,
-  onProceedToCheckout,
 }: CartSidebarProps) {
+  const { cart, updateQuantity, removeItem, applyCoupon, removeCoupon } = useCart();
+  const [, setLocation] = useLocation();
   const [couponCode, setCouponCode] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [bundleSuggestions, setBundleSuggestions] = useState<AIBundleSuggestion[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
 
-  const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const discount = appliedCoupon?.discount || 0;
-  const total = subtotal - discount;
+  const { items, subtotal, total, discount, couponCode: appliedCouponCode } = cart;
 
   const handleQuantityChange = (id: string, newQuantity: number) => {
     if (newQuantity <= 0) {
-      onRemoveItem(id);
+      removeItem(id);
     } else {
-      onUpdateQuantity(id, newQuantity);
+      updateQuantity(id, newQuantity);
     }
   };
 
@@ -58,14 +39,18 @@ export function CartSidebar({
     if (!couponCode.trim()) return;
     
     try {
-      const result = await onApplyCoupon(couponCode);
-      if (result.success && result.discount) {
-        setAppliedCoupon({ code: couponCode, discount: result.discount });
+      const result = await applyCoupon(couponCode);
+      if (result.success) {
         setCouponCode('');
       }
     } catch (error) {
       console.error('Error applying coupon:', error);
     }
+  };
+
+  const handleProceedToCheckout = () => {
+    setLocation('/cart');
+    onClose();
   };
 
   const loadBundleSuggestions = async () => {
@@ -83,7 +68,7 @@ export function CartSidebar({
   };
 
   // Load AI suggestions when cart items change
-  useState(() => {
+  useEffect(() => {
     if (isOpen && items.length > 0) {
       loadBundleSuggestions();
     }
@@ -225,16 +210,16 @@ export function CartSidebar({
                           <span className="text-sm font-medium">Have a coupon?</span>
                         </div>
                         
-                        {appliedCoupon ? (
+                        {appliedCouponCode ? (
                           <div className="flex items-center justify-between p-2 bg-green-50 border border-green-200 rounded-lg">
                             <div>
-                              <p className="text-sm font-medium text-green-800">{appliedCoupon.code} applied</p>
-                              <p className="text-xs text-green-600">Discount: ₹{appliedCoupon.discount}</p>
+                              <p className="text-sm font-medium text-green-800">{appliedCouponCode} applied</p>
+                              <p className="text-xs text-green-600">Discount: ₹{discount}</p>
                             </div>
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => setAppliedCoupon(null)}
+                              onClick={removeCoupon}
                               className="text-green-800 hover:text-green-900"
                             >
                               Remove
@@ -292,7 +277,7 @@ export function CartSidebar({
 
                   {/* Checkout Button */}
                   <Button
-                    onClick={onProceedToCheckout}
+                    onClick={handleProceedToCheckout}
                     className="w-full"
                     size="lg"
                     data-testid="proceed-to-checkout"

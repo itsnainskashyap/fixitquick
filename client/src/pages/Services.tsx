@@ -5,6 +5,7 @@ import { Header } from '@/components/Header';
 import { ServiceCard, ServiceCardSkeleton } from '@/components/ServiceCard';
 import { CartSidebar } from '@/components/CartSidebar';
 import { BottomNavigation } from '@/components/BottomNavigation';
+import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,8 +37,8 @@ interface ServiceCategory {
 
 export default function Services() {
   const [, setLocation] = useLocation();
+  const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [cartItems, setCartItems] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('rating');
   const [priceRange, setPriceRange] = useState<string>('all');
@@ -71,35 +72,20 @@ export default function Services() {
   const handleAddToCart = (serviceId: string) => {
     const service = services?.find((s: Service) => s.id === serviceId);
     if (service) {
-      setCartItems(prev => {
-        const existing = prev.find(item => item.id === serviceId);
-        if (existing) {
-          return prev.map(item =>
-            item.id === serviceId
-              ? { ...item, quantity: item.quantity + 1 }
-              : item
-          );
-        }
-        return [...prev, {
-          id: service.id,
-          name: service.name,
-          price: service.price,
-          quantity: 1,
-          type: 'service',
-          category: service.category,
-          icon: service.icon,
-        }];
+      addItem({
+        id: service.id,
+        serviceId: service.id,
+        name: service.name,
+        description: service.description,
+        price: service.price,
+        type: 'service',
+        category: service.category,
+        icon: service.icon,
+        estimatedDuration: service.estimatedDuration,
       });
     }
   };
 
-  const handleApplyCoupon = async (code: string) => {
-    return { success: false, message: 'Invalid coupon code' };
-  };
-
-  const handleProceedToCheckout = () => {
-    setLocation('/checkout');
-  };
 
   const filteredServices = (services || []).filter((service: Service) => {
     const matchesCategory = selectedCategory === 'all' || service.category === selectedCategory;
@@ -133,7 +119,7 @@ export default function Services() {
     <div className="min-h-screen bg-background pb-20">
       <Header
         onCartClick={() => setIsCartOpen(true)}
-        cartItemsCount={cartItems.length}
+        cartItemsCount={getItemCount()}
       />
 
       <main className="pt-32 px-4 pb-6">
@@ -311,17 +297,6 @@ export default function Services() {
       <CartSidebar
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
-        items={cartItems}
-        onUpdateQuantity={(id, quantity) => {
-          setCartItems(prev => prev.map(item => 
-            item.id === id ? { ...item, quantity } : item
-          ));
-        }}
-        onRemoveItem={(id) => {
-          setCartItems(prev => prev.filter(item => item.id !== id));
-        }}
-        onApplyCoupon={handleApplyCoupon}
-        onProceedToCheckout={handleProceedToCheckout}
       />
 
       <BottomNavigation />
