@@ -100,20 +100,23 @@ export default function PartsProvider() {
 
   // Fetch provider stats
   const { data: stats } = useQuery({
-    queryKey: ['/api/v1/parts-provider/stats', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/parts-provider/stats', user?.uid],
+    queryFn: () => fetch(`/api/v1/parts-provider/stats/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
   });
 
   // Fetch parts inventory
   const { data: parts } = useQuery({
-    queryKey: ['/api/v1/parts-provider/inventory', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/parts-provider/inventory', user?.uid],
+    queryFn: () => fetch(`/api/v1/parts-provider/inventory/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
   });
 
   // Fetch orders
   const { data: orders } = useQuery({
-    queryKey: ['/api/v1/parts-provider/orders', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/parts-provider/orders', user?.uid],
+    queryFn: () => fetch(`/api/v1/parts-provider/orders/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
   });
 
   // Add part mutation
@@ -123,7 +126,8 @@ export default function PartsProvider() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/inventory', user.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/stats', user.uid] });
       setIsAddingPart(false);
       resetForm();
       toast({
@@ -147,7 +151,8 @@ export default function PartsProvider() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/inventory', user.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/stats', user.uid] });
       toast({
         title: "Stock updated",
         description: "Part stock has been updated successfully.",
@@ -162,7 +167,8 @@ export default function PartsProvider() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders', user.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/stats', user.uid] });
       toast({
         title: "Order accepted",
         description: "Order has been accepted and customer has been notified.",
@@ -177,7 +183,8 @@ export default function PartsProvider() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders', user.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/stats', user.uid] });
       toast({
         title: "Order shipped",
         description: "Order has been shipped and tracking information sent to customer.",

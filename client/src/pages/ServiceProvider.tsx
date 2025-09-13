@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
+import { apiRequest } from '@/lib/queryClient';
 import { 
   DollarSign, 
   Star, 
@@ -51,6 +53,8 @@ interface ProviderStats {
 export default function ServiceProvider() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isOnline, setIsOnline] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
 
@@ -62,30 +66,69 @@ export default function ServiceProvider() {
 
   // Fetch provider stats
   const { data: stats } = useQuery({
-    queryKey: ['/api/v1/providers/stats', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/providers/stats', user?.uid],
+    queryFn: () => fetch(`/api/v1/providers/stats/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
   });
 
   // Fetch pending orders
   const { data: pendingOrders } = useQuery({
-    queryKey: ['/api/v1/providers/orders/pending', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/providers/orders/pending', user?.uid],
+    queryFn: () => fetch(`/api/v1/providers/orders/pending/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
   });
 
   // Fetch active orders
   const { data: activeOrders } = useQuery({
-    queryKey: ['/api/v1/providers/orders/active', user.uid],
-    enabled: !!user,
+    queryKey: ['/api/v1/providers/orders/active', user?.uid],
+    queryFn: () => fetch(`/api/v1/providers/orders/active/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
+  });
+
+  // Mutations for order management
+  const acceptOrderMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await apiRequest('PUT', `/api/v1/orders/${orderId}/assign`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/orders/pending', user?.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/orders/active', user?.uid] });
+      toast({
+        title: "Order accepted",
+        description: "You have successfully accepted this order",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Failed to accept order",
+        description: "Please try again later",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateOrderStatusMutation = useMutation({
+    mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
+      const response = await apiRequest('PUT', `/api/v1/orders/${orderId}/status`, { status });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/orders/pending', user?.uid] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/orders/active', user?.uid] });
+      toast({
+        title: "Order updated",
+        description: "Order status has been updated successfully",
+      });
+    },
   });
 
   const handleAcceptOrder = async (orderId: string) => {
-    // TODO: Implement accept order logic
-    console.log('Accepting order:', orderId);
+    acceptOrderMutation.mutate(orderId);
   };
 
   const handleRejectOrder = async (orderId: string) => {
-    // TODO: Implement reject order logic
-    console.log('Rejecting order:', orderId);
+    updateOrderStatusMutation.mutate({ orderId, status: 'cancelled' });
   };
 
   const handleStartService = (orderId: string) => {

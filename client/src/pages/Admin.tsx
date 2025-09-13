@@ -104,24 +104,33 @@ export default function Admin() {
   // Fetch admin dashboard stats
   const { data: stats } = useQuery({
     queryKey: ['/api/v1/admin/stats'],
+    queryFn: () => fetch('/api/v1/admin/stats').then(res => res.json()),
     enabled: !!user,
   });
 
   // Fetch users
   const { data: users } = useQuery({
     queryKey: ['/api/v1/admin/users', searchQuery, filterRole],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (searchQuery) params.set('search', searchQuery);
+      if (filterRole && filterRole !== 'all') params.set('role', filterRole);
+      return fetch(`/api/v1/admin/users?${params.toString()}`).then(res => res.json());
+    },
     enabled: !!user,
   });
 
   // Fetch orders
   const { data: orders } = useQuery({
     queryKey: ['/api/v1/admin/orders'],
+    queryFn: () => fetch('/api/v1/admin/orders').then(res => res.json()),
     enabled: !!user,
   });
 
   // Fetch pending verifications
   const { data: verifications } = useQuery({
     queryKey: ['/api/v1/admin/verifications/pending'],
+    queryFn: () => fetch('/api/v1/admin/verifications/pending').then(res => res.json()),
     enabled: !!user,
   });
 
@@ -133,9 +142,26 @@ export default function Admin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/users'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
       toast({
         title: "User updated successfully",
         description: "User information has been updated.",
+      });
+    },
+  });
+
+  // Update user role mutation
+  const updateRoleMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const response = await apiRequest('PUT', `/api/v1/admin/users/${userId}/role`, { role });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/users'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      toast({
+        title: "User role updated",
+        description: "User role has been changed successfully.",
       });
     },
   });
@@ -154,7 +180,8 @@ export default function Admin() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/verifications'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/verifications/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
       toast({
         title: "Verification processed",
         description: "Verification status has been updated.",
@@ -177,6 +204,7 @@ export default function Admin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/orders'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
       toast({
         title: "Refund processed",
         description: "Refund has been initiated successfully.",

@@ -1,10 +1,11 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
+import { useEffect } from "react";
 
 // Import pages
 import Home from "@/pages/Home";
@@ -21,6 +22,32 @@ import ServiceProvider from "@/pages/ServiceProvider";
 import PartsProvider from "@/pages/PartsProvider";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
+
+// Dashboard routing based on user role
+const getDashboardRoute = (role: string) => {
+  switch(role) {
+    case 'service_provider': return '/provider';
+    case 'parts_provider': return '/parts-provider';  
+    case 'admin': return '/admin';
+    default: return '/orders'; // Regular user
+  }
+};
+
+// Smart home component that redirects authenticated users to their dashboard
+function SmartHome() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (isAuthenticated && user?.role && !isLoading) {
+      const dashboardPath = getDashboardRoute(user.role);
+      setLocation(dashboardPath);
+    }
+  }, [isAuthenticated, user?.role, isLoading, setLocation]);
+
+  // Show home for unauthenticated users or while loading
+  return <Home />;
+}
 
 function ProtectedRoute({ component: Component, allowedRoles }: { 
   component: React.ComponentType; 
@@ -71,8 +98,8 @@ function Router() {
       {/* Public Routes */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
       
-      {/* Public Routes - Allow guest browsing */}
-      <Route path="/" component={Home} />
+      {/* Smart Home Route - Redirects authenticated users to their role-based dashboard */}
+      <Route path="/" component={SmartHome} />
       <Route path="/services" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:categoryId" component={() => <ProtectedRoute component={Services} />} />
       <Route path="/services/:serviceId/book" component={() => <ProtectedRoute component={ServiceBooking} />} />

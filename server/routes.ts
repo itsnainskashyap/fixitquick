@@ -921,19 +921,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Service Provider routes
-  app.get('/api/v1/providers/stats/:userId', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+  app.get('/api/v1/providers/stats/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
+      const currentUserId = req.user?.uid;
+      const userRole = req.user?.role;
+      
+      // Check if user can access this provider's stats
+      if (userRole !== 'admin' && currentUserId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
       
       const orders = await storage.getOrdersByProvider(userId);
       const completedOrders = orders.filter(order => order.status === 'completed');
+      const reviews = await storage.getReviews({ revieweeId: userId });
+      
+      const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+      const avgRating = reviews.length > 0 ? totalRating / reviews.length : 0;
       
       const stats = {
         totalEarnings: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
         completionRate: orders.length > 0 ? (completedOrders.length / orders.length) * 100 : 0,
-        avgRating: 4.5, // TODO: Calculate from reviews
+        avgRating: Number(avgRating.toFixed(1)),
         ordersCompleted: completedOrders.length,
         pendingOrders: orders.filter(order => order.status === 'pending').length,
+        totalReviews: reviews.length,
+        monthlyEarnings: completedOrders
+          .filter(order => {
+            const orderDate = new Date(order.createdAt || '');
+            const now = new Date();
+            return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+          })
+          .reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
       };
       
       res.json(stats);
@@ -943,14 +962,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/providers/orders/pending/:userId', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+  app.get('/api/v1/providers/orders/pending/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
+      const currentUserId = req.user?.uid;
+      const userRole = req.user?.role;
+      
+      if (userRole !== 'admin' && currentUserId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
       const orders = await storage.getOrdersByProvider(userId, 'pending');
       res.json(orders);
     } catch (error) {
       console.error('Error fetching pending orders:', error);
       res.status(500).json({ message: 'Failed to fetch pending orders' });
+    }
+  });
+
+  app.get('/api/v1/providers/orders/active/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const currentUserId = req.user?.uid;
+      const userRole = req.user?.role;
+      
+      if (userRole !== 'admin' && currentUserId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const orders = await storage.getOrdersByProvider(userId)
+        .then(orders => orders.filter(order => ['accepted', 'in_progress'].includes(order.status)));
+      res.json(orders);
+    } catch (error) {
+      console.error('Error fetching active orders:', error);
+      res.status(500).json({ message: 'Failed to fetch active orders' });
+    }
+  });
+
+  // Provider availability management
+  app.put('/api/v1/providers/availability', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { availability, isOnline } = req.body;
+      
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+      
+      const updatedProvider = await storage.updateServiceProvider(userId, {
+        availability,
+        isOnline: isOnline !== undefined ? isOnline : provider.isOnline,
+      });
+      
+      res.json({ success: true, provider: updatedProvider });
+    } catch (error) {
+      console.error('Error updating availability:', error);
+      res.status(500).json({ message: 'Failed to update availability' });
+    }
+  });
+
+  // Provider application
+  app.post('/api/v1/providers/apply', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { categoryId, documents, serviceArea } = req.body;
+      
+      // Check if user already has a provider profile
+      const existingProvider = await storage.getServiceProvider(userId);
+      if (existingProvider) {
+        return res.status(400).json({ message: 'Provider profile already exists' });
+      }
+      
+      // Create service provider profile
+      const provider = await storage.createServiceProvider({
+        userId,
+        categoryId,
+        isVerified: false,
+        rating: '0.00',
+        totalCompletedOrders: 0,
+        availability: {},
+        serviceArea,
+        documents,
+        isOnline: false,
+      });
+      
+      // Update user role
+      await storage.updateUserRole(userId, 'service_provider');
+      
+      res.json({ success: true, provider });
+    } catch (error) {
+      console.error('Error creating provider application:', error);
+      res.status(500).json({ message: 'Failed to create provider application' });
     }
   });
 
@@ -998,6 +1101,157 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error adding part:', error);
       res.status(500).json({ message: 'Failed to add part' });
+    }
+  });
+
+  app.get('/api/v1/parts-provider/inventory/:userId', authMiddleware, requireRole(['parts_provider', 'admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const currentUserId = req.user?.uid;
+      const userRole = req.user?.role;
+      
+      if (userRole !== 'admin' && currentUserId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const parts = await storage.getPartsByProvider(userId);
+      res.json(parts);
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+      res.status(500).json({ message: 'Failed to fetch inventory' });
+    }
+  });
+
+  app.get('/api/v1/parts-provider/orders/:userId', authMiddleware, requireRole(['parts_provider', 'admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const currentUserId = req.user?.uid;
+      const userRole = req.user?.role;
+      
+      if (userRole !== 'admin' && currentUserId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const orders = await storage.getOrdersByProvider(userId);
+      res.json(orders);
+    } catch (error) {
+      console.error('Error fetching parts orders:', error);
+      res.status(500).json({ message: 'Failed to fetch parts orders' });
+    }
+  });
+
+  app.put('/api/v1/parts-provider/parts/:partId', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { partId } = req.params;
+      
+      const part = await storage.getPart(partId);
+      if (!part) {
+        return res.status(404).json({ message: 'Part not found' });
+      }
+      
+      if (part.providerId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const updatedPart = await storage.updatePart(partId, req.body);
+      res.json(updatedPart);
+    } catch (error) {
+      console.error('Error updating part:', error);
+      res.status(500).json({ message: 'Failed to update part' });
+    }
+  });
+
+  app.put('/api/v1/parts-provider/parts/:partId/stock', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { partId } = req.params;
+      const { stock } = req.body;
+      
+      const part = await storage.getPart(partId);
+      if (!part) {
+        return res.status(404).json({ message: 'Part not found' });
+      }
+      
+      if (part.providerId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const updatedPart = await storage.updatePart(partId, { stock });
+      res.json(updatedPart);
+    } catch (error) {
+      console.error('Error updating stock:', error);
+      res.status(500).json({ message: 'Failed to update stock' });
+    }
+  });
+
+  app.post('/api/v1/parts-provider/orders/:orderId/accept', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { orderId } = req.params;
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (order.partsProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const updatedOrder = await storage.updateOrder(orderId, { 
+        status: 'accepted',
+        updatedAt: new Date() 
+      });
+      
+      res.json(updatedOrder);
+    } catch (error) {
+      console.error('Error accepting order:', error);
+      res.status(500).json({ message: 'Failed to accept order' });
+    }
+  });
+
+  app.post('/api/v1/parts-provider/orders/:orderId/ship', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { orderId } = req.params;
+      const { trackingId } = req.body;
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (order.partsProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const updatedOrder = await storage.updateOrder(orderId, { 
+        status: 'shipped',
+        trackingId,
+        updatedAt: new Date() 
+      });
+      
+      res.json(updatedOrder);
+    } catch (error) {
+      console.error('Error shipping order:', error);
+      res.status(500).json({ message: 'Failed to ship order' });
+    }
+  });
+
+  // Parts provider application
+  app.post('/api/v1/parts-provider/apply', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { businessName, documents, categories } = req.body;
+      
+      // Update user role
+      await storage.updateUserRole(userId, 'parts_provider');
+      
+      res.json({ success: true, message: 'Parts provider application submitted' });
+    } catch (error) {
+      console.error('Error creating parts provider application:', error);
+      res.status(500).json({ message: 'Failed to create parts provider application' });
     }
   });
 
@@ -1064,6 +1318,215 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching orders:', error);
       res.status(500).json({ message: 'Failed to fetch orders' });
+    }
+  });
+
+  // Enhanced admin user management
+  app.put('/api/v1/admin/users/:userId', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const updates = req.body;
+      
+      const updatedUser = await storage.updateUser(userId, updates);
+      if (!updatedUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      
+      res.json(updatedUser);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      res.status(500).json({ message: 'Failed to update user' });
+    }
+  });
+
+  app.put('/api/v1/admin/users/:userId/role', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { role } = req.body;
+      
+      const validRoles = ['user', 'service_provider', 'parts_provider', 'admin'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ message: 'Invalid role' });
+      }
+      
+      const updatedUser = await storage.updateUserRole(userId, role);
+      if (!updatedUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      
+      res.json(updatedUser);
+    } catch (error) {
+      console.error('Error updating user role:', error);
+      res.status(500).json({ message: 'Failed to update user role' });
+    }
+  });
+
+  // Admin verification management
+  app.get('/api/v1/admin/verifications/pending', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      // Get unverified service providers
+      const serviceProviders = await storage.getServiceProviders({ isVerified: false });
+      
+      const verifications = await Promise.all(
+        serviceProviders.map(async (provider) => {
+          const user = await storage.getUser(provider.userId);
+          return {
+            id: provider.id,
+            userId: provider.userId,
+            userName: `${user?.firstName} ${user?.lastName}`,
+            type: 'service_provider',
+            documents: provider.documents,
+            status: 'pending',
+            submittedAt: provider.createdAt,
+          };
+        })
+      );
+      
+      res.json(verifications);
+    } catch (error) {
+      console.error('Error fetching pending verifications:', error);
+      res.status(500).json({ message: 'Failed to fetch pending verifications' });
+    }
+  });
+
+  app.post('/api/v1/admin/verifications/:verificationId', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { verificationId } = req.params;
+      const { status, notes } = req.body;
+      
+      if (!['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ message: 'Invalid verification status' });
+      }
+      
+      // Find the service provider by verification ID (using provider ID)
+      const provider = await storage.getServiceProvider(verificationId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Verification not found' });
+      }
+      
+      // Update verification status
+      const updatedProvider = await storage.updateServiceProvider(provider.userId, {
+        isVerified: status === 'approved',
+      });
+      
+      // Create notification for the provider
+      await storage.createNotification({
+        userId: provider.userId,
+        title: `Verification ${status}`,
+        message: status === 'approved' 
+          ? 'Your service provider application has been approved!'
+          : `Your service provider application was rejected. ${notes || ''}`,
+        type: status === 'approved' ? 'success' : 'error',
+        isRead: false,
+      });
+      
+      res.json({ success: true, provider: updatedProvider });
+    } catch (error) {
+      console.error('Error processing verification:', error);
+      res.status(500).json({ message: 'Failed to process verification' });
+    }
+  });
+
+  // Admin refund management
+  app.post('/api/v1/admin/refund/:orderId', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { amount, reason } = req.body;
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (order.paymentStatus !== 'paid') {
+        return res.status(400).json({ message: 'Order not paid, cannot refund' });
+      }
+      
+      // Process refund
+      await paymentService.processRefund(order);
+      
+      // Update order status
+      await storage.updateOrder(orderId, {
+        status: 'refunded',
+        paymentStatus: 'refunded',
+        updatedAt: new Date()
+      });
+      
+      // Create wallet refund transaction
+      await storage.createWalletTransaction({
+        userId: order.userId,
+        type: 'credit',
+        amount: amount || parseFloat(order.totalAmount),
+        description: `Refund: ${reason || 'Admin processed refund'}`,
+        category: 'refund',
+        orderId,
+        status: 'completed',
+      });
+      
+      // Update wallet balance
+      await storage.updateWalletBalance(order.userId, amount || parseFloat(order.totalAmount), 'credit');
+      
+      res.json({ success: true, message: 'Refund processed successfully' });
+    } catch (error) {
+      console.error('Error processing refund:', error);
+      res.status(500).json({ message: 'Failed to process refund' });
+    }
+  });
+
+  // Admin analytics
+  app.get('/api/v1/admin/analytics', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { period = '30d' } = req.query;
+      
+      const [allUsers, allOrders, serviceProviders, partsProviders] = await Promise.all([
+        storage.getUsersCount(),
+        storage.getOrders(),
+        storage.getUsersByRole('service_provider'),
+        storage.getUsersByRole('parts_provider'),
+      ]);
+      
+      const completedOrders = allOrders.filter(order => order.status === 'completed');
+      const now = new Date();
+      const periodDays = parseInt(period.toString().replace('d', ''));
+      const periodStart = new Date(now.getTime() - (periodDays * 24 * 60 * 60 * 1000));
+      
+      const recentOrders = allOrders.filter(order => 
+        new Date(order.createdAt || '') >= periodStart
+      );
+      const recentCompletedOrders = completedOrders.filter(order => 
+        new Date(order.createdAt || '') >= periodStart
+      );
+      
+      const analytics = {
+        totalUsers: allUsers,
+        totalOrders: allOrders.length,
+        totalRevenue: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
+        totalProviders: serviceProviders.length + partsProviders.length,
+        periodStats: {
+          newOrders: recentOrders.length,
+          completedOrders: recentCompletedOrders.length,
+          revenue: recentCompletedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
+          newUsers: allUsers, // TODO: Implement period-based user count
+        },
+        ordersByStatus: {
+          pending: allOrders.filter(o => o.status === 'pending').length,
+          accepted: allOrders.filter(o => o.status === 'accepted').length,
+          in_progress: allOrders.filter(o => o.status === 'in_progress').length,
+          completed: allOrders.filter(o => o.status === 'completed').length,
+          cancelled: allOrders.filter(o => o.status === 'cancelled').length,
+        },
+        providerStats: {
+          serviceProviders: serviceProviders.length,
+          partsProviders: partsProviders.length,
+          verifiedProviders: serviceProviders.filter(p => p.isVerified).length,
+          pendingVerifications: serviceProviders.filter(p => !p.isVerified).length,
+        }
+      };
+      
+      res.json(analytics);
+    } catch (error) {
+      console.error('Error fetching admin analytics:', error);
+      res.status(500).json({ message: 'Failed to fetch admin analytics' });
     }
   });
 
