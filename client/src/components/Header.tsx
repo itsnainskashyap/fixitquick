@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, ShoppingCart, Bell, Menu, AlertTriangle } from 'lucide-react';
+import { MapPin, ShoppingCart, Bell, Menu, AlertTriangle, Wallet, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AISearchBar } from './AISearchBar';
 import { useAuth } from '@/hooks/useAuth';
+import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'wouter';
 
 interface HeaderProps {
   onCartClick?: () => void;
@@ -14,6 +17,11 @@ interface HeaderProps {
   currentLocation?: string;
 }
 
+interface WalletData {
+  balance: string;
+  fixiPoints: number;
+}
+
 export function Header({
   onCartClick,
   onLocationClick,
@@ -21,8 +29,20 @@ export function Header({
   cartItemsCount = 0,
   currentLocation = 'Mumbai',
 }: HeaderProps) {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [, setLocation] = useLocation();
+
+  // Fetch wallet balance for authenticated users
+  const { data: walletData, isLoading: walletLoading } = useQuery<WalletData>({
+    queryKey: ['/api/v1/wallet/balance'],
+    enabled: isAuthenticated,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  const handleWalletClick = () => {
+    setLocation('/wallet');
+  };
 
   return (
     <>
@@ -48,37 +68,65 @@ export function Header({
               <span className="font-bold text-lg text-foreground">FixitQuick</span>
             </motion.div>
 
-            {/* Right side - Location, Notifications, Cart */}
-            <div className="flex items-center space-x-3">
+            {/* Right side - Wallet, Location, Notifications, Cart */}
+            <div className="flex items-center space-x-2 md:space-x-3">
+              {/* Wallet Balance - Only show for authenticated users */}
+              {isAuthenticated && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.2 }}
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleWalletClick}
+                    className="flex items-center space-x-1 bg-primary/5 border-primary/20 hover:bg-primary/10 transition-colors"
+                    data-testid="wallet-balance-button"
+                  >
+                    <Wallet className="w-4 h-4 text-primary" />
+                    {walletLoading ? (
+                      <Skeleton className="h-4 w-12" />
+                    ) : (
+                      <span className="text-sm font-semibold text-foreground">
+                        ₹{parseFloat(walletData?.balance || '0').toFixed(0)}
+                      </span>
+                    )}
+                    <Plus className="w-3 h-3 text-muted-foreground ml-1" />
+                  </Button>
+                </motion.div>
+              )}
+
               {/* Location Button */}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={onLocationClick}
-                className="flex items-center space-x-1 text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center space-x-1 text-muted-foreground hover:text-foreground transition-colors hidden md:flex"
                 data-testid="location-button"
               >
                 <MapPin className="w-4 h-4" />
-                <span className="text-sm font-medium hidden sm:inline">{currentLocation}</span>
+                <span className="text-sm font-medium">{currentLocation}</span>
               </Button>
 
-              {/* Notifications */}
-              <div className="relative">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2 hover:bg-muted rounded-full transition-colors"
-                  data-testid="notifications-button"
-                >
-                  <Bell className="w-5 h-5" />
-                  <Badge
-                    variant="destructive"
-                    className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+              {/* Notifications - Only show for authenticated users */}
+              {isAuthenticated && (
+                <div className="relative hidden sm:block">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="relative p-2 hover:bg-muted rounded-full transition-colors"
+                    data-testid="notifications-button"
                   >
-                    3
-                  </Badge>
-                </Button>
+                    <Bell className="w-5 h-5" />
+                    <Badge
+                      variant="destructive"
+                      className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+                    >
+                      3
+                    </Badge>
+                  </Button>
 
                 {/* Notifications Dropdown */}
                 <AnimatePresence>
@@ -106,6 +154,7 @@ export function Header({
                   )}
                 </AnimatePresence>
               </div>
+              )}
               
               {/* Cart Button */}
               <Button

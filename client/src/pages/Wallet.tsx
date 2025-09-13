@@ -40,9 +40,8 @@ interface WalletTransaction {
 }
 
 interface WalletData {
-  balance: number;
+  balance: string;
   fixiPoints: number;
-  transactions: WalletTransaction[];
 }
 
 export default function WalletPage() {
@@ -54,13 +53,13 @@ export default function WalletPage() {
   const [activeTab, setActiveTab] = useState('overview');
 
   // Fetch wallet data
-  const { data: walletData, isLoading } = useQuery({
+  const { data: walletData, isLoading } = useQuery<WalletData>({
     queryKey: ['/api/v1/wallet/balance'],
     enabled: !!user,
   });
 
   // Fetch transactions
-  const { data: transactions } = useQuery({
+  const { data: transactions } = useQuery<WalletTransaction[]>({
     queryKey: ['/api/v1/wallet/transactions'],
     enabled: !!user,
   });
@@ -242,7 +241,7 @@ export default function WalletPage() {
               </div>
               
               <div className="text-3xl font-bold mb-2">
-                ₹{walletData?.balance?.toFixed(2) || '0.00'}
+                ₹{walletData?.balance ? parseFloat(walletData.balance).toFixed(2) : '0.00'}
               </div>
               
               <div className="flex items-center justify-between">

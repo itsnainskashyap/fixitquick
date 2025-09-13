@@ -162,10 +162,25 @@ export const walletTransactions = pgTable("wallet_transactions", {
   type: varchar("type", { enum: ["credit", "debit"] }).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   description: text("description"),
+  category: varchar("category", { enum: ["topup", "payment", "refund", "withdrawal", "commission", "redemption", "penalty", "bonus"] }).default("payment"),
   orderId: varchar("order_id").references(() => orders.id),
-  razorpayPaymentId: varchar("razorpay_payment_id"),
-  status: varchar("status", { enum: ["pending", "completed", "failed"] }).default("completed"),
+  reference: varchar("reference"), // External payment ID, transfer reference, etc.
+  paymentMethod: varchar("payment_method", { enum: ["card", "upi", "netbanking", "wallet", "cash", "mock"] }),
+  status: varchar("status", { enum: ["pending", "completed", "failed", "cancelled"] }).default("completed"),
+  metadata: jsonb("metadata").$type<{
+    paymentGateway?: string;
+    gatewayTransactionId?: string;
+    failureReason?: string;
+    refundReason?: string;
+    commissionRate?: number;
+    bonusType?: string;
+    notes?: string;
+  }>(),
+  balanceBefore: decimal("balance_before", { precision: 10, scale: 2 }),
+  balanceAfter: decimal("balance_after", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
 });
 
 // Coupons and promotions
@@ -238,7 +253,7 @@ export const insertServiceCategorySchema = createInsertSchema(serviceCategories)
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
-export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true });
+export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
 export const insertCouponSchema = createInsertSchema(coupons).omit({ id: true, createdAt: true });
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });

@@ -641,14 +641,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/wallet/topup', authMiddleware, validateBody(walletTopupSchema), async (req, res) => {
     try {
       const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
       const { amount } = req.body;
       
+      // Validate amount
+      if (amount < 1 || amount > 50000) {
+        return res.status(400).json({ message: 'Amount must be between ₹1 and ₹50,000' });
+      }
+
       const paymentIntent = await paymentService.createPaymentIntent({
         amount: amount * 100, // Convert to paise
         currency: 'INR',
         metadata: {
           userId,
           type: 'wallet_topup',
+          amount: amount.toString(),
         },
       });
       
@@ -660,6 +670,253 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error creating topup order:', error);
       res.status(500).json({ message: 'Failed to create topup order' });
+    }
+  });
+
+  // Confirm wallet topup (mock success for development)
+  app.post('/api/v1/wallet/confirm-topup', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const { amount, paymentId } = req.body;
+      
+      if (!amount || !paymentId || amount < 1) {
+        return res.status(400).json({ message: 'Invalid payment details' });
+      }
+
+      // Create successful transaction record
+      const transaction = await storage.createWalletTransaction({
+        userId,
+        type: 'credit',
+        amount: parseFloat(amount),
+        description: 'Wallet top-up',
+        category: 'topup',
+        status: 'completed',
+        paymentMethod: 'mock',
+        reference: paymentId,
+      });
+      
+      // Update wallet balance
+      await storage.updateWalletBalance(userId, parseFloat(amount), 'credit');
+      
+      // Get updated balance
+      const walletData = await storage.getWalletBalance(userId);
+      
+      res.json({
+        success: true,
+        transaction,
+        balance: walletData.balance,
+        message: 'Money added successfully'
+      });
+    } catch (error) {
+      console.error('Error confirming topup:', error);
+      res.status(500).json({ message: 'Failed to confirm topup' });
+    }
+  });
+
+  // DEPRECATED: Use /api/v1/orders/:orderId/pay instead (security reasons)
+  app.post('/api/v1/wallet/pay', authMiddleware, async (req, res) => {
+    res.status(410).json({ 
+      message: 'This endpoint is deprecated for security reasons. Use POST /api/v1/orders/:orderId/pay instead.',
+      deprecated: true,
+      migrateToEndpoint: '/api/v1/orders/:orderId/pay'
+    });
+  });
+
+  // SECURE: Pay for a specific order with wallet (server validates everything)
+  app.post('/api/v1/orders/:orderId/pay', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const { orderId } = req.params;
+      
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Get and validate order
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      // Validate order ownership
+      if (order.userId !== userId) {
+        return res.status(403).json({ message: 'Access denied: not your order' });
+      }
+
+      // Validate order status
+      if (order.paymentStatus === 'paid') {
+        return res.status(400).json({ message: 'Order already paid' });
+      }
+
+      if (order.status === 'cancelled') {
+        return res.status(400).json({ message: 'Cannot pay for cancelled order' });
+      }
+
+      // SERVER CALCULATES AMOUNT (prevents client manipulation)
+      const orderAmount = parseFloat(order.totalAmount);
+      
+      // Check wallet balance
+      const walletData = await storage.getWalletBalance(userId);
+      const currentBalance = parseFloat(walletData.balance);
+      
+      if (currentBalance < orderAmount) {
+        return res.status(400).json({ 
+          message: 'Insufficient wallet balance',
+          currentBalance: currentBalance.toFixed(2),
+          requiredAmount: orderAmount.toFixed(2),
+          shortfall: (orderAmount - currentBalance).toFixed(2)
+        });
+      }
+
+      // ATOMIC OPERATION: Create transaction + Update wallet + Update order
+      const transaction = await storage.createWalletTransaction({
+        userId,
+        type: 'debit',
+        amount: orderAmount.toString(),
+        description: `Payment for Order #${orderId.slice(-8)}`,
+        category: 'payment',
+        orderId,
+        paymentMethod: 'wallet',
+        status: 'completed'
+      });
+      
+      // Deduct from wallet balance
+      await storage.updateWalletBalance(userId, orderAmount, 'debit');
+      
+      // Update order payment status
+      await storage.updateOrder(orderId, {
+        paymentStatus: 'paid',
+        status: order.status === 'pending' ? 'accepted' : order.status
+      });
+      
+      // Get updated data
+      const updatedWalletData = await storage.getWalletBalance(userId);
+      const updatedOrder = await storage.getOrder(orderId);
+      
+      res.json({
+        success: true,
+        transaction,
+        order: updatedOrder,
+        walletBalance: updatedWalletData.balance,
+        message: 'Payment successful'
+      });
+    } catch (error) {
+      console.error('Error processing order payment:', error);
+      res.status(500).json({ message: 'Payment processing failed' });
+    }
+  });
+
+  // Process wallet refund
+  app.post('/api/v1/wallet/refund', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const { amount, orderId, reason } = req.body;
+      
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ message: 'Invalid refund amount' });
+      }
+
+      // Create credit transaction for refund
+      const transaction = await storage.createWalletTransaction({
+        userId,
+        type: 'credit',
+        amount: amount,
+        description: `Refund: ${reason || 'Order cancelled'}`,
+        category: 'refund',
+        status: 'completed',
+        orderId,
+      });
+      
+      // Add to wallet balance
+      await storage.updateWalletBalance(userId, amount, 'credit');
+      
+      // Get updated balance
+      const walletData = await storage.getWalletBalance(userId);
+      
+      res.json({
+        success: true,
+        transaction,
+        balance: walletData.balance,
+        message: 'Refund processed successfully'
+      });
+    } catch (error) {
+      console.error('Error processing refund:', error);
+      res.status(500).json({ message: 'Refund processing failed' });
+    }
+  });
+
+  // Redeem FixiPoints
+  app.post('/api/v1/wallet/redeem-points', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const { points, for: redeemFor } = req.body;
+      
+      if (!points || points < 100) {
+        return res.status(400).json({ message: 'Minimum 100 points required to redeem' });
+      }
+
+      // Get current user data
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      const currentPoints = user.fixiPoints || 0;
+      if (currentPoints < points) {
+        return res.status(400).json({ 
+          message: 'Insufficient FixiPoints',
+          currentPoints,
+          requiredPoints: points
+        });
+      }
+
+      // Calculate redemption value (10 points = ₹1)
+      const redemptionValue = Math.floor(points / 10);
+      
+      // Update user points
+      await storage.updateUser(userId, {
+        fixiPoints: currentPoints - points
+      });
+
+      // Add redemption amount to wallet
+      const transaction = await storage.createWalletTransaction({
+        userId,
+        type: 'credit',
+        amount: redemptionValue,
+        description: `FixiPoints redeemed: ${points} points`,
+        category: 'redemption',
+        status: 'completed',
+      });
+      
+      await storage.updateWalletBalance(userId, redemptionValue, 'credit');
+      
+      // Get updated data
+      const walletData = await storage.getWalletBalance(userId);
+      
+      res.json({
+        success: true,
+        transaction,
+        pointsRedeemed: points,
+        redemptionValue,
+        remainingPoints: walletData.fixiPoints,
+        balance: walletData.balance,
+        message: `Successfully redeemed ${points} FixiPoints for ₹${redemptionValue}`
+      });
+    } catch (error) {
+      console.error('Error redeeming points:', error);
+      res.status(500).json({ message: 'Points redemption failed' });
     }
   });
 
