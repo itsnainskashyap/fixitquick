@@ -186,6 +186,37 @@ class PaymentService {
       lastUpdated: new Date()
     };
   }
+
+  async processRefund(orderId: string, amount: number, reason?: string) {
+    console.log('Mock: Processing refund for order:', orderId, 'amount:', amount, 'reason:', reason);
+    
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    return {
+      id: 'rfnd_mock_' + Date.now(),
+      orderId,
+      amount,
+      status: 'processed',
+      reason: reason || 'Customer request',
+      processedAt: new Date(),
+      success: true
+    };
+  }
+
+  async handlePaymentSuccess(paymentData: any) {
+    console.log('Mock: Handling payment success:', paymentData);
+    
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    return {
+      success: true,
+      paymentId: paymentData.paymentId || 'pay_mock_' + Date.now(),
+      orderId: paymentData.orderId,
+      amount: paymentData.amount,
+      status: 'captured',
+      capturedAt: new Date()
+    };
+  }
 }
 
 export const paymentService = new PaymentService();

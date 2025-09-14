@@ -1,6 +1,46 @@
 // Mock Firebase Admin SDK - stub for development without API keys
 console.log('Using Firebase stub - no real Firebase connection');
 
+interface MockDocSnapshot {
+  exists: boolean;
+  data: () => any;
+  ref: any;
+}
+
+interface MockQuerySnapshot {
+  docs: MockDocSnapshot[];
+  size: number;
+}
+
+interface MockBatch {
+  update: (docRef: any, data: any) => void;
+  set: (docRef: any, data: any) => void;
+  delete: (docRef: any) => void;
+  commit: () => Promise<void>;
+}
+
+interface MockWhereQuery {
+  where: (field: string, operator: string, value: any) => MockWhereQuery;
+  limit: (count: number) => MockWhereQuery;
+  get: () => Promise<MockQuerySnapshot>;
+}
+
+interface MockCollection {
+  doc: (id: string) => MockDoc;
+  add: (data: any) => Promise<{ id: string; }>;
+  where: (field: string, operator: string, value: any) => MockWhereQuery;
+  limit: (count: number) => MockWhereQuery;
+  get: () => Promise<MockQuerySnapshot>;
+}
+
+interface MockDoc {
+  set: (data: any, options?: any) => Promise<{ id: string; }>;
+  get: () => Promise<MockDocSnapshot>;
+  update: (data: any) => Promise<{ id: string; }>;
+  delete: () => Promise<{ id: string; }>;
+  ref: any;
+}
+
 // Mock implementations
 export const firebaseAdmin = {
   apps: { length: 1 }
@@ -16,22 +56,83 @@ export const auth = {
 };
 
 export const db = {
-  collection: (name: string) => ({
-    doc: (id: string) => ({
-      set: async (data: any) => ({ id }),
-      get: async () => ({
+  collection: (name: string): MockCollection => ({
+    doc: (id: string): MockDoc => ({
+      set: async (data: any, options?: any) => ({ id }),
+      get: async (): Promise<MockDocSnapshot> => ({
         exists: true,
-        data: () => ({ id, createdAt: new Date() })
+        data: () => ({ 
+          id, 
+          createdAt: new Date(),
+          // Add common properties that notifications service expects
+          phone: '+1234567890',
+          firstName: 'Mock',
+          lastName: 'User',
+          userId: id
+        }),
+        ref: { id }
       }),
       update: async (data: any) => ({ id }),
-      delete: async () => ({ id })
+      delete: async () => ({ id }),
+      ref: { id }
     }),
     add: async (data: any) => ({ id: 'mock-id-' + Date.now() }),
-    where: () => ({
-      get: async () => ({
-        docs: []
+    where: function (field: string, operator: string, value: any): MockWhereQuery {
+      const self = this;
+      return {
+        where: function (field: string, operator: string, value: any): MockWhereQuery {
+          return self.where(field, operator, value);
+        },
+        limit: function (count: number): MockWhereQuery {
+          return {
+            where: function (field: string, operator: string, value: any): MockWhereQuery {
+              return self.where(field, operator, value);
+            },
+            limit: function (count: number): MockWhereQuery {
+              return self.limit(count);
+            },
+            get: async (): Promise<MockQuerySnapshot> => ({
+              docs: [], // Empty for mock
+              size: 0
+            })
+          };
+        },
+        get: async (): Promise<MockQuerySnapshot> => ({
+          docs: [], // Empty for mock
+          size: 0
+        })
+      };
+    },
+    limit: (count: number): MockWhereQuery => ({
+      where: function (field: string, operator: string, value: any): MockWhereQuery {
+        return arguments.callee as any;
+      },
+      limit: function (count: number): MockWhereQuery {
+        return arguments.callee as any;
+      },
+      get: async (): Promise<MockQuerySnapshot> => ({
+        docs: [], // Empty for mock
+        size: 0
       })
+    }),
+    get: async (): Promise<MockQuerySnapshot> => ({
+      docs: [], // Empty for mock
+      size: 0
     })
+  }),
+  batch: (): MockBatch => ({
+    update: (docRef: any, data: any) => {
+      console.log('Mock batch update:', docRef.id, data);
+    },
+    set: (docRef: any, data: any) => {
+      console.log('Mock batch set:', docRef.id, data);
+    },
+    delete: (docRef: any) => {
+      console.log('Mock batch delete:', docRef.id);
+    },
+    commit: async () => {
+      console.log('Mock batch commit');
+    }
   })
 };
 
@@ -46,10 +147,16 @@ export const storage = {
 };
 
 export const messaging = {
-  send: async (message: any) => ({ messageId: 'mock-message-id' }),
+  send: async (message: any) => ({ 
+    messageId: 'mock-message-id',
+    success: true 
+  }),
   sendMulticast: async (message: any) => ({ 
-    responses: [{ messageId: 'mock-message-id' }],
-    successCount: 1,
+    responses: message.tokens ? message.tokens.map((token: string, idx: number) => ({ 
+      messageId: `mock-message-${idx}`,
+      success: true
+    })) : [{ messageId: 'mock-message-id', success: true }],
+    successCount: message.tokens ? message.tokens.length : 1,
     failureCount: 0
   })
 };
@@ -76,7 +183,7 @@ export const sendNotification = async (tokens: string[], payload: {
 }) => {
   console.log('Mock: Sending notification to tokens:', tokens.length, 'payload:', payload);
   return {
-    responses: tokens.map(token => ({ messageId: 'mock-msg-' + Date.now() })),
+    responses: tokens.map(token => ({ messageId: 'mock-msg-' + Date.now(), success: true })),
     successCount: tokens.length,
     failureCount: 0
   };
@@ -101,7 +208,7 @@ export const createUser = async (userData: {
   role?: string;
 }) => {
   console.log('Mock: Creating user:', userData);
-  return { uid: userData.uid, ...userData };
+  return { ...userData };
 };
 
 export const updateUser = async (uid: string, userData: any) => {

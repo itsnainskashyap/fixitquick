@@ -56,6 +56,23 @@ export class OpenRouterService {
     console.log('🔑 API Key configured:', this.apiKey ? 'YES' : 'NO');
   }
 
+  async generateContent(prompt: string): Promise<string> {
+    console.log('🤖 OpenRouter: Generating content for prompt');
+    
+    const messages: OpenRouterMessage[] = [
+      {
+        role: 'system',
+        content: 'You are a helpful assistant that generates content based on prompts. If asked to generate JSON, respond with valid JSON only.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ];
+    
+    return this.makeRequest(messages, { temperature: 0.7 });
+  }
+
   async makeRequest(
     messages: OpenRouterMessage[],
     options: {

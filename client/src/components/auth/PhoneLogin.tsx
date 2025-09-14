@@ -49,7 +49,7 @@ const phoneSchema = z.object({
     .min(1, 'Phone number is required')
     .regex(/^\d+$/, 'Phone number should contain only digits')
     .min(7, 'Phone number is too short')
-    .max(12, 'Phone number is too long'),
+    .max(11, 'Phone number is too long'),
 });
 
 type PhoneFormData = z.infer<typeof phoneSchema>;

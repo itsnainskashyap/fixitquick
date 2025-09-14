@@ -419,6 +419,40 @@ class ServerAIService {
     }
   }
 
+  async generateContent(prompt: string): Promise<string> {
+    console.log('🤖 AI: Generating content for prompt length:', prompt.length);
+    
+    try {
+      // Use OpenRouter for content generation
+      const result = await openRouterService.generateContent(prompt);
+      return result;
+    } catch (error) {
+      console.error('❌ Error generating AI content:', error);
+      
+      // Fallback to mock response for notifications
+      if (prompt.includes('notification') || prompt.includes('Notification')) {
+        return JSON.stringify({
+          title: 'FixitQuick Update',
+          body: 'You have a new update from FixitQuick'
+        });
+      }
+      
+      // Generic fallback
+      return 'Content generation temporarily unavailable. Please try again later.';
+    }
+  }
+
+  async generateServiceIcon(name: string, category: string, style?: string): Promise<string> {
+    console.log('AI: Generating service icon for:', name, 'category:', category, 'style:', style);
+    
+    // Use the existing category icon mapping as fallback
+    const icon = this.getCategoryIcon(category);
+    
+    // In future, this could use AI to generate custom SVG icons
+    // For now, return the category icon
+    return icon;
+  }
+
   private getCategoryIcon(categoryName: string): string {
     const iconMap: Record<string, string> = {
       'electrician': '⚡',

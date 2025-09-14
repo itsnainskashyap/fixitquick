@@ -30,18 +30,26 @@ const limiter = rateLimit({
 // Specific rate limiters for OTP endpoints
 const otpRequestLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 requests per minute per IP (allows 3-second resends)
+  max: 3, // 3 requests per minute per IP (tightened for security)
   message: 'Too many OTP requests. Please wait before requesting again.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting in development for easier testing
+    return process.env.NODE_ENV === 'development' && process.env.SKIP_OTP_RATE_LIMIT === 'true';
+  },
 });
 
 const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 verify attempts per 15 minutes per IP
+  max: 15, // 15 verify attempts per 15 minutes per IP (allows for typos)
   message: 'Too many verification attempts. Please wait before trying again.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting in development for easier testing
+    return process.env.NODE_ENV === 'development' && process.env.SKIP_OTP_RATE_LIMIT === 'true';
+  },
 });
 
 // Validation schemas for API routes
@@ -125,16 +133,23 @@ const searchAnalyticsSchema = z.object({
 const otpRequestSchema = z.object({
   phone: z.string()
     .min(8, 'Phone number must be at least 8 digits')
-    .max(18, 'Phone number cannot exceed 18 characters')
-    .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format. Please use format: +[country code][number]'),
+    .max(16, 'Phone number cannot exceed 16 characters')
+    .regex(/^\+[1-9]\d{7,14}$/, 'Phone number must be in international format: +[country code][number]')
+    .refine((phone) => {
+      // Additional validation using Twilio service
+      return twilioService.isValidPhoneNumber(phone);
+    }, 'Invalid phone number format'),
 });
 
 const otpVerifySchema = z.object({
   phone: z.string()
     .min(8, 'Phone number must be at least 8 digits')
-    .max(18, 'Phone number cannot exceed 18 characters')
-    .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format')
-    .regex(/^(\+?[1-9]\d{0,3})?[0-9\s\-\(\)]{7,14}$/, 'Invalid phone number format'),
+    .max(16, 'Phone number cannot exceed 16 characters')
+    .regex(/^\+[1-9]\d{7,14}$/, 'Phone number must be in international format: +[country code][number]')
+    .refine((phone) => {
+      // Additional validation using Twilio service
+      return twilioService.isValidPhoneNumber(phone);
+    }, 'Invalid phone number format'),
   code: z.string()
     .length(6, 'Verification code must be exactly 6 digits')
     .regex(/^\d{6}$/, 'Verification code must contain only digits'),
@@ -329,6 +344,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Development helper routes (only in development)
+  if (process.env.NODE_ENV === 'development') {
+    // GET /api/dev/otp-status - Development helper for OTP system status
+    app.get('/api/dev/otp-status', async (req, res) => {
+      try {
+        const stats = await twilioService.getStatistics(24);
+        const envVars = {
+          TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
+          TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN, 
+          TWILIO_FROM_NUMBER: !!process.env.TWILIO_FROM_NUMBER,
+          TWILIO_DEV_FALLBACK: process.env.TWILIO_DEV_FALLBACK,
+          SKIP_OTP_RATE_LIMIT: process.env.SKIP_OTP_RATE_LIMIT,
+          NODE_ENV: process.env.NODE_ENV
+        };
+        
+        res.json({
+          success: true,
+          statistics: stats,
+          environment: envVars,
+          recommendations: {
+            forTrialAccounts: 'Set TWILIO_DEV_FALLBACK=true to enable console fallback',
+            forRateLimiting: 'Set SKIP_OTP_RATE_LIMIT=true to skip rate limits in development',
+            phoneFormat: 'Use E.164 format: +[country code][number] (e.g., +919876543210)'
+          }
+        });
+      } catch (error) {
+        console.error('Error getting OTP status:', error);
+        res.status(500).json({ success: false, message: 'Failed to get OTP status' });
+      }
+    });
+  }
+
   // Authentication routes
   
   // POST /api/v1/auth/otp/request - Send OTP with rate limiting
@@ -349,11 +396,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await twilioService.sendOTP(phone, ip, userAgent);
       
       if (!result.success) {
-        return res.status(400).json({
+        // Enhanced error handling with development hints
+        let statusCode = 400;
+        let enhancedMessage = result.message;
+        
+        // Add development hints for common issues
+        if (process.env.NODE_ENV === 'development') {
+          if (result.message?.includes('unverified') || result.message?.includes('trial')) {
+            enhancedMessage += ' [DEV TIP: Set TWILIO_DEV_FALLBACK=true to enable console logging fallback]';
+          } else if (result.message?.includes('phone number format')) {
+            enhancedMessage += ' [DEV TIP: Use format +[country code][number], e.g., +919876543210]';
+          } else if (result.message?.includes('Too many requests')) {
+            enhancedMessage += ' [DEV TIP: Set SKIP_OTP_RATE_LIMIT=true to skip rate limiting in development]';
+          }
+        }
+        
+        return res.status(statusCode).json({
           success: false,
-          message: result.message,
+          message: enhancedMessage,
           canResend: result.canResend,
-          nextResendAt: result.nextResendAt
+          nextResendAt: result.nextResendAt,
+          environment: process.env.NODE_ENV || 'development'
         });
       }
 
@@ -362,7 +425,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: result.message,
         challengeId: result.challengeId,
         canResend: result.canResend,
-        nextResendAt: result.nextResendAt
+        nextResendAt: result.nextResendAt,
+        environment: process.env.NODE_ENV || 'development'
       });
 
     } catch (error) {
@@ -424,7 +488,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isNewUser = true;
         needsOnboarding = true;
         user = await storage.createUser({
-          id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           phone,
           role: 'user',
           isVerified: true,
@@ -741,7 +804,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         // Create new user
         user = await storage.createUser({
-          id: uid,
           email,
           firstName: firstName || '',
           lastName: lastName || '',
@@ -1176,7 +1238,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/ai/generate-icon', authMiddleware, validateBody(iconGenerationSchema), async (req, res) => {
     try {
       const { name, category, style } = req.body;
-      const icon = await aiService.generateServiceIcon({ name, category, style });
+      const icon = await aiService.generateServiceIcon(name, category, style);
       res.json({ icon });
     } catch (error) {
       console.error('Icon generation error:', error);
@@ -1265,7 +1327,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get services from those categories
       let suggested = [];
-      for (const categoryId of [...new Set(recentCategories)]) {
+      for (const categoryId of Array.from(new Set(recentCategories))) {
         const categoryServices = await storage.getServicesByCategory(categoryId);
         suggested.push(...categoryServices.slice(0, 2));
       }
@@ -1313,14 +1375,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get providers for this service category
       const providers = await storage.getServiceProviders({
-        categoryId: service.categoryId,
+        categoryId: service.categoryId ?? '',
         isVerified: true
       });
       
       // Enhance provider data with user information
       const enhancedProviders = await Promise.all(
         providers.map(async (provider) => {
-          const user = await storage.getUser(provider.userId);
+          const user = await storage.getUser(provider.userId ?? '');
           return {
             ...provider,
             firstName: user?.firstName || '',
@@ -1395,7 +1457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             case 'price-high': return parseFloat(b.price) - parseFloat(a.price);
             case 'rating': return parseFloat(b.rating || '0') - parseFloat(a.rating || '0');
             case 'popular': return (b.totalSold || 0) - (a.totalSold || 0);
-            case 'newest': return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            case 'newest': return new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
             default: return 0;
           }
         });
@@ -1429,7 +1491,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (provider) {
           providerInfo = {
             id: provider.id,
-            name: `${provider.firstName || ''} ${provider.lastName || ''}`.trim(),
+            name: `${provider.firstName ?? ''} ${provider.lastName ?? ''}`.trim(),
             isVerified: provider.isVerified || false,
           };
         }
@@ -1437,7 +1499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get related parts (same category, different provider)
       const relatedParts = await storage.getParts({
-        categoryId: part.categoryId,
+        categoryId: part.categoryId ?? undefined,
         isActive: true
       });
       
@@ -1516,7 +1578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.id;
       const { status } = req.query;
       
-      const orders = await storage.getOrdersByUser(userId, status as string);
+      const orders = await storage.getOrdersByUser(userId ?? '', status as string);
       res.json(orders);
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -1527,7 +1589,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
-      const orders = await storage.getRecentOrders(userId, 3);
+      const orders = await storage.getRecentOrders(userId ?? '', 3);
       res.json(orders);
     } catch (error) {
       console.error('Error fetching recent orders:', error);
@@ -1648,18 +1710,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Check permissions and validate status transitions
-      const canUpdateStatus = await storage.validateStatusUpdate(orderId, status, userId, userRole);
+      const canUpdateStatus = await storage.validateStatusUpdate(orderId, status, userId ?? '', userRole);
       if (!canUpdateStatus.allowed) {
         return res.status(403).json({ message: canUpdateStatus.reason });
       }
       
       const updatedOrder = await storage.updateOrder(orderId, { 
-        status: status as any,
-        updatedAt: new Date()
+        status: status as any
       });
       
       // Send notifications on status change
-      await notificationService.notifyStatusChange(updatedOrder!, status);
+      await notificationService.notifyStatusChange(updatedOrder?.userId ?? '', orderId, status);
       
       res.json(updatedOrder);
     } catch (error) {
@@ -1683,12 +1744,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Auto-assignment for service providers accepting orders
       if (userRole === 'service_provider') {
         const userId = req.user?.id;
-        const canAccept = await storage.canProviderAcceptOrder(orderId, userId);
+        const canAccept = await storage.canProviderAcceptOrder(orderId, userId ?? '');
         if (!canAccept.allowed) {
           return res.status(403).json({ message: canAccept.reason });
         }
         
-        const updatedOrder = await storage.assignProviderToOrder(orderId, userId);
+        const updatedOrder = await storage.assignProviderToOrder(orderId, userId ?? '');
         res.json(updatedOrder);
       } else {
         // Manual assignment by admin
@@ -1760,24 +1821,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Check cancellation permissions
-      const canCancel = await storage.canCancelOrder(orderId, userId, userRole);
+      const canCancel = await storage.canCancelOrder(orderId, userId ?? '', userRole);
       if (!canCancel.allowed) {
         return res.status(403).json({ message: canCancel.reason });
       }
       
       const cancelledOrder = await storage.updateOrder(orderId, {
-        status: 'cancelled',
-        updatedAt: new Date()
+        status: 'cancelled'
       });
       
       // Handle refunds if payment was made
       if (order.paymentStatus === 'paid') {
-        await paymentService.processRefund(order);
+        await paymentService.processRefund(orderId, parseFloat(order.totalAmount), 'Order cancelled');
         await storage.updateOrder(orderId, { paymentStatus: 'refunded' });
       }
       
       // Send cancellation notifications
-      await notificationService.notifyOrderCancellation(cancelledOrder!);
+      await notificationService.notifyOrderCancellation(cancelledOrder?.userId ?? '', orderId, 'Order cancelled by user');
       
       res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
     } catch (error) {
@@ -1790,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
-      const wallet = await storage.getWalletBalance(userId);
+      const wallet = await storage.getWalletBalance(userId ?? '');
       res.json(wallet);
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
@@ -1801,7 +1861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/transactions', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
-      const transactions = await storage.getWalletTransactions(userId, 20);
+      const transactions = await storage.getWalletTransactions(userId ?? '', 20);
       res.json(transactions);
     } catch (error) {
       console.error('Error fetching transactions:', error);
@@ -1862,7 +1922,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transaction = await storage.createWalletTransaction({
         userId,
         type: 'credit',
-        amount: parseFloat(amount),
+        amount: parseFloat(amount).toString(),
         description: 'Wallet top-up',
         category: 'topup',
         status: 'completed',
@@ -2092,7 +2152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transaction = await storage.createWalletTransaction({
         userId,
         type: 'credit',
-        amount: redemptionValue,
+        amount: redemptionValue.toString(),
         description: `FixiPoints redeemed: ${points} points`,
         category: 'redemption',
         status: 'completed',
@@ -2188,8 +2248,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied' });
       }
       
-      const orders = await storage.getOrdersByProvider(userId)
-        .then(orders => orders.filter(order => ['accepted', 'in_progress'].includes(order.status)));
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
+      // TypeScript assertion since we've checked userId is not null above
+      const orders = await storage.getOrdersByProvider(userId!)
+        .then(orders => orders.filter(order => order.status && ['accepted', 'in_progress'].includes(order.status)));
       res.json(orders);
     } catch (error) {
       console.error('Error fetching active orders:', error);
@@ -2203,12 +2268,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.id;
       const { availability, isOnline } = req.body;
       
-      const provider = await storage.getServiceProvider(userId);
+      const provider = await storage.getServiceProvider(userId ?? '');
       if (!provider) {
         return res.status(404).json({ message: 'Provider profile not found' });
       }
       
-      const updatedProvider = await storage.updateServiceProvider(userId, {
+      const updatedProvider = await storage.updateServiceProvider(userId ?? '', {
         availability,
         isOnline: isOnline !== undefined ? isOnline : provider.isOnline,
       });
@@ -2225,6 +2290,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user?.id;
       const { categoryId, documents, serviceArea } = req.body;
+      
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
       
       // Check if user already has a provider profile
       const existingProvider = await storage.getServiceProvider(userId);
@@ -2398,8 +2467,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const updatedOrder = await storage.updateOrder(orderId, { 
-        status: 'accepted',
-        updatedAt: new Date() 
+        status: 'accepted'
       });
       
       res.json(updatedOrder);
@@ -2425,10 +2493,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const updatedOrder = await storage.updateOrder(orderId, { 
-        status: 'shipped',
-        trackingId,
-        updatedAt: new Date() 
+        status: 'in_progress'
       });
+      
+      // Store tracking info separately if needed
+      if (trackingId) {
+        await storage.setSetting(`tracking_${orderId}`, trackingId, 'Order tracking ID');
+      }
       
       res.json(updatedOrder);
     } catch (error) {
@@ -2444,7 +2515,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { businessName, documents, categories } = req.body;
       
       // Update user role
-      await storage.updateUserRole(userId, 'parts_provider');
+      await storage.updateUserRole(userId ?? '', 'parts_provider' as 'user' | 'service_provider' | 'parts_provider' | 'admin');
       
       res.json({ success: true, message: 'Parts provider application submitted' });
     } catch (error) {
@@ -2489,15 +2560,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       let users;
       if (search) {
-        users = await storage.searchUsers(search as string, role as string);
+        users = await storage.searchUsers(search as string, role as 'user' | 'service_provider' | 'parts_provider' | 'admin');
       } else if (role && role !== 'all') {
-        users = await storage.getUsersByRole(role as string);
+        users = await storage.getUsersByRole(role as 'user' | 'service_provider' | 'parts_provider' | 'admin');
       } else {
         users = await storage.getUsersByRole('user'); // Get all users
         const providers = await Promise.all([
-          storage.getUsersByRole('service_provider'),
-          storage.getUsersByRole('parts_provider'),
-          storage.getUsersByRole('admin')
+          storage.getUsersByRole('service_provider' as 'user' | 'service_provider' | 'parts_provider' | 'admin'),
+          storage.getUsersByRole('parts_provider' as 'user' | 'service_provider' | 'parts_provider' | 'admin'),
+          storage.getUsersByRole('admin' as 'user' | 'service_provider' | 'parts_provider' | 'admin')
         ]);
         users = [...users, ...providers.flat()];
       }
@@ -2578,12 +2649,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (order.userId === userId) {
         receiverId = order.serviceProviderId || order.partsProviderId || '';
       } else {
-        receiverId = order.userId;
+        receiverId = order.userId || '';
       }
       
       const chatMessage = await storage.createChatMessage({
         orderId,
-        senderId: userId,
+        senderId: userId ?? '',
         receiverId,
         message: message.trim(),
         messageType,
@@ -2615,7 +2686,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user?.id;
       const limit = parseInt(req.query.limit as string) || 50;
       
-      const notifications = await storage.getNotifications(userId, limit);
+      const notifications = await storage.getNotifications(userId ?? '', limit);
       res.json(notifications);
     } catch (error) {
       console.error('Error fetching notifications:', error);
@@ -2627,6 +2698,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { notificationId } = req.params;
       const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
       
       // Verify notification belongs to user (security check)
       const notifications = await storage.getNotifications(userId, 1000);
@@ -2692,7 +2767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const verifications = await Promise.all(
         serviceProviders.map(async (provider) => {
-          const user = await storage.getUser(provider.userId);
+          const user = await storage.getUser(provider.userId ?? '');
           return {
             id: provider.id,
             userId: provider.userId,
@@ -2728,18 +2803,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Update verification status
-      const updatedProvider = await storage.updateServiceProvider(provider.userId, {
+      const updatedProvider = await storage.updateServiceProvider(provider.userId ?? '', {
         isVerified: status === 'approved',
       });
       
       // Create notification for the provider
       await storage.createNotification({
-        userId: provider.userId,
+        userId: provider.userId ?? '',
         title: `Verification ${status}`,
-        message: status === 'approved' 
+        body: status === 'approved' 
           ? 'Your service provider application has been approved!'
           : `Your service provider application was rejected. ${notes || ''}`,
-        type: status === 'approved' ? 'success' : 'error',
+        type: 'system',
         isRead: false,
       });
       
@@ -2766,13 +2841,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Process refund
-      await paymentService.processRefund(order);
+      await paymentService.processRefund(orderId, amount || parseFloat(order.totalAmount), reason || 'Admin processed refund');
       
       // Update order status
       await storage.updateOrder(orderId, {
         status: 'refunded',
-        paymentStatus: 'refunded',
-        updatedAt: new Date()
+        paymentStatus: 'refunded'
       });
       
       // Create wallet refund transaction
@@ -2787,7 +2861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Update wallet balance
-      await storage.updateWalletBalance(order.userId, amount || parseFloat(order.totalAmount), 'credit');
+      await storage.updateWalletBalance(order.userId ?? '', amount || parseFloat(order.totalAmount), 'credit');
       
       res.json({ success: true, message: 'Refund processed successfully' });
     } catch (error) {
@@ -2856,10 +2930,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Payment webhook
   app.post('/api/v1/webhooks/payment', async (req, res) => {
     try {
-      const signature = req.headers['x-razorpay-signature'];
+      const signature = req.headers['x-razorpay-signature'] as string;
       const isValid = paymentService.verifyWebhookSignature(
         JSON.stringify(req.body),
-        signature
+        signature ?? ''
       );
       
       if (!isValid) {

@@ -1,0 +1,195 @@
+Primary goals: app fully working end-to-end — auth/SMS, payments, admin connections, profile/address/payment flows, UI fixes, remove fake data, PWA install prompt, and final polish.
+
+Tasks (priority order)
+
+1. Twilio / SMS OTP
+
+Configure Twilio to send OTPs to all Indian + international numbers.
+
+Use correct API keys and phone numbers; handle international formats (+countrycode).
+
+Implement reliable OTP flow: request → send SMS → verify. Add rate-limit & resend logic.
+
+
+
+2. OpenRouter / AI API
+
+Configure real OpenRouter API (or configured AI router) for AI features (search suggestions, smart suggestions).
+
+Add server-side config (secure keys), fallbacks if API fails.
+
+
+
+3. Homepage / UI
+
+Replace generic text with logged-in user’s name at top (e.g., “Hi, Nains”).
+
+Remove glowing/over-the-top effects. Keep clean minimal UI. Do not add glowing effect.
+
+Fix top-right red mark (investigate CSS/notification badge error) — remove or show only when intended.
+
+Ensure sound effects work where needed (toggle in settings).
+
+
+
+4. Search bar
+
+Make search feel “AI-like”: typeahead suggestions from OpenRouter, subtle animation (loading indicator), smooth UX.
+
+Keep animations minimal (no heavy glowing).
+
+
+
+5. Service list & Cart UI
+
+In service listing, show small cards: 3 cards per row (one-line small cards).
+
+In service detail / add-to-cart, quantity control should display - 1 + style (minus, number, plus).
+
+
+
+6. Admin / Provider / Parts-Provider panels
+
+Fix access issues: admin login and permissions, provider-panel, parts-provider-panel.
+
+Connect all admin actions to the product/service data (create/edit/delete).
+
+Allow admin to add phone numbers/help contacts for support.
+
+
+
+7. Payments
+
+Add Stripe demo account (test keys) for payment integration.
+
+Ensure payment methods page works: add/remove cards, UPI/Netbanking if applicable.
+
+Wallet: implement redeem function. Test flows (add to wallet, redeem to order).
+
+
+
+8. Fake data
+
+Remove all fake/test data from prod seeds and UI. Provide migration / seed script to replace with real empty state.
+
+
+
+9. Profile / Addresses / Notifications
+
+Edit profile working (name, email, avatar).
+
+Manage addresses (add/edit/delete, mark default).
+
+Notification system: push/web notifications and in-app notifications must work.
+
+Language & Region: language switcher and region settings with proper locale handling.
+
+
+
+10. Refer & Earn, Help & Support
+
+Refer & Earn flow working (generate/referral codes, track rewards).
+
+Help & Support UI: users can contact admin; admin can add support numbers; legal & privacy pages accessible and editable by admin.
+
+
+
+11. Services & Missing features
+
+Ensure all services are visible and functioning. Add any missing features found in product spec.
+
+
+
+12. PWA
+
+Add PWA download/install popup with real logo and proper icons. Trigger per best practices.
+
+
+
+13. Misc fixes
+
+Remove all UI bugs (e.g., red mark), fix sound effect controls, ensure animations are subtle and performant.
+
+
+
+
+Acceptance criteria (how we know it’s done)
+
+OTP works for India + international numbers in production (test with two example numbers).
+
+Admin, provider, parts-provider panel logins succeed and reflect data changes in user app within 30s.
+
+Stripe demo payments can be made in test mode; payment methods persist.
+
+Wallet redeem flow reduces wallet balance and applies to orders.
+
+Edit profile, manage addresses, notifications, language switcher and refer & earn all functional end-to-end.
+
+Services show as cards in rows of 3; cart quantity shows - 1 +.
+
+No fake/test data visible anywhere; seed scripts cleaned.
+
+PWA install popup appears with real logo and works on supported devices.
+
+Red badge issue fixed; sound effects toggle works.
+
+Search suggestions return AI-driven suggestions and UX is smooth.
+
+All features accessible/controlled via admin panel.
+
+
+Testing checklist (to include in PR)
+
+[ ] OTP send & verify (IN + 1 foreign country)
+
+[ ] Login / logout flows
+
+[ ] Admin create/edit/delete service → reflects in user app
+
+[ ] Provider panel tasks (accept orders, update status)
+
+[ ] Stripe test payment (card, saved card)
+
+[ ] Wallet add & redeem
+
+[ ] Edit profile (including avatar)
+
+[ ] Add / edit / delete address; default address selection
+
+[ ] Refer & Earn link generation and reward application
+
+[ ] Notifications: create via admin → appear to user + push
+
+[ ] PWA install popup triggers on desktop & mobile (test Chrome)
+
+[ ] Search suggestions & AI fallback
+
+[ ] UI/CSS checks across breakpoints (3 cards per row on desktop; responsive on mobile)
+
+[ ] Remove fake data verification (DB seed check)
+
+
+Dev notes / implementation tips
+
+Use environment variables for Twilio & OpenRouter & Stripe keys. Do not hardcode.
+
+For Twilio, implement phone format normalization (E.164).
+
+Implement server-side rate limiting on OTP requests.
+
+For AI search, cache suggestions for 1–5 minutes to reduce API calls.
+
+Use feature flags for new flows so we can toggle without full deploy.
+
+Use migration scripts to clear fake data and keep backups.
+
+Ensure logging for failed SMS/payment events for debugging.
+
+
+Branch & PR naming (suggested)
+
+Branch: fix/full-stack-twilio-stripe-ui-<short-ticket>
+
+PR title: Fix: Twilio international OTP, Stripe test, Admin & UI polish, PWA install, wallet redeem
+
+Commit example: chore: configure twilio + openrouter; feat(payments): add stripe test; fix(ui): service cards, cart qty, remove fake data

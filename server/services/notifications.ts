@@ -139,7 +139,7 @@ class NotificationService {
       // Handle failed tokens
       if (response.failureCount > 0) {
         const failedTokens: string[] = [];
-        response.responses.forEach((resp, idx) => {
+        response.responses.forEach((resp: any, idx: number) => {
           if (!resp.success) {
             failedTokens.push(tokens[idx]);
             console.error('Failed to send to token:', tokens[idx], resp.error);
@@ -569,6 +569,59 @@ class NotificationService {
     } catch (error) {
       console.error('Error processing scheduled notifications:', error);
     }
+  }
+
+  async notifyStatusChange(userId: string, orderId: string, newStatus: string, previousStatus?: string) {
+    console.log('Notifying status change:', orderId, 'from', previousStatus, 'to', newStatus);
+    
+    const statusMessages = {
+      pending: 'Your order is pending confirmation',
+      accepted: 'Your order has been accepted and will begin soon',
+      in_progress: 'Your service is currently in progress',
+      completed: 'Your service has been completed successfully',
+      cancelled: 'Your order has been cancelled',
+      refunded: 'Your order has been refunded'
+    };
+
+    const payload: NotificationPayload = {
+      title: 'Order Status Update',
+      body: statusMessages[newStatus as keyof typeof statusMessages] || `Order status updated to ${newStatus}`,
+      data: {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+        previousStatus: previousStatus || '',
+        link: `/orders/${orderId}`,
+      },
+    };
+
+    await this.sendPushNotification(userId, payload);
+  }
+
+  async notifyOrderCancellation(userId: string, orderId: string, reason?: string, refundAmount?: number) {
+    console.log('Notifying order cancellation:', orderId, 'reason:', reason, 'refund:', refundAmount);
+    
+    let body = 'Your order has been cancelled';
+    if (reason) {
+      body += `. Reason: ${reason}`;
+    }
+    if (refundAmount) {
+      body += `. You will receive a refund of ₹${refundAmount}`;
+    }
+
+    const payload: NotificationPayload = {
+      title: 'Order Cancelled',
+      body,
+      data: {
+        type: 'order_cancellation',
+        orderId,
+        reason: reason || '',
+        refundAmount: refundAmount?.toString() || '0',
+        link: `/orders/${orderId}`,
+      },
+    };
+
+    await this.sendPushNotification(userId, payload);
   }
 }
 

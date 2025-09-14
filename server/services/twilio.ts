@@ -44,7 +44,7 @@ class TwilioService {
   private readonly OTP_LENGTH = 6;
   private readonly OTP_EXPIRY_MINUTES = 5;
   private readonly MAX_ATTEMPTS = 5;
-  private readonly RESEND_COOLDOWN_SECONDS = 3;
+  private readonly RESEND_COOLDOWN_SECONDS = 30;
   private readonly MAX_RESENDS_PER_HOUR = 3;
   private readonly BCRYPT_ROUNDS = 12;
 
@@ -280,37 +280,88 @@ class TwilioService {
   }
 
   /**
-   * Format and validate phone number to international format
+   * Format and validate phone number to E.164 international format
+   * Supports common country formats with intelligent normalization
    */
   private formatPhoneNumber(phone: string): string | null {
+    if (!phone || typeof phone !== 'string') {
+      return null;
+    }
+
     // Remove all non-digit characters except +
-    let cleaned = phone.replace(/[^\d+]/g, '');
+    let cleaned = phone.trim().replace(/[^\d+]/g, '');
     
-    // If it doesn't start with +, assume it's missing country code
+    if (!cleaned) {
+      return null;
+    }
+
+    // If it doesn't start with +, add country code based on number pattern
     if (!cleaned.startsWith('+')) {
-      // If it starts with 0, it might be a national number (remove leading 0)
+      // Remove leading zeros (common in national format)
       if (cleaned.startsWith('0')) {
         cleaned = cleaned.substring(1);
       }
       
-      // For Indian numbers (10 digits), add +91
-      if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
-        cleaned = '+91' + cleaned;
+      // Add country codes based on number patterns
+      if (cleaned.length === 10) {
+        // Indian mobile numbers: start with 6-9
+        if (/^[6-9]\d{9}$/.test(cleaned)) {
+          cleaned = '+91' + cleaned;
+        }
+        // US/Canada numbers: start with 2-9
+        else if (/^[2-9]\d{9}$/.test(cleaned)) {
+          cleaned = '+1' + cleaned;
+        }
+        // UK mobile: might be missing leading 7
+        else if (/^7\d{9}$/.test(cleaned)) {
+          cleaned = '+44' + cleaned;
+        }
       }
-      // For US numbers (10 digits), add +1
-      else if (cleaned.length === 10 && /^[2-9]\d{9}$/.test(cleaned)) {
-        cleaned = '+1' + cleaned;
-      }
-      // If still no country code and looks like international format, add +
-      else if (cleaned.length >= 10 && cleaned.length <= 15) {
+      // 11 digits might be US with leading 1
+      else if (cleaned.length === 11 && cleaned.startsWith('1') && /^1[2-9]\d{9}$/.test(cleaned)) {
         cleaned = '+' + cleaned;
+      }
+      // 8 digits might be Singapore
+      else if (cleaned.length === 8 && /^[89]\d{7}$/.test(cleaned)) {
+        cleaned = '+65' + cleaned;
+      }
+      // If none of the above, assume it needs + prefix for international
+      else if (cleaned.length >= 7 && cleaned.length <= 15) {
+        // Don't assume country code for ambiguous lengths
+        return null;
       }
     }
 
-    // Validate the final format
-    const phoneRegex = /^\+[1-9]\d{6,14}$/;
+    // Remove any duplicate + symbols
+    cleaned = cleaned.replace(/\++/g, '+');
+    
+    // Ensure it starts with + and has valid length
+    if (!cleaned.startsWith('+')) {
+      return null;
+    }
+
+    // Validate E.164 format: +[1-4 digit country code][subscriber number]
+    // Total length should be 8-15 digits after '+' (E.164 standard)
+    const phoneRegex = /^\+[1-9]\d{7,14}$/;
     if (!phoneRegex.test(cleaned)) {
       return null;
+    }
+
+    // Additional validation for known country patterns
+    const countryCode = cleaned.substring(1, cleaned.startsWith('+1') ? 2 : cleaned.startsWith('+91') ? 3 : cleaned.startsWith('+44') ? 3 : 4);
+    const subscriberNumber = cleaned.substring(countryCode.length + 1);
+    
+    // Country-specific validation
+    if (countryCode === '91') {
+      // India: mobile numbers should be 10 digits starting with 6-9
+      if (subscriberNumber.length !== 10 || !/^[6-9]\d{9}$/.test(subscriberNumber)) {
+        return null;
+      }
+    } else if (countryCode === '1') {
+      // US/Canada: should be 10 digits starting with 2-9
+      if (subscriberNumber.length !== 10 || !/^[2-9]\d{9}$/.test(subscriberNumber)) {
+        return null;
+      }
     }
 
     return cleaned;
