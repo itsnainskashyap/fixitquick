@@ -129,6 +129,12 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
   });
 
   const onSubmit = (data: PhoneFormData) => {
+    const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
+    console.log('Submitting phone:', {
+      countryCode: data.countryCode,
+      phoneNumber: data.phoneNumber,
+      fullPhoneNumber
+    });
     otpRequestMutation.mutate(data);
   };
 
@@ -147,7 +153,7 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
           <div className="text-center space-y-2">
             <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
               <img 
-                src="/attached_assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                src="/fixitquick-logo.jpg" 
                 alt="FixitQuick Logo" 
                 className="w-16 h-16 object-contain"
               />

@@ -123,15 +123,16 @@ const searchAnalyticsSchema = z.object({
 // Authentication validation schemas
 const otpRequestSchema = z.object({
   phone: z.string()
-    .min(10, 'Phone number must be at least 10 digits')
-    .max(15, 'Phone number cannot exceed 15 digits')
-    .regex(/^(\+?[1-9]\d{0,3})?[0-9\s\-\(\)]{7,14}$/, 'Invalid phone number format'),
+    .min(8, 'Phone number must be at least 8 digits')
+    .max(18, 'Phone number cannot exceed 18 characters')
+    .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format. Please use format: +[country code][number]'),
 });
 
 const otpVerifySchema = z.object({
   phone: z.string()
-    .min(10, 'Phone number must be at least 10 digits')
-    .max(15, 'Phone number cannot exceed 15 digits')
+    .min(8, 'Phone number must be at least 8 digits')
+    .max(18, 'Phone number cannot exceed 18 characters')
+    .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format')
     .regex(/^(\+?[1-9]\d{0,3})?[0-9\s\-\(\)]{7,14}$/, 'Invalid phone number format'),
   code: z.string()
     .length(6, 'Verification code must be exactly 6 digits')
@@ -317,6 +318,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { phone } = req.body;
       const ip = req.ip || req.socket.remoteAddress;
       const userAgent = req.get('User-Agent');
+
+      console.log('📱 OTP Request received:', {
+        phone,
+        phoneLength: phone?.length,
+        phoneType: typeof phone,
+        ip,
+        userAgent: userAgent?.substring(0, 50)
+      });
 
       const result = await twilioService.sendOTP(phone, ip, userAgent);
       

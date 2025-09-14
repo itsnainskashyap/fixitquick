@@ -270,7 +270,7 @@ export default function OtpVerification({
             
             <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
               <img 
-                src="/attached_assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                src="/fixitquick-logo.jpg" 
                 alt="FixitQuick Logo" 
                 className="w-16 h-16 object-contain"
               />

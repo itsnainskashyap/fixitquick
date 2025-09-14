@@ -215,9 +215,13 @@ export default function Login() {
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ delay: 0.2, type: 'spring', stiffness: 300 }}
-                  className="w-16 h-16 bg-primary rounded-2xl mx-auto mb-4 flex items-center justify-center"
+                  className="w-16 h-16 mx-auto mb-4 flex items-center justify-center"
                 >
-                  <span className="text-primary-foreground font-bold text-2xl">FQ</span>
+                  <img 
+                    src="/fixitquick-logo.jpg" 
+                    alt="FixitQuick Logo" 
+                    className="w-16 h-16 object-contain"
+                  />
                 </motion.div>
                 <CardTitle className="text-2xl font-bold text-foreground">Welcome to FixitQuick</CardTitle>
                 <p className="text-muted-foreground">Your urban service partner</p>

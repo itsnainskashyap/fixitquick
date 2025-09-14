@@ -117,7 +117,7 @@ export function Header({
               whileTap={{ scale: 0.98 }}
             >
               <img 
-                src="/attached_assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                src="/fixitquick-logo.jpg" 
                 alt="FixitQuick Logo" 
                 className="w-8 h-8 object-contain"
               />
