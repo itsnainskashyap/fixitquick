@@ -106,6 +106,194 @@ export const serviceCategories = pgTable("service_categories", {
   slugIdx: index("sc_slug_idx").on(table.slug),
 }));
 
+// Parts provider business information
+export const partsProviderBusinessInfo = pgTable("parts_provider_business_info", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  
+  // Business Details
+  businessName: varchar("business_name").notNull(),
+  businessType: varchar("business_type", { 
+    enum: ["individual", "partnership", "private_limited", "public_limited", "llp"] 
+  }).notNull(),
+  businessAddress: jsonb("business_address").$type<{
+    street: string;
+    city: string;
+    state: string;
+    pincode: string;
+    country: string;
+  }>(),
+  
+  // Tax and Legal
+  gstNumber: varchar("gst_number"),
+  panNumber: varchar("pan_number"),
+  businessLicense: varchar("business_license"),
+  tradeLicense: varchar("trade_license"),
+  fssaiNumber: varchar("fssai_number"), // For food-related parts
+  
+  // Banking Details
+  bankAccountNumber: varchar("bank_account_number"),
+  bankName: varchar("bank_name"),
+  bankBranch: varchar("bank_branch"),
+  ifscCode: varchar("ifsc_code"),
+  accountHolderName: varchar("account_holder_name"),
+  
+  // Business Verification
+  isVerified: boolean("is_verified").default(false),
+  verificationStatus: varchar("verification_status", {
+    enum: ["pending", "documents_submitted", "under_review", "approved", "rejected"]
+  }).default("pending"),
+  verificationDocuments: jsonb("verification_documents").$type<{
+    businessLicense?: { url: string; verified: boolean };
+    gstCertificate?: { url: string; verified: boolean };
+    panCard?: { url: string; verified: boolean };
+    bankStatement?: { url: string; verified: boolean };
+    tradeLicense?: { url: string; verified: boolean };
+    insuranceCertificate?: { url: string; verified: boolean };
+  }>(),
+  
+  // Operational Details
+  minOrderValue: decimal("min_order_value", { precision: 10, scale: 2 }).default("0.00"),
+  maxOrderValue: decimal("max_order_value", { precision: 10, scale: 2 }),
+  processingTime: integer("processing_time").default(24), // in hours
+  shippingAreas: jsonb("shipping_areas").$type<string[]>(),
+  paymentTerms: varchar("payment_terms", {
+    enum: ["immediate", "15_days", "30_days", "45_days"]
+  }).default("immediate"),
+  
+  // Performance Metrics
+  totalRevenue: decimal("total_revenue", { precision: 15, scale: 2 }).default("0.00"),
+  totalOrders: integer("total_orders").default(0),
+  averageRating: decimal("average_rating", { precision: 3, scale: 2 }).default("0.00"),
+  totalProducts: integer("total_products").default(0),
+  
+  // Status
+  isActive: boolean("is_active").default(true),
+  suspensionReason: text("suspension_reason"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdx: index("ppbi_user_idx").on(table.userId),
+  gstIdx: index("ppbi_gst_idx").on(table.gstNumber),
+  statusIdx: index("ppbi_status_idx").on(table.verificationStatus),
+}));
+
+// Parts inventory movements and stock history
+export const partsInventoryMovements = pgTable("parts_inventory_movements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  partId: varchar("part_id").references(() => parts.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Movement Details
+  movementType: varchar("movement_type", {
+    enum: ["stock_in", "stock_out", "adjustment", "damaged", "returned", "sold", "reserved", "unreserved"]
+  }).notNull(),
+  quantity: integer("quantity").notNull(), // Positive for in, negative for out
+  previousStock: integer("previous_stock").notNull(),
+  newStock: integer("new_stock").notNull(),
+  
+  // References
+  orderId: varchar("order_id").references(() => orders.id),
+  supplierId: varchar("supplier_id"), // Reference to supplier if applicable
+  
+  // Details
+  reason: text("reason"),
+  notes: text("notes"),
+  batchNumber: varchar("batch_number"),
+  expiryDate: timestamp("expiry_date"),
+  costPrice: decimal("cost_price", { precision: 10, scale: 2 }),
+  
+  // Metadata
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  partIdx: index("pim_part_idx").on(table.partId),
+  providerIdx: index("pim_provider_idx").on(table.providerId),
+  typeIdx: index("pim_type_idx").on(table.movementType),
+  dateIdx: index("pim_date_idx").on(table.createdAt),
+}));
+
+// Parts bulk upload tracking
+export const partsBulkUploads = pgTable("parts_bulk_uploads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Upload Details
+  fileName: varchar("file_name").notNull(),
+  fileUrl: varchar("file_url").notNull(),
+  fileSize: integer("file_size"), // in bytes
+  totalRows: integer("total_rows").default(0),
+  
+  // Processing Status
+  status: varchar("status", {
+    enum: ["uploaded", "processing", "completed", "failed", "partially_completed"]
+  }).default("uploaded"),
+  
+  // Results
+  successCount: integer("success_count").default(0),
+  errorCount: integer("error_count").default(0),
+  errors: jsonb("errors").$type<{
+    row: number;
+    field: string;
+    message: string;
+  }[]>(),
+  
+  // Processing Details
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  processingTime: integer("processing_time"), // in seconds
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("pbu_provider_idx").on(table.providerId),
+  statusIdx: index("pbu_status_idx").on(table.status),
+  dateIdx: index("pbu_date_idx").on(table.createdAt),
+}));
+
+// Parts suppliers/vendors management
+export const partsSuppliers = pgTable("parts_suppliers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Supplier Details
+  name: varchar("name").notNull(),
+  contactPerson: varchar("contact_person"),
+  email: varchar("email"),
+  phone: varchar("phone"),
+  
+  // Address
+  address: jsonb("address").$type<{
+    street: string;
+    city: string;
+    state: string;
+    pincode: string;
+    country: string;
+  }>(),
+  
+  // Business Details
+  gstNumber: varchar("gst_number"),
+  panNumber: varchar("pan_number"),
+  paymentTerms: varchar("payment_terms"),
+  creditLimit: decimal("credit_limit", { precision: 10, scale: 2 }).default("0.00"),
+  
+  // Performance Metrics
+  totalOrders: integer("total_orders").default(0),
+  totalValue: decimal("total_value", { precision: 15, scale: 2 }).default("0.00"),
+  averageDeliveryTime: integer("avg_delivery_time").default(0), // in days
+  qualityRating: decimal("quality_rating", { precision: 3, scale: 2 }).default("0.00"),
+  
+  // Status
+  isActive: boolean("is_active").default(true),
+  notes: text("notes"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("ps_provider_idx").on(table.providerId),
+  gstIdx: index("ps_gst_idx").on(table.gstNumber),
+}));
+
 // Enhanced services with workflow steps and marketplace features
 export const services = pgTable("services", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -268,32 +456,111 @@ export const serviceProviders = pgTable("service_providers", {
   ratingIdx: index("sp_rating_idx").on(table.rating),
 }));
 
-// Parts categories
+// Enhanced parts categories with hierarchy support
 export const partsCategories = pgTable("parts_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  parentId: varchar("parent_id").references(() => partsCategories.id),
   name: varchar("name").notNull(),
+  slug: varchar("slug").unique(),
   icon: text("icon"),
   description: text("description"),
+  level: integer("level").default(0), // 0=main, 1=sub, 2=sub-sub
+  sortOrder: integer("sort_order").default(0),
+  
+  // SEO
+  metaTitle: varchar("meta_title"),
+  metaDescription: text("meta_description"),
+  
+  // Commission and Business
+  commissionRate: decimal("commission_rate", { precision: 5, scale: 2 }).default("10.00"), // Platform commission %
+  
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  parentIdx: index("parts_cat_parent_idx").on(table.parentId),
+  slugIdx: index("parts_cat_slug_idx").on(table.slug),
+  levelIdx: index("parts_cat_level_idx").on(table.level),
+}));
 
-// Parts inventory
+// Enhanced parts inventory with comprehensive fields
 export const parts = pgTable("parts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   categoryId: varchar("category_id").references(() => partsCategories.id),
   providerId: varchar("provider_id").references(() => users.id),
   name: varchar("name").notNull(),
+  slug: varchar("slug"), // SEO-friendly URL slug
   description: text("description"),
+  brand: varchar("brand"),
+  model: varchar("model"),
+  sku: varchar("sku").unique(), // Stock Keeping Unit
+  barcode: varchar("barcode"),
+  
+  // Pricing
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  comparePrice: decimal("compare_price", { precision: 10, scale: 2 }), // MSRP/Original price
+  costPrice: decimal("cost_price", { precision: 10, scale: 2 }), // Provider's cost
+  
+  // Inventory Management
   stock: integer("stock").default(0),
+  reservedStock: integer("reserved_stock").default(0), // Stock reserved for pending orders
+  lowStockThreshold: integer("low_stock_threshold").default(10),
+  reorderPoint: integer("reorder_point").default(5),
+  reorderQuantity: integer("reorder_quantity").default(50),
+  
+  // Product Details
   images: jsonb("images").$type<string[]>(),
   specifications: jsonb("specifications").$type<Record<string, any>>(),
+  features: jsonb("features").$type<string[]>(),
+  compatibility: jsonb("compatibility").$type<{
+    devices?: string[];
+    models?: string[];
+    brands?: string[];
+  }>(),
+  
+  // Dimensions and Weight
+  weight: decimal("weight", { precision: 8, scale: 3 }), // in kg
+  dimensions: jsonb("dimensions").$type<{
+    length?: number;
+    width?: number;
+    height?: number;
+    unit?: 'cm' | 'mm' | 'inch';
+  }>(),
+  
+  // Warranty and Service
+  warrantyPeriod: integer("warranty_period"), // in months
+  warrantyTerms: text("warranty_terms"),
+  returnPolicy: text("return_policy"),
+  
+  // Performance Metrics
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0.00"),
   totalSold: integer("total_sold").default(0),
+  totalReviews: integer("total_reviews").default(0),
+  viewCount: integer("view_count").default(0),
+  
+  // SEO and Marketing
+  metaTitle: varchar("meta_title"),
+  metaDescription: text("meta_description"),
+  tags: jsonb("tags").$type<string[]>(),
+  
+  // Status and Availability
   isActive: boolean("is_active").default(true),
+  isFeatured: boolean("is_featured").default(false),
+  availabilityStatus: varchar("availability_status", { 
+    enum: ["in_stock", "low_stock", "out_of_stock", "discontinued", "pre_order"] 
+  }).default("in_stock"),
+  
+  // Timestamps
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastStockUpdate: timestamp("last_stock_update"),
+}, (table) => ({
+  skuIdx: index("parts_sku_idx").on(table.sku),
+  categoryIdx: index("parts_category_idx").on(table.categoryId),
+  providerIdx: index("parts_provider_idx").on(table.providerId),
+  slugIdx: index("parts_slug_idx").on(table.slug),
+  stockIdx: index("parts_stock_idx").on(table.stock),
+  statusIdx: index("parts_status_idx").on(table.availabilityStatus),
+}));
 
 // Orders for services and parts
 export const orders = pgTable("orders", {
@@ -898,6 +1165,13 @@ export const insertServiceCategorySchema = createInsertSchema(serviceCategories)
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
 export const insertServiceBookingSchema = createInsertSchema(serviceBookings).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertProviderJobRequestSchema = createInsertSchema(providerJobRequests).omit({ id: true, createdAt: true });
+
+// Enhanced parts management insert schemas
+export const insertPartsCategorySchema = createInsertSchema(partsCategories).omit({ id: true, createdAt: true });
+export const insertPartsProviderBusinessInfoSchema = createInsertSchema(partsProviderBusinessInfo).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPartsInventoryMovementSchema = createInsertSchema(partsInventoryMovements).omit({ id: true, createdAt: true });
+export const insertPartsBulkUploadSchema = createInsertSchema(partsBulkUploads).omit({ id: true, createdAt: true });
+export const insertPartsSupplierSchema = createInsertSchema(partsSuppliers).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceWorkflowSchema = createInsertSchema(serviceWorkflow).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertProviderMetricsSchema = createInsertSchema(providerMetrics).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
@@ -965,3 +1239,13 @@ export type ServiceBooking = typeof serviceBookings.$inferSelect;
 export type InsertServiceBooking = z.infer<typeof insertServiceBookingSchema>;
 export type ProviderJobRequest = typeof providerJobRequests.$inferSelect;
 export type InsertProviderJobRequest = z.infer<typeof insertProviderJobRequestSchema>;
+
+// Enhanced parts management types
+export type PartsProviderBusinessInfo = typeof partsProviderBusinessInfo.$inferSelect;
+export type InsertPartsProviderBusinessInfo = z.infer<typeof insertPartsProviderBusinessInfoSchema>;
+export type PartsInventoryMovement = typeof partsInventoryMovements.$inferSelect;
+export type InsertPartsInventoryMovement = z.infer<typeof insertPartsInventoryMovementSchema>;
+export type PartsBulkUpload = typeof partsBulkUploads.$inferSelect;
+export type InsertPartsBulkUpload = z.infer<typeof insertPartsBulkUploadSchema>;
+export type PartsSupplier = typeof partsSuppliers.$inferSelect;
+export type InsertPartsSupplier = z.infer<typeof insertPartsSupplierSchema>;

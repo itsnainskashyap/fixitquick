@@ -15,6 +15,14 @@ import {
   type ServiceProvider,
   type InsertServiceProvider,
   type PartsCategory,
+  type PartsProviderBusinessInfo,
+  type InsertPartsProviderBusinessInfo,
+  type PartsInventoryMovement,
+  type InsertPartsInventoryMovement,
+  type PartsBulkUpload,
+  type InsertPartsBulkUpload,
+  type PartsSupplier,
+  type InsertPartsSupplier,
   type WalletTransaction,
   type InsertWalletTransaction,
   type Coupon,
@@ -66,6 +74,10 @@ import {
   userNotificationPreferences,
   userLocalePreferences,
   indianRegions,
+  partsProviderBusinessInfo,
+  partsInventoryMovements,
+  partsBulkUploads,
+  partsSuppliers,
   appSettings,
   insertUserSchema,
   insertServiceCategorySchema,
@@ -87,6 +99,10 @@ import {
   insertUserNotificationPreferencesSchema,
   insertUserLocalePreferencesSchema,
   insertIndianRegionSchema,
+  insertPartsProviderBusinessInfoSchema,
+  insertPartsInventoryMovementSchema,
+  insertPartsBulkUploadSchema,
+  insertPartsSupplierSchema,
   insertServiceBookingSchema,
   insertProviderJobRequestSchema,
 } from "@shared/schema";
@@ -155,13 +171,61 @@ export interface IStorage {
   assignProviderToOrder(orderId: string, providerId: string): Promise<Order | undefined>;
   canCancelOrder(orderId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
 
-  // Parts methods
-  getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean }): Promise<Part[]>;
+  // Enhanced Parts methods
+  getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean; search?: string; sortBy?: string; limit?: number; offset?: number; inStock?: boolean }): Promise<Part[]>;
   getPart(id: string): Promise<Part | undefined>;
-  createPart(part: Omit<Part, 'id' | 'createdAt'>): Promise<Part>;
-  updatePart(id: string, data: Partial<Omit<Part, 'id' | 'createdAt'>>): Promise<Part | undefined>;
+  createPart(part: InsertPart): Promise<Part>;
+  updatePart(id: string, data: Partial<InsertPart>): Promise<Part | undefined>;
   getPartsByProvider(providerId: string): Promise<Part[]>;
   getLowStockParts(providerId: string, threshold?: number): Promise<Part[]>;
+  getPartsByCategory(categoryId: string, isActive?: boolean): Promise<Part[]>;
+  bulkUpdateParts(updates: { id: string; data: Partial<InsertPart> }[]): Promise<Part[]>;
+  generatePartSlug(name: string, providerId: string): Promise<string>;
+  getPartsStats(providerId?: string): Promise<{
+    totalParts: number;
+    activeParts: number;
+    lowStockParts: number;
+    outOfStockParts: number;
+    totalValue: number;
+  }>;
+
+  // Parts Provider Business Information methods
+  getPartsProviderBusinessInfo(userId: string): Promise<PartsProviderBusinessInfo | undefined>;
+  createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo>;
+  updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined>;
+  getPartsProvidersByVerificationStatus(status: string): Promise<PartsProviderBusinessInfo[]>;
+  verifyPartsProvider(userId: string, verificationData: {
+    isVerified: boolean;
+    verificationStatus: string;
+    verificationNotes?: string;
+  }): Promise<PartsProviderBusinessInfo | undefined>;
+
+  // Parts Inventory Movement methods
+  getPartsInventoryMovements(filters?: { partId?: string; providerId?: string; movementType?: string; limit?: number }): Promise<PartsInventoryMovement[]>;
+  createPartsInventoryMovement(movement: InsertPartsInventoryMovement): Promise<PartsInventoryMovement>;
+  getPartsInventoryHistory(partId: string): Promise<PartsInventoryMovement[]>;
+  recordStockMovement(params: {
+    partId: string;
+    providerId: string;
+    movementType: string;
+    quantity: number;
+    reason?: string;
+    orderId?: string;
+    costPrice?: number;
+  }): Promise<PartsInventoryMovement>;
+
+  // Parts Bulk Upload methods
+  getPartsBulkUploads(providerId: string): Promise<PartsBulkUpload[]>;
+  createPartsBulkUpload(upload: InsertPartsBulkUpload): Promise<PartsBulkUpload>;
+  updatePartsBulkUpload(id: string, data: Partial<InsertPartsBulkUpload>): Promise<PartsBulkUpload | undefined>;
+  processBulkUpload(uploadId: string, partsData: any[]): Promise<{ success: number; errors: { row: number; field: string; message: string }[] }>;
+
+  // Parts Supplier methods
+  getPartsSuppliers(providerId: string): Promise<PartsSupplier[]>;
+  getPartsSupplier(id: string): Promise<PartsSupplier | undefined>;
+  createPartsSupplier(supplier: InsertPartsSupplier): Promise<PartsSupplier>;
+  updatePartsSupplier(id: string, data: Partial<InsertPartsSupplier>): Promise<PartsSupplier | undefined>;
+  deletePartsSupplier(id: string): Promise<boolean>;
   
   // SECURITY: Inventory and price validation methods
   validateInventoryAvailability(items: { id: string; quantity: number; type: 'service' | 'part' }[]): Promise<{ valid: boolean; errors: string[]; unavailableItems: { id: string; requested: number; available: number }[] }>;
@@ -3471,6 +3535,400 @@ export class PostgresStorage implements IStorage {
       Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+  }
+
+  // ========================================
+  // COMPREHENSIVE PARTS MANAGEMENT METHODS
+  // ========================================
+
+  // Enhanced Parts Provider Business Information methods
+  async getPartsProviderBusinessInfo(userId: string): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.select().from(partsProviderBusinessInfo)
+      .where(eq(partsProviderBusinessInfo.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo> {
+    const result = await db.insert(partsProviderBusinessInfo).values([businessInfo]).returning();
+    return result[0];
+  }
+
+  async updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.update(partsProviderBusinessInfo)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(partsProviderBusinessInfo.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async getPartsProvidersByVerificationStatus(status: string): Promise<PartsProviderBusinessInfo[]> {
+    return await db.select().from(partsProviderBusinessInfo)
+      .where(eq(partsProviderBusinessInfo.verificationStatus, status as any))
+      .orderBy(desc(partsProviderBusinessInfo.createdAt));
+  }
+
+  async verifyPartsProvider(userId: string, verificationData: {
+    isVerified: boolean;
+    verificationStatus: string;
+    verificationNotes?: string;
+  }): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.update(partsProviderBusinessInfo)
+      .set({
+        isVerified: verificationData.isVerified,
+        verificationStatus: verificationData.verificationStatus as any,
+        updatedAt: new Date(),
+      })
+      .where(eq(partsProviderBusinessInfo.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  // Enhanced Parts Inventory Movement methods
+  async getPartsInventoryMovements(filters?: { 
+    partId?: string; 
+    providerId?: string; 
+    movementType?: string; 
+    limit?: number 
+  }): Promise<PartsInventoryMovement[]> {
+    let baseQuery = db.select().from(partsInventoryMovements);
+    
+    const conditions: SQL[] = [];
+    if (filters?.partId) {
+      conditions.push(eq(partsInventoryMovements.partId, filters.partId));
+    }
+    if (filters?.providerId) {
+      conditions.push(eq(partsInventoryMovements.providerId, filters.providerId));
+    }
+    if (filters?.movementType) {
+      conditions.push(eq(partsInventoryMovements.movementType, filters.movementType as any));
+    }
+    
+    const whereClause = combineConditions(conditions);
+    if (whereClause) {
+      baseQuery = baseQuery.where(whereClause);
+    }
+    
+    baseQuery = baseQuery.orderBy(desc(partsInventoryMovements.createdAt));
+    
+    if (filters?.limit) {
+      baseQuery = baseQuery.limit(filters.limit);
+    }
+    
+    return await baseQuery.execute();
+  }
+
+  async createPartsInventoryMovement(movement: InsertPartsInventoryMovement): Promise<PartsInventoryMovement> {
+    const result = await db.insert(partsInventoryMovements).values([movement]).returning();
+    return result[0];
+  }
+
+  async getPartsInventoryHistory(partId: string): Promise<PartsInventoryMovement[]> {
+    return await db.select().from(partsInventoryMovements)
+      .where(eq(partsInventoryMovements.partId, partId))
+      .orderBy(desc(partsInventoryMovements.createdAt));
+  }
+
+  async recordStockMovement(params: {
+    partId: string;
+    providerId: string;
+    movementType: string;
+    quantity: number;
+    reason?: string;
+    orderId?: string;
+    costPrice?: number;
+  }): Promise<PartsInventoryMovement> {
+    // Get current part info
+    const part = await this.getPart(params.partId);
+    if (!part) {
+      throw new Error('Part not found');
+    }
+
+    const previousStock = part.stock || 0;
+    let newStock = previousStock;
+
+    // Calculate new stock based on movement type
+    switch (params.movementType) {
+      case 'stock_in':
+      case 'returned':
+        newStock = previousStock + params.quantity;
+        break;
+      case 'stock_out':
+      case 'sold':
+      case 'damaged':
+        newStock = previousStock - params.quantity;
+        break;
+      case 'adjustment':
+        newStock = params.quantity; // Direct set for adjustments
+        break;
+      case 'reserved':
+        // Don't change actual stock for reserved
+        newStock = previousStock;
+        break;
+      case 'unreserved':
+        newStock = previousStock;
+        break;
+    }
+
+    // Update part stock and availability status
+    const availabilityStatus = newStock > 0 ? 
+      (newStock <= (part.lowStockThreshold || 10) ? 'low_stock' : 'in_stock') : 
+      'out_of_stock';
+
+    // Update part stock (except for reserved/unreserved which handle reserved stock separately)
+    if (!['reserved', 'unreserved'].includes(params.movementType)) {
+      await this.updatePart(params.partId, { 
+        stock: newStock,
+        lastStockUpdate: new Date(),
+        updatedAt: new Date(),
+        availabilityStatus: availabilityStatus as any
+      });
+    }
+
+    // Create movement record
+    const movement: InsertPartsInventoryMovement = {
+      partId: params.partId,
+      providerId: params.providerId,
+      movementType: params.movementType as any,
+      quantity: params.movementType === 'stock_out' || params.movementType === 'sold' || params.movementType === 'damaged' 
+        ? -params.quantity 
+        : params.quantity,
+      previousStock,
+      newStock,
+      orderId: params.orderId,
+      reason: params.reason,
+      costPrice: params.costPrice?.toString(),
+    };
+
+    return await this.createPartsInventoryMovement(movement);
+  }
+
+  // Enhanced Parts methods with comprehensive functionality
+  async generatePartSlug(name: string, providerId: string): Promise<string> {
+    let baseSlug = name.toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+      .replace(/\s+/g, '-') // Replace spaces with hyphens
+      .replace(/-+/g, '-') // Replace multiple hyphens with single
+      .trim();
+    
+    let slug = baseSlug;
+    let counter = 1;
+    
+    // Check for uniqueness within the same provider
+    while (true) {
+      const existing = await db.select().from(parts)
+        .where(and(
+          eq(parts.slug, slug),
+          eq(parts.providerId, providerId)
+        ))
+        .limit(1);
+      
+      if (existing.length === 0) {
+        break;
+      }
+      
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+    
+    return slug;
+  }
+
+  async getPartsByCategory(categoryId: string, isActive = true): Promise<Part[]> {
+    const conditions: SQL[] = [eq(parts.categoryId, categoryId)];
+    if (isActive) {
+      conditions.push(eq(parts.isActive, true));
+    }
+    
+    return await db.select().from(parts)
+      .where(combineConditions(conditions)!)
+      .orderBy(desc(parts.createdAt));
+  }
+
+  async bulkUpdateParts(updates: { id: string; data: Partial<InsertPart> }[]): Promise<Part[]> {
+    const results: Part[] = [];
+    
+    for (const update of updates) {
+      const result = await this.updatePart(update.id, update.data);
+      if (result) {
+        results.push(result);
+      }
+    }
+    
+    return results;
+  }
+
+  async getPartsStats(providerId?: string): Promise<{
+    totalParts: number;
+    activeParts: number;
+    lowStockParts: number;
+    outOfStockParts: number;
+    totalValue: number;
+  }> {
+    let baseCondition = providerId ? eq(parts.providerId, providerId) : undefined;
+    
+    // Total parts
+    const totalQuery = db.select({ count: count() }).from(parts);
+    if (baseCondition) totalQuery.where(baseCondition);
+    const totalResult = await totalQuery;
+    
+    // Active parts
+    const activeCondition = baseCondition 
+      ? and(baseCondition, eq(parts.isActive, true))
+      : eq(parts.isActive, true);
+    const activeResult = await db.select({ count: count() }).from(parts).where(activeCondition);
+    
+    // Low stock parts (stock <= lowStockThreshold or <= 10 if not set)
+    const lowStockCondition = baseCondition
+      ? and(baseCondition, eq(parts.isActive, true), sql`${parts.stock} <= COALESCE(${parts.lowStockThreshold}, 10)`)
+      : and(eq(parts.isActive, true), sql`${parts.stock} <= COALESCE(${parts.lowStockThreshold}, 10)`);
+    const lowStockResult = await db.select({ count: count() }).from(parts).where(lowStockCondition);
+    
+    // Out of stock parts
+    const outOfStockCondition = baseCondition
+      ? and(baseCondition, eq(parts.isActive, true), eq(parts.stock, 0))
+      : and(eq(parts.isActive, true), eq(parts.stock, 0));
+    const outOfStockResult = await db.select({ count: count() }).from(parts).where(outOfStockCondition);
+    
+    // Total value
+    const valueCondition = baseCondition
+      ? and(baseCondition, eq(parts.isActive, true))
+      : eq(parts.isActive, true);
+    const valueResult = await db.select({ 
+      total: sql<number>`SUM(${parts.price}::numeric * ${parts.stock})`
+    }).from(parts).where(valueCondition);
+    
+    return {
+      totalParts: totalResult[0].count,
+      activeParts: activeResult[0].count,
+      lowStockParts: lowStockResult[0].count,
+      outOfStockParts: outOfStockResult[0].count,
+      totalValue: parseFloat(valueResult[0].total?.toString() || '0'),
+    };
+  }
+
+  // Parts Bulk Upload methods
+  async getPartsBulkUploads(providerId: string): Promise<PartsBulkUpload[]> {
+    return await db.select().from(partsBulkUploads)
+      .where(eq(partsBulkUploads.providerId, providerId))
+      .orderBy(desc(partsBulkUploads.createdAt));
+  }
+
+  async createPartsBulkUpload(upload: InsertPartsBulkUpload): Promise<PartsBulkUpload> {
+    const result = await db.insert(partsBulkUploads).values([upload]).returning();
+    return result[0];
+  }
+
+  async updatePartsBulkUpload(id: string, data: Partial<InsertPartsBulkUpload>): Promise<PartsBulkUpload | undefined> {
+    const result = await db.update(partsBulkUploads)
+      .set(data)
+      .where(eq(partsBulkUploads.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async processBulkUpload(uploadId: string, partsData: any[]): Promise<{ 
+    success: number; 
+    errors: { row: number; field: string; message: string }[] 
+  }> {
+    const upload = await db.select().from(partsBulkUploads)
+      .where(eq(partsBulkUploads.id, uploadId)).limit(1);
+    
+    if (!upload[0]) {
+      throw new Error('Upload not found');
+    }
+
+    await this.updatePartsBulkUpload(uploadId, { 
+      status: 'processing',
+      startedAt: new Date()
+    });
+
+    let successCount = 0;
+    const errors: { row: number; field: string; message: string }[] = [];
+
+    for (let i = 0; i < partsData.length; i++) {
+      const row = i + 2; // Assuming header row
+      const partData = partsData[i];
+
+      try {
+        // Validate required fields
+        if (!partData.name || !partData.price || !partData.categoryId) {
+          errors.push({
+            row,
+            field: 'required',
+            message: 'Missing required fields: name, price, or categoryId'
+          });
+          continue;
+        }
+
+        // Generate slug if not provided
+        if (!partData.slug) {
+          partData.slug = await this.generatePartSlug(partData.name, upload[0].providerId);
+        }
+
+        // Create part
+        await this.createPart({
+          ...partData,
+          providerId: upload[0].providerId,
+          stock: parseInt(partData.stock) || 0,
+          price: parseFloat(partData.price).toString(),
+        });
+
+        successCount++;
+      } catch (error) {
+        errors.push({
+          row,
+          field: 'general',
+          message: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+
+    // Update upload status
+    const finalStatus = errors.length === 0 ? 'completed' : 
+      (successCount > 0 ? 'partially_completed' : 'failed');
+
+    await this.updatePartsBulkUpload(uploadId, {
+      status: finalStatus as any,
+      successCount,
+      errorCount: errors.length,
+      errors,
+      completedAt: new Date(),
+      processingTime: Math.floor((Date.now() - (upload[0].startedAt?.getTime() || Date.now())) / 1000)
+    });
+
+    return { success: successCount, errors };
+  }
+
+  // Parts Supplier methods
+  async getPartsSuppliers(providerId: string): Promise<PartsSupplier[]> {
+    return await db.select().from(partsSuppliers)
+      .where(eq(partsSuppliers.providerId, providerId))
+      .orderBy(desc(partsSuppliers.createdAt));
+  }
+
+  async getPartsSupplier(id: string): Promise<PartsSupplier | undefined> {
+    const result = await db.select().from(partsSuppliers)
+      .where(eq(partsSuppliers.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createPartsSupplier(supplier: InsertPartsSupplier): Promise<PartsSupplier> {
+    const result = await db.insert(partsSuppliers).values([supplier]).returning();
+    return result[0];
+  }
+
+  async updatePartsSupplier(id: string, data: Partial<InsertPartsSupplier>): Promise<PartsSupplier | undefined> {
+    const result = await db.update(partsSuppliers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(partsSuppliers.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deletePartsSupplier(id: string): Promise<boolean> {
+    const result = await db.delete(partsSuppliers)
+      .where(eq(partsSuppliers.id, id));
+    return result.rowCount > 0;
   }
 
 }
