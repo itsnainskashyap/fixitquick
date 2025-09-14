@@ -56,8 +56,8 @@ export function Header({
       case 'admin':
         return [
           { icon: Home, label: 'Admin Panel', path: '/admin' },
-          { icon: Users, label: 'Users', path: '/admin' },
-          { icon: BarChart3, label: 'Analytics', path: '/admin' },
+          { icon: Users, label: 'Users', path: '/admin?tab=users' },
+          { icon: BarChart3, label: 'Analytics', path: '/admin?tab=analytics' },
           { icon: Settings, label: 'Account', path: '/account' },
         ];
       default:
@@ -88,9 +88,9 @@ export function Header({
       return 'Set Location';
     }
     
-    const { city, area } = user.location;
-    if (area && city) {
-      return `${area}, ${city}`;
+    const { city, address } = user.location;
+    if (address && city) {
+      return `${address}, ${city}`;
     } else if (city) {
       return city;
     } else {

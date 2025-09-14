@@ -83,7 +83,18 @@ export function WebSocketProvider({
       }
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const hostname = window.location.hostname;
+      
+      // Construct WebSocket URL with proper port handling
+      let wsUrl;
+      
+      // Default: always use window.location.host which includes port if present
+      wsUrl = `${protocol}//${window.location.host}/ws`;
+      
+      // Only override for localhost without port (local development)
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !window.location.port) {
+        wsUrl = `${protocol}//localhost:5000/ws`;
+      }
       
       console.log(`WebSocket: Connecting to ${wsUrl}`);
       
