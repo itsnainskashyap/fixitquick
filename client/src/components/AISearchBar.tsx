@@ -228,7 +228,7 @@ export function AISearchBar({
       if (onSearch) {
         onSearch(searchQuery);
       } else {
-        setLocation(`/search/${encodeURIComponent(searchQuery)}`);
+        setLocation(`/search?q=${encodeURIComponent(searchQuery)}`);
       }
 
       // Show success toast

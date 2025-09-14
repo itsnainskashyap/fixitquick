@@ -90,14 +90,18 @@ interface VoiceSearchState {
 }
 
 export default function SearchResults() {
-  const [, setLocation] = useLocation();
-  const [match, params] = useRoute('/search/:query*');
+  const [location, setLocation] = useLocation();
+  const [match] = useRoute('/search');
   const { user } = useAuth();
   const { addItem } = useCart();
   const { toast } = useToast();
 
+  // Get search query from URL search parameters
+  const urlParams = new URLSearchParams(location.split('?')[1] || '');
+  const queryFromUrl = urlParams.get('q') || '';
+
   // Search state
-  const [searchQuery, setSearchQuery] = useState(params?.query || '');
+  const [searchQuery, setSearchQuery] = useState(queryFromUrl);
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({
     categories: [],
     priceRange: { min: 0, max: 10000 },
@@ -106,6 +110,15 @@ export default function SearchResults() {
     urgency: 'medium',
     searchType: 'mixed'
   });
+
+  // Update search query when URL changes
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.split('?')[1] || '');
+    const newQuery = urlParams.get('q') || '';
+    if (newQuery !== searchQuery) {
+      setSearchQuery(newQuery);
+    }
+  }, [location]);
   const [showFilters, setShowFilters] = useState(false);
   const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
 
@@ -272,7 +285,7 @@ export default function SearchResults() {
     if (!query.trim()) return;
     
     setSearchQuery(query);
-    setLocation(`/search/${encodeURIComponent(query)}`);
+    setLocation(`/search?q=${encodeURIComponent(query)}`);
     
     // Track search analytics
     trackAnalytics.mutate({

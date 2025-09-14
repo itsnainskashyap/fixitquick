@@ -142,7 +142,6 @@ function Router() {
       <Route path="/parts" component={() => <ProtectedRoute component={Parts} />} />
       <Route path="/parts/:partId" component={() => <ProtectedRoute component={PartDetail} />} />
       <Route path="/search" component={() => <ProtectedRoute component={SearchResults} />} />
-      <Route path="/search/:query*" component={() => <ProtectedRoute component={SearchResults} />} />
       <Route path="/cart" component={() => <ProtectedRoute component={Cart} />} />
       <Route path="/checkout" component={() => <ProtectedRoute component={Checkout} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
