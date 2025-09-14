@@ -115,9 +115,17 @@ export interface IStorage {
 
   // Service Category methods
   getServiceCategories(activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getServiceCategoriesByLevel(level: number, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getMainCategories(activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getSubCategories(parentId: string, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getSubcategories(parentId: string, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getCategoryHierarchy(parentId?: string): Promise<ServiceCategory[]>;
   getServiceCategory(id: string): Promise<ServiceCategory | undefined>;
-  createServiceCategory(category: Omit<ServiceCategory, 'id' | 'createdAt'>): Promise<ServiceCategory>;
-  updateServiceCategory(id: string, data: Partial<Omit<ServiceCategory, 'id' | 'createdAt'>>): Promise<ServiceCategory | undefined>;
+  createServiceCategory(category: InsertServiceCategory): Promise<ServiceCategory>;
+  updateServiceCategory(id: string, data: Partial<InsertServiceCategory>): Promise<ServiceCategory | undefined>;
+  deleteServiceCategory(id: string): Promise<{ success: boolean; message: string }>;
+  reorderCategories(categoryIds: string[], startSortOrder?: number): Promise<void>;
+  generateCategorySlug(name: string, parentId?: string): Promise<string>;
 
   // Service methods
   getServices(filters?: { categoryId?: string; isActive?: boolean }): Promise<Service[]>;
@@ -486,10 +494,65 @@ export class PostgresStorage implements IStorage {
 
   // Service Category methods
   async getServiceCategories(activeOnly = true): Promise<ServiceCategory[]> {
+    const conditions: SQL[] = [];
     if (activeOnly) {
-      return await db.select().from(serviceCategories).where(eq(serviceCategories.isActive, true));
+      conditions.push(eq(serviceCategories.isActive, true));
+    }
+    
+    const whereClause = combineConditions(conditions);
+    const query = db.select().from(serviceCategories)
+      .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    
+    if (whereClause) {
+      return await query.where(whereClause);
     } else {
-      return await db.select().from(serviceCategories);
+      return await query;
+    }
+  }
+
+  async getServiceCategoriesByLevel(level: number, activeOnly = true): Promise<ServiceCategory[]> {
+    const conditions: SQL[] = [eq(serviceCategories.level, level)];
+    if (activeOnly) {
+      conditions.push(eq(serviceCategories.isActive, true));
+    }
+    
+    return await db.select().from(serviceCategories)
+      .where(combineConditions(conditions)!)
+      .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+  }
+
+  async getMainCategories(activeOnly = true): Promise<ServiceCategory[]> {
+    // Main categories are level 0 (top-level categories)
+    return await this.getServiceCategoriesByLevel(0, activeOnly);
+  }
+
+  async getSubCategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
+    const conditions: SQL[] = [eq(serviceCategories.parentId, parentId)];
+    if (activeOnly) {
+      conditions.push(eq(serviceCategories.isActive, true));
+    }
+    
+    return await db.select().from(serviceCategories)
+      .where(combineConditions(conditions)!)
+      .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+  }
+
+  async getSubcategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
+    // Alias for getSubCategories to match routes.ts method calls
+    return await this.getSubCategories(parentId, activeOnly);
+  }
+
+  async getCategoryHierarchy(parentId?: string): Promise<ServiceCategory[]> {
+    if (parentId) {
+      // Get all descendants of a specific category
+      const conditions: SQL[] = [eq(serviceCategories.parentId, parentId)];
+      return await db.select().from(serviceCategories)
+        .where(combineConditions(conditions)!)
+        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    } else {
+      // Get all categories ordered by hierarchy
+      return await db.select().from(serviceCategories)
+        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     }
   }
 
@@ -499,16 +562,106 @@ export class PostgresStorage implements IStorage {
   }
 
   async createServiceCategory(category: InsertServiceCategory): Promise<ServiceCategory> {
+    // Auto-generate slug if not provided
+    if (!category.slug) {
+      category.slug = await this.generateCategorySlug(category.name, category.parentId);
+    }
+    
+    // Set level based on parent
+    if (category.parentId) {
+      const parent = await this.getServiceCategory(category.parentId);
+      if (parent) {
+        category.level = (parent.level || 0) + 1;
+      }
+    } else {
+      category.level = 0; // Main category
+    }
+    
+    // Set sort order if not provided
+    if (category.sortOrder === undefined) {
+      const siblings = await this.getSubCategories(category.parentId || '', false);
+      category.sortOrder = siblings.length;
+    }
+    
     const result = await db.insert(serviceCategories).values(category).returning();
     return result[0];
   }
 
   async updateServiceCategory(id: string, data: Partial<InsertServiceCategory>): Promise<ServiceCategory | undefined> {
+    // Update slug if name changed
+    if (data.name && !data.slug) {
+      const currentCategory = await this.getServiceCategory(id);
+      if (currentCategory) {
+        data.slug = await this.generateCategorySlug(data.name, currentCategory.parentId);
+      }
+    }
+    
     const result = await db.update(serviceCategories)
       .set(data)
       .where(eq(serviceCategories.id, id))
       .returning();
     return result[0];
+  }
+
+  async deleteServiceCategory(id: string): Promise<{ success: boolean; message: string }> {
+    // Check if category has subcategories
+    const subCategories = await this.getSubCategories(id, false);
+    if (subCategories.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete category with ${subCategories.length} subcategories. Please delete or move subcategories first.`
+      };
+    }
+    
+    // Check if category has services
+    const services = await this.getServicesByCategory(id);
+    if (services.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete category with ${services.length} services. Please move services to another category first.`
+      };
+    }
+    
+    await db.delete(serviceCategories).where(eq(serviceCategories.id, id));
+    return { success: true, message: 'Category deleted successfully' };
+  }
+
+  async reorderCategories(categoryIds: string[], startSortOrder = 0): Promise<void> {
+    for (let i = 0; i < categoryIds.length; i++) {
+      await db.update(serviceCategories)
+        .set({ sortOrder: startSortOrder + i })
+        .where(eq(serviceCategories.id, categoryIds[i]));
+    }
+  }
+
+  async generateCategorySlug(name: string, parentId?: string): Promise<string> {
+    let baseSlug = name.toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+      .replace(/\s+/g, '-') // Replace spaces with hyphens
+      .replace(/-+/g, '-') // Replace multiple hyphens with single
+      .trim();
+    
+    let slug = baseSlug;
+    let counter = 1;
+    
+    // Check for uniqueness within the same level
+    while (true) {
+      const existing = await db.select().from(serviceCategories)
+        .where(and(
+          eq(serviceCategories.slug, slug),
+          parentId ? eq(serviceCategories.parentId, parentId) : sql`${serviceCategories.parentId} IS NULL`
+        ))
+        .limit(1);
+      
+      if (existing.length === 0) {
+        break;
+      }
+      
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+    
+    return slug;
   }
 
   // Service methods

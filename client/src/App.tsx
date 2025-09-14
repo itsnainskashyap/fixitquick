@@ -37,6 +37,7 @@ import Location from "@/pages/Location";
 import ServiceProvider from "@/pages/ServiceProvider";
 import PartsProvider from "@/pages/PartsProvider";
 import Admin from "@/pages/Admin";
+import Subcategories from "@/pages/Subcategories";
 import NotFound from "@/pages/not-found";
 
 // Dashboard routing based on user role
@@ -151,6 +152,9 @@ function Router() {
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
       <Route path="/account/edit" component={() => <ProtectedRoute component={AccountEdit} />} />
       <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
+      
+      {/* Category Hierarchy Routes */}
+      <Route path="/categories/:categoryId/subcategories" component={() => <ProtectedRoute component={Subcategories} />} />
       
       {/* Service Provider Routes */}
       <Route 

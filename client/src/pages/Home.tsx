@@ -50,9 +50,9 @@ export default function Home() {
   const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
 
-  // Fetch service categories from backend
+  // Fetch main categories (level 0) from backend for home page
   const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
-    queryKey: ['/api/v1/services/categories'],
+    queryKey: ['/api/v1/services/categories/main'],
   });
 
   // Fetch suggested services
@@ -95,7 +95,8 @@ export default function Home() {
   };
 
   const handleCategoryClick = (categoryId: string) => {
-    setLocation(`/services?category=${categoryId}`);
+    // Navigate to subcategories for the selected main category
+    setLocation(`/categories/${categoryId}/subcategories`);
   };
 
   const handleEmergencyClick = () => {
@@ -189,7 +190,7 @@ export default function Home() {
           className="mb-6"
         >
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">Explore Services</h2>
+            <h2 className="text-lg font-semibold text-foreground">Main Categories</h2>
             <Button
               variant="ghost"
               onClick={() => setLocation('/services')}
@@ -225,9 +226,9 @@ export default function Home() {
               <div className="w-16 h-16 bg-muted/20 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <span className="text-2xl">🔧</span>
               </div>
-              <h3 className="font-medium text-foreground mb-2">No Services Available</h3>
+              <h3 className="font-medium text-foreground mb-2">No Categories Available</h3>
               <p className="text-sm text-muted-foreground mb-4">
-                We're setting up our services. Please check back soon!
+                We're setting up our service categories. Please check back soon!
               </p>
               <Button
                 onClick={() => setLocation('/services')}

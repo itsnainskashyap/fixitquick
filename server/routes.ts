@@ -2009,6 +2009,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/v1/services/categories/main - Get main categories (level 0) for public use
+  app.get('/api/v1/services/categories/main', async (req, res) => {
+    try {
+      const mainCategories = await storage.getMainCategories();
+      res.json(mainCategories);
+    } catch (error) {
+      console.error('Error fetching main categories:', error);
+      res.status(500).json({ message: 'Failed to fetch main categories' });
+    }
+  });
+
+  // GET /api/v1/services/categories/:id - Get single category by ID for public use
+  app.get('/api/v1/services/categories/:id', async (req, res) => {
+    try {
+      const categoryId = req.params.id;
+      const category = await storage.getServiceCategory(categoryId);
+      
+      if (!category) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+      
+      res.json(category);
+    } catch (error) {
+      console.error('Error fetching category:', error);
+      res.status(500).json({ message: 'Failed to fetch category' });
+    }
+  });
+
+  // GET /api/v1/services/categories/:categoryId/subcategories - Get subcategories for a main category
+  app.get('/api/v1/services/categories/:categoryId/subcategories', async (req, res) => {
+    try {
+      const categoryId = req.params.categoryId;
+      const subcategories = await storage.getSubcategories(categoryId);
+      res.json(subcategories);
+    } catch (error) {
+      console.error('Error fetching subcategories:', error);
+      res.status(500).json({ message: 'Failed to fetch subcategories' });
+    }
+  });
+
   app.get('/api/v1/services', async (req, res) => {
     try {
       const { category, sortBy, priceRange } = req.query;
@@ -4190,6 +4230,304 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Failed to fetch admin analytics' });
     }
   });
+
+  // ============================================================================
+  // ADMIN CATEGORY HIERARCHY MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Admin category validation schemas
+  const adminCategoryCreateSchema = z.object({
+    name: z.string().min(1, 'Category name is required').max(100, 'Name too long'),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+    parentId: z.string().nullable().optional(),
+    level: z.number().int().min(0).max(5).optional(),
+    sortOrder: z.number().int().min(0).optional(),
+    isActive: z.boolean().optional().default(true),
+  });
+
+  const adminCategoryUpdateSchema = adminCategoryCreateSchema.partial();
+
+  const adminCategoryReorderSchema = z.object({
+    categoryIds: z.array(z.string().min(1)),
+    startSortOrder: z.number().int().min(0).optional().default(0),
+  });
+
+  // Get all categories with hierarchy information
+  app.get('/api/v1/admin/categories', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { level, parentId, activeOnly } = req.query;
+      let categories;
+
+      if (level !== undefined) {
+        categories = await storage.getServiceCategoriesByLevel(
+          parseInt(level as string), 
+          activeOnly !== 'false'
+        );
+      } else if (parentId) {
+        categories = await storage.getSubCategories(
+          parentId as string, 
+          activeOnly !== 'false'
+        );
+      } else {
+        categories = await storage.getCategoryHierarchy();
+      }
+
+      // Add metadata for each category
+      const categoriesWithMeta = await Promise.all(
+        categories.map(async (category) => {
+          const subCategories = await storage.getSubCategories(category.id, false);
+          const services = await storage.getServicesByCategory(category.id);
+          
+          return {
+            ...category,
+            subCategoriesCount: subCategories.length,
+            servicesCount: services.length,
+            hasChildren: subCategories.length > 0,
+          };
+        })
+      );
+
+      res.json(categoriesWithMeta);
+    } catch (error) {
+      console.error('Error fetching admin categories:', error);
+      res.status(500).json({ message: 'Failed to fetch categories' });
+    }
+  });
+
+  // Get category hierarchy tree
+  app.get('/api/v1/admin/categories/hierarchy', adminSessionMiddleware, async (req, res) => {
+    try {
+      const allCategories = await storage.getCategoryHierarchy();
+      
+      // Build tree structure
+      const categoryMap = new Map();
+      const tree: any[] = [];
+
+      // First pass: create category map
+      allCategories.forEach(category => {
+        categoryMap.set(category.id, {
+          ...category,
+          children: [],
+          subCategoriesCount: 0,
+          servicesCount: 0
+        });
+      });
+
+      // Second pass: build tree and add metadata
+      for (const category of allCategories) {
+        const categoryWithChildren = categoryMap.get(category.id);
+        
+        // Get services count
+        const services = await storage.getServicesByCategory(category.id);
+        categoryWithChildren.servicesCount = services.length;
+
+        if (category.parentId) {
+          const parent = categoryMap.get(category.parentId);
+          if (parent) {
+            parent.children.push(categoryWithChildren);
+            parent.subCategoriesCount++;
+          }
+        } else {
+          tree.push(categoryWithChildren);
+        }
+      }
+
+      res.json(tree);
+    } catch (error) {
+      console.error('Error fetching category hierarchy:', error);
+      res.status(500).json({ message: 'Failed to fetch category hierarchy' });
+    }
+  });
+
+  // Get main categories (level 0)
+  app.get('/api/v1/admin/categories/main', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { activeOnly = 'true' } = req.query;
+      const mainCategories = await storage.getServiceCategoriesByLevel(0, activeOnly !== 'false');
+      
+      // Add subcategories count
+      const categoriesWithMeta = await Promise.all(
+        mainCategories.map(async (category) => {
+          const subCategories = await storage.getSubCategories(category.id, false);
+          return {
+            ...category,
+            subCategoriesCount: subCategories.length,
+          };
+        })
+      );
+
+      res.json(categoriesWithMeta);
+    } catch (error) {
+      console.error('Error fetching main categories:', error);
+      res.status(500).json({ message: 'Failed to fetch main categories' });
+    }
+  });
+
+  // Get subcategories for a parent category
+  app.get('/api/v1/admin/categories/:parentId/subcategories', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { parentId } = req.params;
+      const { activeOnly = 'true' } = req.query;
+      
+      const subcategories = await storage.getSubCategories(parentId, activeOnly !== 'false');
+      
+      // Add services count
+      const categoriesWithMeta = await Promise.all(
+        subcategories.map(async (category) => {
+          const services = await storage.getServicesByCategory(category.id);
+          return {
+            ...category,
+            servicesCount: services.length,
+          };
+        })
+      );
+
+      res.json(categoriesWithMeta);
+    } catch (error) {
+      console.error('Error fetching subcategories:', error);
+      res.status(500).json({ message: 'Failed to fetch subcategories' });
+    }
+  });
+
+  // Create new category
+  app.post('/api/v1/admin/categories', adminSessionMiddleware, validateBody(adminCategoryCreateSchema), async (req, res) => {
+    try {
+      const categoryData = req.body;
+      
+      // Validate parent category if provided
+      if (categoryData.parentId) {
+        const parentCategory = await storage.getServiceCategory(categoryData.parentId);
+        if (!parentCategory) {
+          return res.status(400).json({ message: 'Parent category not found' });
+        }
+        
+        // Check level limits (max 3 levels: 0, 1, 2)
+        if ((parentCategory.level || 0) >= 2) {
+          return res.status(400).json({ 
+            message: 'Maximum category depth (3 levels) exceeded' 
+          });
+        }
+      }
+
+      const newCategory = await storage.createServiceCategory(categoryData);
+      
+      console.log('✅ Admin created category:', { 
+        id: newCategory.id, 
+        name: newCategory.name, 
+        level: newCategory.level,
+        parentId: newCategory.parentId 
+      });
+
+      res.status(201).json(newCategory);
+    } catch (error) {
+      console.error('Error creating category:', error);
+      res.status(500).json({ message: 'Failed to create category' });
+    }
+  });
+
+  // Update category
+  app.put('/api/v1/admin/categories/:categoryId', adminSessionMiddleware, validateBody(adminCategoryUpdateSchema), async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      const updateData = req.body;
+      
+      // Validate category exists
+      const existingCategory = await storage.getServiceCategory(categoryId);
+      if (!existingCategory) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      // Validate parent change doesn't create circular reference
+      if (updateData.parentId && updateData.parentId !== existingCategory.parentId) {
+        if (updateData.parentId === categoryId) {
+          return res.status(400).json({ message: 'Category cannot be its own parent' });
+        }
+        
+        // Check if new parent exists
+        const newParent = await storage.getServiceCategory(updateData.parentId);
+        if (!newParent) {
+          return res.status(400).json({ message: 'New parent category not found' });
+        }
+        
+        // Check depth limits
+        if ((newParent.level || 0) >= 2) {
+          return res.status(400).json({ 
+            message: 'Moving category would exceed maximum depth (3 levels)' 
+          });
+        }
+      }
+
+      const updatedCategory = await storage.updateServiceCategory(categoryId, updateData);
+      
+      if (!updatedCategory) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      console.log('✅ Admin updated category:', { 
+        id: updatedCategory.id, 
+        name: updatedCategory.name,
+        changes: Object.keys(updateData) 
+      });
+
+      res.json(updatedCategory);
+    } catch (error) {
+      console.error('Error updating category:', error);
+      res.status(500).json({ message: 'Failed to update category' });
+    }
+  });
+
+  // Delete category
+  app.delete('/api/v1/admin/categories/:categoryId', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      
+      const result = await storage.deleteServiceCategory(categoryId);
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      console.log('✅ Admin deleted category:', { id: categoryId });
+      res.json({ success: true, message: result.message });
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      res.status(500).json({ message: 'Failed to delete category' });
+    }
+  });
+
+  // Reorder categories
+  app.post('/api/v1/admin/categories/reorder', adminSessionMiddleware, validateBody(adminCategoryReorderSchema), async (req, res) => {
+    try {
+      const { categoryIds, startSortOrder } = req.body;
+      
+      // Validate all categories exist
+      for (const categoryId of categoryIds) {
+        const category = await storage.getServiceCategory(categoryId);
+        if (!category) {
+          return res.status(400).json({ 
+            message: `Category not found: ${categoryId}` 
+          });
+        }
+      }
+
+      await storage.reorderCategories(categoryIds, startSortOrder);
+      
+      console.log('✅ Admin reordered categories:', { 
+        count: categoryIds.length, 
+        startOrder: startSortOrder 
+      });
+
+      res.json({ success: true, message: 'Categories reordered successfully' });
+    } catch (error) {
+      console.error('Error reordering categories:', error);
+      res.status(500).json({ message: 'Failed to reorder categories' });
+    }
+  });
+
+  // ============================================================================
+  // END ADMIN CATEGORY HIERARCHY MANAGEMENT ENDPOINTS
+  // ============================================================================
 
   // Stripe webhook endpoint with proper signature verification
   app.post('/api/v1/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
