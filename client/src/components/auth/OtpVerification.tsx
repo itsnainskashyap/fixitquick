@@ -69,7 +69,7 @@ export default function OtpVerification({
   onResend,
   onError 
 }: OtpVerificationProps) {
-  const [timer, setTimer] = useState(60);
+  const [timer, setTimer] = useState(3);
   const [canResend, setCanResend] = useState(false);
   const { toast } = useToast();
 
@@ -145,12 +145,13 @@ export default function OtpVerification({
       return await response.json() as OtpVerifyResponse;
     },
     onSuccess: (data) => {
-      if (data.success && data.accessToken && data.refreshToken) {
+      if (data.success && data.accessToken) {
         toast({
           title: "Phone Verified Successfully",
           description: "Welcome to FixitQuick!",
         });
-        onSuccess(data.accessToken, data.refreshToken);
+        // Auto-login user immediately without continue button
+        onSuccess(data.accessToken, data.refreshToken || '');
       } else {
         const errorMessage = data.message || 'Invalid OTP. Please try again.';
         toast({
@@ -198,7 +199,7 @@ export default function OtpVerification({
           title: "OTP Sent",
           description: "A new verification code has been sent to your phone.",
         });
-        setTimer(60);
+        setTimer(3);
         setCanResend(false);
         form.reset();
         onResend();
@@ -228,6 +229,17 @@ export default function OtpVerification({
 
   const onSubmit = (data: OtpFormData) => {
     verifyOtpMutation.mutate(data);
+  };
+
+  // Auto-submit when 6 digits are entered
+  const handleOtpChange = (value: string) => {
+    form.setValue('otp', value);
+    if (value.length === 6) {
+      // Auto-submit after a brief delay to ensure UI updates
+      setTimeout(() => {
+        form.handleSubmit(onSubmit)();
+      }, 100);
+    }
   };
 
   const handleResend = () => {
@@ -282,7 +294,8 @@ export default function OtpVerification({
                   <div className="flex justify-center">
                     <InputOTP
                       maxLength={6}
-                      {...field}
+                      value={field.value}
+                      onChange={handleOtpChange}
                       data-testid="otp-input"
                       disabled={verifyOtpMutation.isPending}
                     >

@@ -29,7 +29,7 @@ const limiter = rateLimit({
 // Specific rate limiters for OTP endpoints
 const otpRequestLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 1, // 1 request per minute per IP
+  max: 20, // 20 requests per minute per IP (allows 3-second resends)
   message: 'Too many OTP requests. Please wait before requesting again.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -438,7 +438,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error('Error verifying OTP:', error);
+      console.error('Error verifying OTP - Full details:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
       res.status(500).json({
         success: false,
         message: 'Verification failed. Please try again.'

@@ -221,52 +221,7 @@ export const countryCodes: CountryCode[] = [
   }
 ];
 
-// Get default country code based on user's locale or return India as default
+// Always default to India for this application
 export const getDefaultCountry = (): CountryCode => {
-  try {
-    const locale = navigator.language || 'en-IN';
-    const countryCode = locale.split('-')[1] || 'IN';
-    
-    // Map common locale country codes to our country codes
-    const countryMapping: { [key: string]: string } = {
-      'US': 'US',
-      'IN': 'IN', 
-      'GB': 'GB',
-      'UK': 'GB',
-      'CA': 'CA',
-      'AU': 'AU',
-      'DE': 'DE',
-      'FR': 'FR',
-      'IT': 'IT',
-      'ES': 'ES',
-      'JP': 'JP',
-      'KR': 'KR',
-      'CN': 'CN',
-      'BR': 'BR',
-      'MX': 'MX',
-      'RU': 'RU',
-      'ZA': 'ZA',
-      'NG': 'NG',
-      'PK': 'PK',
-      'BD': 'BD',
-      'ID': 'ID',
-      'MY': 'MY',
-      'PH': 'PH',
-      'TH': 'TH',
-      'VN': 'VN',
-      'SG': 'SG',
-      'AE': 'AE',
-      'TR': 'TR',
-      'NL': 'NL',
-      'LK': 'LK',
-      'AF': 'AF'
-    };
-
-    const mappedCode = countryMapping[countryCode.toUpperCase()];
-    const country = countryCodes.find(c => c.code === mappedCode);
-    
-    return country || countryCodes[0]; // Default to India if not found
-  } catch {
-    return countryCodes[0]; // Default to India on any error
-  }
+  return countryCodes[0]; // India is first in the list
 };

@@ -40,7 +40,7 @@ class TwilioService {
   private readonly OTP_LENGTH = 6;
   private readonly OTP_EXPIRY_MINUTES = 5;
   private readonly MAX_ATTEMPTS = 5;
-  private readonly RESEND_COOLDOWN_SECONDS = 60;
+  private readonly RESEND_COOLDOWN_SECONDS = 3;
   private readonly MAX_RESENDS_PER_HOUR = 3;
   private readonly BCRYPT_ROUNDS = 12;
 
