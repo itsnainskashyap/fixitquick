@@ -137,12 +137,21 @@ export default function OtpVerification({
 
   const verifyOtpMutation = useMutation({
     mutationFn: async (data: OtpFormData) => {
+      console.log('🔐 Verifying OTP:', {
+        phone: phoneNumber,
+        code: data.otp,
+        codeLength: data.otp?.length
+      });
+      
       const response = await apiRequest('POST', '/api/v1/auth/otp/verify', {
         phone: phoneNumber,
         code: data.otp,
       });
       
-      return await response.json() as OtpVerifyResponse;
+      const result = await response.json() as OtpVerifyResponse;
+      console.log('🔐 OTP Verification response:', result);
+      
+      return result;
     },
     onSuccess: (data) => {
       if (data.success && data.accessToken) {

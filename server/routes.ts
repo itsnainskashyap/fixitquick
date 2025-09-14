@@ -362,8 +362,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ip = req.ip || req.socket.remoteAddress;
       const userAgent = req.get('User-Agent');
 
+      console.log('🔐 OTP Verification attempt:', {
+        phone,
+        code: code?.length ? `${code.length} digits` : 'missing',
+        ip,
+        userAgent: userAgent?.substring(0, 50)
+      });
+
       // Verify OTP
       const verifyResult = await twilioService.verifyOTP(phone, code, ip);
+      
+      console.log('🔐 OTP Verification result:', {
+        success: verifyResult.success,
+        message: verifyResult.message,
+        isExpired: verifyResult.isExpired,
+        isLocked: verifyResult.isLocked
+      });
       
       if (!verifyResult.success) {
         return res.status(400).json({
