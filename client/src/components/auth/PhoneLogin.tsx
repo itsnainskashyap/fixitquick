@@ -82,7 +82,7 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
       const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
       
       const response = await apiRequest('POST', '/api/v1/auth/otp/request', {
-        phoneNumber: fullPhoneNumber,
+        phone: fullPhoneNumber,
       });
       
       return await response.json() as OtpRequestResponse;

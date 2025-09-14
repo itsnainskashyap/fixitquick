@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -80,6 +80,49 @@ export default function OtpVerification({
     },
   });
 
+  // WebOTP API integration for automatic SMS detection
+  const requestOtpFromSms = useCallback(async () => {
+    if ('OTPCredential' in window) {
+      try {
+        // Use AbortController for cleanup
+        const abortController = new AbortController();
+        
+        // Request OTP from SMS
+        const otpCredential = await (navigator.credentials as any).get({
+          otp: { transport: ['sms'] },
+          signal: abortController.signal,
+        });
+        
+        if (otpCredential?.code) {
+          // Auto-fill the OTP
+          form.setValue('otp', otpCredential.code);
+          // Auto-submit the form
+          form.handleSubmit(onSubmit)();
+        }
+        
+        // Return cleanup function
+        return () => abortController.abort();
+      } catch (error) {
+        // WebOTP failed, user can still enter OTP manually
+        console.log('WebOTP failed, manual entry available:', error);
+      }
+    }
+    return null;
+  }, [form]);
+
+  // Initialize WebOTP on component mount
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    
+    requestOtpFromSms().then(cleanupFn => {
+      cleanup = cleanupFn;
+    });
+    
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [requestOtpFromSms]);
+
   // Countdown timer for resend button
   useEffect(() => {
     if (timer > 0) {
@@ -95,8 +138,8 @@ export default function OtpVerification({
   const verifyOtpMutation = useMutation({
     mutationFn: async (data: OtpFormData) => {
       const response = await apiRequest('POST', '/api/v1/auth/otp/verify', {
-        challengeId,
-        otp: data.otp,
+        phone: phoneNumber,
+        code: data.otp,
       });
       
       return await response.json() as OtpVerifyResponse;
@@ -144,7 +187,7 @@ export default function OtpVerification({
   const resendOtpMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest('POST', '/api/v1/auth/otp/request', {
-        phoneNumber,
+        phone: phoneNumber,
       });
       
       return await response.json() as ResendOtpResponse;

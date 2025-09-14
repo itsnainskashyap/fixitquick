@@ -17,6 +17,7 @@ interface AuthContextType {
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  signInWithSMS: (accessToken: string, refreshToken: string, userData?: any) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -101,6 +102,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signInWithSMS = async (accessToken: string, refreshToken: string, userData?: any) => {
+    try {
+      setIsLoading(true);
+      
+      // Store access token in localStorage for API requests
+      localStorage.setItem('accessToken', accessToken);
+      
+      // Set user data from SMS auth response
+      if (userData && userData.user) {
+        setUser({
+          ...userData.user,
+          uid: userData.user.id,
+          email: userData.user.email || null,
+          displayName: `${userData.user.firstName || ''} ${userData.user.lastName || ''}`.trim() || null,
+          photoURL: userData.user.profileImageUrl || null,
+        } as AuthUser);
+      } else {
+        // Fallback: fetch user data using the access token
+        try {
+          const response = await apiRequest('GET', '/api/v1/auth/user');
+          const userInfo = await response.json();
+          setUser({
+            ...userInfo,
+            uid: userInfo.id,
+            email: userInfo.email || null,
+            displayName: `${userInfo.firstName || ''} ${userInfo.lastName || ''}`.trim() || null,
+            photoURL: userInfo.profileImageUrl || null,
+          } as AuthUser);
+        } catch (error) {
+          console.error('Error fetching user data after SMS auth:', error);
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error('SMS sign in error:', error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const value = {
     user,
     isLoading,
@@ -108,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn,
     signOut,
     refreshUser,
+    signInWithSMS,
   };
 
   return (

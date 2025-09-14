@@ -13,7 +13,7 @@ import OtpVerification from '@/components/auth/OtpVerification';
 type AuthStep = 'method-selection' | 'phone-input' | 'otp-verification';
 
 export default function Login() {
-  const { signIn, isLoading, isAuthenticated } = useAuth();
+  const { signIn, signInWithSMS, isLoading, isAuthenticated } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
@@ -49,13 +49,21 @@ export default function Login() {
     setCurrentStep('otp-verification');
   };
 
-  const handleOtpVerificationSuccess = (accessToken: string, refreshToken: string) => {
-    // TODO: Integrate with existing auth system to handle JWT tokens
-    toast({
-      title: "Welcome to FixitQuick!",
-      description: "You have successfully signed in.",
-    });
-    setLocation('/');
+  const handleOtpVerificationSuccess = async (accessToken: string, refreshToken: string, userData?: any) => {
+    try {
+      await signInWithSMS(accessToken, refreshToken, userData);
+      toast({
+        title: "Welcome to FixitQuick!",
+        description: "You have successfully signed in.",
+      });
+      setLocation('/');
+    } catch (error) {
+      toast({
+        title: "Sign in failed",
+        description: "Please try again later.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleBackToMethodSelection = () => {
