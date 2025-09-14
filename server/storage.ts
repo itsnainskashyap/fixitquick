@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, count, like, inArray, sql, type SQL } from "drizzle-orm";
+import { eq, and, desc, asc, count, like, ilike, inArray, sql, type SQL, or, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   type User,
@@ -154,6 +154,70 @@ export interface IStorage {
   // Settings methods
   getSetting(key: string): Promise<unknown>;
   setSetting(key: string, value: unknown, description?: string): Promise<void>;
+
+  // Enhanced AI Search methods
+  searchServices(filters: {
+    query: string;
+    categories?: string[];
+    priceRange?: { min: number; max: number };
+    location?: { latitude: number; longitude: number; maxDistance?: number };
+    urgency?: 'low' | 'medium' | 'high';
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    total: number;
+    suggestions: string[];
+  }>;
+
+  searchParts(filters: {
+    query: string;
+    categories?: string[];
+    priceRange?: { min: number; max: number };
+    inStockOnly?: boolean;
+    providerId?: string;
+    specifications?: Record<string, any>;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    parts: (Part & { category: PartsCategory })[];
+    total: number;
+    suggestions: string[];
+  }>;
+
+  getPersonalizedSuggestions(userId: string, type: 'services' | 'parts' | 'mixed', limit?: number): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    reasons: string[];
+  }>;
+
+  getTrendingItems(type: 'services' | 'parts' | 'mixed', limit?: number): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    trendingReasons: string[];
+  }>;
+
+  getSimilarItems(itemId: string, itemType: 'service' | 'part', limit?: number): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    similarityScores: Record<string, number>;
+  }>;
+
+  getSearchSuggestions(query: string, userId?: string): Promise<string[]>;
+
+  trackSearchQuery(userId: string | null, query: string, results: number, category?: string): Promise<void>;
+
+  getUserSearchHistory(userId: string, limit?: number): Promise<{
+    query: string;
+    timestamp: Date;
+    results: number;
+  }[]>;
+
+  getPopularSearchQueries(limit?: number): Promise<{
+    query: string;
+    count: number;
+    category?: string;
+  }[]>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -1005,6 +1069,656 @@ export class PostgresStorage implements IStorage {
         target: appSettings.key,
         set: { value, description, updatedAt: new Date() },
       });
+  }
+
+  // Enhanced AI Search methods
+  async searchServices(filters: {
+    query: string;
+    categories?: string[];
+    priceRange?: { min: number; max: number };
+    location?: { latitude: number; longitude: number; maxDistance?: number };
+    urgency?: 'low' | 'medium' | 'high';
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    total: number;
+    suggestions: string[];
+  }> {
+    const limit = filters.limit || 20;
+    const offset = filters.offset || 0;
+    
+    let baseQuery = db.select({
+      ...services,
+      category: serviceCategories,
+    })
+      .from(services)
+      .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id));
+
+    const conditions: SQL[] = [eq(services.isActive, true)];
+
+    // Full-text search on name and description
+    if (filters.query.trim()) {
+      const searchTerm = `%${filters.query.trim()}%`;
+      conditions.push(
+        or(
+          ilike(services.name, searchTerm),
+          ilike(services.description, searchTerm),
+          ilike(serviceCategories.name, searchTerm)
+        )
+      );
+    }
+
+    // Category filter
+    if (filters.categories && filters.categories.length > 0) {
+      conditions.push(inArray(services.categoryId, filters.categories));
+    }
+
+    // Price range filter
+    if (filters.priceRange) {
+      if (filters.priceRange.min) {
+        conditions.push(gte(services.basePrice, filters.priceRange.min.toString()));
+      }
+      if (filters.priceRange.max) {
+        conditions.push(lte(services.basePrice, filters.priceRange.max.toString()));
+      }
+    }
+
+    const whereClause = combineConditions(conditions);
+    if (whereClause) {
+      baseQuery = baseQuery.where(whereClause);
+    }
+
+    // Execute search with pagination
+    const results = await baseQuery
+      .orderBy(desc(services.totalBookings), desc(services.rating))
+      .limit(limit)
+      .offset(offset);
+
+    // Get total count for pagination
+    const totalQuery = db.select({ count: count() })
+      .from(services)
+      .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id));
+    
+    if (whereClause) {
+      totalQuery.where(whereClause);
+    }
+    
+    const totalResult = await totalQuery;
+    const total = totalResult[0]?.count || 0;
+
+    // Generate search suggestions based on current query
+    const suggestions = await this.generateSearchSuggestions(filters.query, 'services');
+
+    return {
+      services: results,
+      total: Number(total),
+      suggestions,
+    };
+  }
+
+  async searchParts(filters: {
+    query: string;
+    categories?: string[];
+    priceRange?: { min: number; max: number };
+    inStockOnly?: boolean;
+    providerId?: string;
+    specifications?: Record<string, any>;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    parts: (Part & { category: PartsCategory })[];
+    total: number;
+    suggestions: string[];
+  }> {
+    const limit = filters.limit || 20;
+    const offset = filters.offset || 0;
+    
+    let baseQuery = db.select({
+      ...parts,
+      category: partsCategories,
+    })
+      .from(parts)
+      .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id));
+
+    const conditions: SQL[] = [eq(parts.isActive, true)];
+
+    // Full-text search on name and description
+    if (filters.query.trim()) {
+      const searchTerm = `%${filters.query.trim()}%`;
+      conditions.push(
+        or(
+          ilike(parts.name, searchTerm),
+          ilike(parts.description, searchTerm),
+          ilike(partsCategories.name, searchTerm)
+        )
+      );
+    }
+
+    // Category filter
+    if (filters.categories && filters.categories.length > 0) {
+      conditions.push(inArray(parts.categoryId, filters.categories));
+    }
+
+    // Price range filter
+    if (filters.priceRange) {
+      if (filters.priceRange.min) {
+        conditions.push(gte(parts.price, filters.priceRange.min.toString()));
+      }
+      if (filters.priceRange.max) {
+        conditions.push(lte(parts.price, filters.priceRange.max.toString()));
+      }
+    }
+
+    // In stock filter
+    if (filters.inStockOnly) {
+      conditions.push(sql`${parts.stock} > 0`);
+    }
+
+    // Provider filter
+    if (filters.providerId) {
+      conditions.push(eq(parts.providerId, filters.providerId));
+    }
+
+    const whereClause = combineConditions(conditions);
+    if (whereClause) {
+      baseQuery = baseQuery.where(whereClause);
+    }
+
+    // Execute search with pagination
+    const results = await baseQuery
+      .orderBy(desc(parts.totalSold), desc(parts.rating))
+      .limit(limit)
+      .offset(offset);
+
+    // Get total count
+    const totalQuery = db.select({ count: count() })
+      .from(parts)
+      .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id));
+    
+    if (whereClause) {
+      totalQuery.where(whereClause);
+    }
+    
+    const totalResult = await totalQuery;
+    const total = totalResult[0]?.count || 0;
+
+    // Generate search suggestions
+    const suggestions = await this.generateSearchSuggestions(filters.query, 'parts');
+
+    return {
+      parts: results,
+      total: Number(total),
+      suggestions,
+    };
+  }
+
+  async getPersonalizedSuggestions(userId: string, type: 'services' | 'parts' | 'mixed', limit = 10): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    reasons: string[];
+  }> {
+    const reasons: string[] = [];
+    let suggestedServices: (Service & { category: ServiceCategory })[] = [];
+    let suggestedParts: (Part & { category: PartsCategory })[] = [];
+
+    // Get user's order history to understand preferences
+    const userOrders = await db.select({
+      id: orders.id,
+      items: orders.items,
+      type: orders.type,
+      status: orders.status,
+    })
+      .from(orders)
+      .where(and(eq(orders.userId, userId), eq(orders.status, 'completed')))
+      .orderBy(desc(orders.createdAt))
+      .limit(50);
+
+    // Extract categories from user's history
+    const userCategories = new Set<string>();
+    const serviceIds = new Set<string>();
+    
+    userOrders.forEach(order => {
+      if (order.items && Array.isArray(order.items)) {
+        order.items.forEach((item: any) => {
+          if (item.type === 'service') {
+            serviceIds.add(item.id);
+          }
+        });
+      }
+    });
+
+    // Get service categories from user's history
+    if (serviceIds.size > 0) {
+      const userServices = await db.select()
+        .from(services)
+        .where(inArray(services.id, Array.from(serviceIds)));
+      
+      userServices.forEach(service => {
+        if (service.categoryId) {
+          userCategories.add(service.categoryId);
+        }
+      });
+    }
+
+    if (type === 'services' || type === 'mixed') {
+      if (userCategories.size > 0) {
+        // Suggest highly-rated services in user's preferred categories
+        suggestedServices = await db.select({
+          ...services,
+          category: serviceCategories,
+        })
+          .from(services)
+          .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+          .where(and(
+            inArray(services.categoryId, Array.from(userCategories)),
+            eq(services.isActive, true),
+            sql`${services.rating} >= 4.0`
+          ))
+          .orderBy(desc(services.rating), desc(services.totalBookings))
+          .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+        
+        if (suggestedServices.length > 0) {
+          reasons.push('Based on your previous service bookings');
+        }
+      }
+
+      // If no history-based suggestions, get trending services
+      if (suggestedServices.length === 0) {
+        suggestedServices = await db.select({
+          ...services,
+          category: serviceCategories,
+        })
+          .from(services)
+          .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+          .where(eq(services.isActive, true))
+          .orderBy(desc(services.totalBookings), desc(services.rating))
+          .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+        
+        if (suggestedServices.length > 0) {
+          reasons.push('Popular services in your area');
+        }
+      }
+    }
+
+    if (type === 'parts' || type === 'mixed') {
+      // Suggest complementary parts based on service history
+      if (userCategories.size > 0) {
+        // Map service categories to relevant parts categories
+        const relevantPartsCategoryNames = Array.from(userCategories).map(categoryId => {
+          // Simple mapping - could be enhanced with a proper lookup table
+          return categoryId; // Assuming similar category structure
+        });
+
+        const partsCategs = await db.select()
+          .from(partsCategories)
+          .where(eq(partsCategories.isActive, true));
+
+        const relevantPartsCategories = partsCategs.filter(pc => 
+          relevantPartsCategoryNames.some(name => pc.name.toLowerCase().includes(name.toLowerCase()))
+        );
+
+        if (relevantPartsCategories.length > 0) {
+          suggestedParts = await db.select({
+            ...parts,
+            category: partsCategories,
+          })
+            .from(parts)
+            .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id))
+            .where(and(
+              inArray(parts.categoryId, relevantPartsCategories.map(pc => pc.id)),
+              eq(parts.isActive, true),
+              sql`${parts.stock} > 0`,
+              sql`${parts.rating} >= 4.0`
+            ))
+            .orderBy(desc(parts.rating), desc(parts.totalSold))
+            .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+          
+          if (suggestedParts.length > 0) {
+            reasons.push('Parts related to your service history');
+          }
+        }
+      }
+
+      // If no history-based part suggestions, get trending parts
+      if (suggestedParts.length === 0) {
+        suggestedParts = await db.select({
+          ...parts,
+          category: partsCategories,
+        })
+          .from(parts)
+          .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id))
+          .where(and(eq(parts.isActive, true), sql`${parts.stock} > 0`))
+          .orderBy(desc(parts.totalSold), desc(parts.rating))
+          .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+        
+        if (suggestedParts.length > 0) {
+          reasons.push('Popular parts in demand');
+        }
+      }
+    }
+
+    return {
+      services: suggestedServices,
+      parts: suggestedParts,
+      reasons,
+    };
+  }
+
+  async getTrendingItems(type: 'services' | 'parts' | 'mixed', limit = 10): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    trendingReasons: string[];
+  }> {
+    const reasons: string[] = [];
+    let trendingServices: (Service & { category: ServiceCategory })[] = [];
+    let trendingParts: (Part & { category: PartsCategory })[] = [];
+
+    if (type === 'services' || type === 'mixed') {
+      // Get services with high recent booking activity
+      trendingServices = await db.select({
+        ...services,
+        category: serviceCategories,
+      })
+        .from(services)
+        .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+        .where(eq(services.isActive, true))
+        .orderBy(desc(services.totalBookings), desc(services.rating))
+        .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+      
+      if (trendingServices.length > 0) {
+        reasons.push('Most booked services this month');
+      }
+    }
+
+    if (type === 'parts' || type === 'mixed') {
+      // Get parts with high sales activity
+      trendingParts = await db.select({
+        ...parts,
+        category: partsCategories,
+      })
+        .from(parts)
+        .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id))
+        .where(and(eq(parts.isActive, true), sql`${parts.stock} > 0`))
+        .orderBy(desc(parts.totalSold), desc(parts.rating))
+        .limit(type === 'mixed' ? Math.floor(limit / 2) : limit);
+      
+      if (trendingParts.length > 0) {
+        reasons.push('Best-selling parts this month');
+      }
+    }
+
+    return {
+      services: trendingServices,
+      parts: trendingParts,
+      trendingReasons: reasons,
+    };
+  }
+
+  async getSimilarItems(itemId: string, itemType: 'service' | 'part', limit = 5): Promise<{
+    services: (Service & { category: ServiceCategory })[];
+    parts: (Part & { category: PartsCategory })[];
+    similarityScores: Record<string, number>;
+  }> {
+    const similarityScores: Record<string, number> = {};
+    let similarServices: (Service & { category: ServiceCategory })[] = [];
+    let similarParts: (Part & { category: PartsCategory })[] = [];
+
+    if (itemType === 'service') {
+      // Find the source service
+      const sourceService = await db.select()
+        .from(services)
+        .where(eq(services.id, itemId))
+        .limit(1);
+      
+      if (sourceService[0]) {
+        // Find services in the same category with similar price range
+        const priceBuffer = parseFloat(sourceService[0].basePrice) * 0.3; // 30% price range
+        
+        similarServices = await db.select({
+          ...services,
+          category: serviceCategories,
+        })
+          .from(services)
+          .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+          .where(and(
+            eq(services.categoryId, sourceService[0].categoryId!),
+            eq(services.isActive, true),
+            sql`${services.id} != ${itemId}`,
+            gte(services.basePrice, (parseFloat(sourceService[0].basePrice) - priceBuffer).toString()),
+            lte(services.basePrice, (parseFloat(sourceService[0].basePrice) + priceBuffer).toString())
+          ))
+          .orderBy(desc(services.rating), desc(services.totalBookings))
+          .limit(limit);
+
+        // Calculate similarity scores based on rating and category match
+        similarServices.forEach(service => {
+          similarityScores[service.id] = 0.9; // High similarity for same category
+        });
+      }
+    } else {
+      // Find the source part
+      const sourcePart = await db.select()
+        .from(parts)
+        .where(eq(parts.id, itemId))
+        .limit(1);
+      
+      if (sourcePart[0]) {
+        // Find parts in the same category with similar price range
+        const priceBuffer = parseFloat(sourcePart[0].price) * 0.3; // 30% price range
+        
+        similarParts = await db.select({
+          ...parts,
+          category: partsCategories,
+        })
+          .from(parts)
+          .innerJoin(partsCategories, eq(parts.categoryId, partsCategories.id))
+          .where(and(
+            eq(parts.categoryId, sourcePart[0].categoryId!),
+            eq(parts.isActive, true),
+            sql`${parts.stock} > 0`,
+            sql`${parts.id} != ${itemId}`,
+            gte(parts.price, (parseFloat(sourcePart[0].price) - priceBuffer).toString()),
+            lte(parts.price, (parseFloat(sourcePart[0].price) + priceBuffer).toString())
+          ))
+          .orderBy(desc(parts.rating), desc(parts.totalSold))
+          .limit(limit);
+
+        // Calculate similarity scores
+        similarParts.forEach(part => {
+          similarityScores[part.id] = 0.9; // High similarity for same category
+        });
+      }
+    }
+
+    return {
+      services: similarServices,
+      parts: similarParts,
+      similarityScores,
+    };
+  }
+
+  async getSearchSuggestions(query: string, userId?: string): Promise<string[]> {
+    const suggestions: string[] = [];
+    
+    if (query.length < 2) {
+      return suggestions;
+    }
+
+    // Get service name suggestions
+    const serviceResults = await db.select({ name: services.name })
+      .from(services)
+      .where(and(
+        ilike(services.name, `%${query}%`),
+        eq(services.isActive, true)
+      ))
+      .orderBy(desc(services.totalBookings))
+      .limit(3);
+
+    serviceResults.forEach(service => suggestions.push(service.name));
+
+    // Get category suggestions
+    const categoryResults = await db.select({ name: serviceCategories.name })
+      .from(serviceCategories)
+      .where(and(
+        ilike(serviceCategories.name, `%${query}%`),
+        eq(serviceCategories.isActive, true)
+      ))
+      .limit(3);
+
+    categoryResults.forEach(category => suggestions.push(category.name));
+
+    // Get parts name suggestions
+    const partsResults = await db.select({ name: parts.name })
+      .from(parts)
+      .where(and(
+        ilike(parts.name, `%${query}%`),
+        eq(parts.isActive, true)
+      ))
+      .orderBy(desc(parts.totalSold))
+      .limit(3);
+
+    partsResults.forEach(part => suggestions.push(part.name));
+
+    return [...new Set(suggestions)]; // Remove duplicates
+  }
+
+  async trackSearchQuery(userId: string | null, query: string, results: number, category?: string): Promise<void> {
+    // Store search tracking in app settings as JSON for analytics
+    const key = `search_log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await this.setSetting(key, {
+      userId,
+      query,
+      results,
+      category,
+      timestamp: new Date().toISOString(),
+    }, 'Search query tracking');
+  }
+
+  async getUserSearchHistory(userId: string, limit = 10): Promise<{
+    query: string;
+    timestamp: Date;
+    results: number;
+  }[]> {
+    // Get user search history from app settings
+    const searchSettings = await db.select()
+      .from(appSettings)
+      .where(and(
+        like(appSettings.key, 'search_log_%'),
+        sql`${appSettings.value}->>'userId' = ${userId}`
+      ))
+      .orderBy(desc(appSettings.updatedAt))
+      .limit(limit);
+
+    return searchSettings.map(setting => {
+      const data = setting.value as any;
+      return {
+        query: data.query,
+        timestamp: new Date(data.timestamp),
+        results: data.results,
+      };
+    });
+  }
+
+  async getPopularSearchQueries(limit = 10): Promise<{
+    query: string;
+    count: number;
+    category?: string;
+  }[]> {
+    // Get popular search queries from app settings
+    const searchSettings = await db.select()
+      .from(appSettings)
+      .where(like(appSettings.key, 'search_log_%'))
+      .orderBy(desc(appSettings.updatedAt))
+      .limit(500); // Get recent searches to analyze
+
+    const queryCount: Record<string, { count: number; category?: string }> = {};
+    
+    searchSettings.forEach(setting => {
+      const data = setting.value as any;
+      if (data.query) {
+        const query = data.query.toLowerCase();
+        if (queryCount[query]) {
+          queryCount[query].count++;
+        } else {
+          queryCount[query] = { count: 1, category: data.category };
+        }
+      }
+    });
+
+    // Convert to array and sort by count
+    return Object.entries(queryCount)
+      .map(([query, data]) => ({
+        query,
+        count: data.count,
+        category: data.category,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+  }
+
+  private async generateSearchSuggestions(query: string, type: 'services' | 'parts'): Promise<string[]> {
+    const suggestions: string[] = [];
+    
+    if (query.length < 2) {
+      return suggestions;
+    }
+
+    if (type === 'services') {
+      // Get related service categories
+      const categories = await db.select({ name: serviceCategories.name })
+        .from(serviceCategories)
+        .where(and(
+          or(
+            ilike(serviceCategories.name, `%${query}%`),
+            ilike(serviceCategories.description, `%${query}%`)
+          ),
+          eq(serviceCategories.isActive, true)
+        ))
+        .limit(3);
+
+      categories.forEach(cat => suggestions.push(cat.name));
+
+      // Get popular service names
+      const popularServices = await db.select({ name: services.name })
+        .from(services)
+        .where(and(
+          ilike(services.name, `%${query}%`),
+          eq(services.isActive, true)
+        ))
+        .orderBy(desc(services.totalBookings))
+        .limit(3);
+
+      popularServices.forEach(service => suggestions.push(service.name));
+    } else {
+      // Get related parts categories
+      const categories = await db.select({ name: partsCategories.name })
+        .from(partsCategories)
+        .where(and(
+          or(
+            ilike(partsCategories.name, `%${query}%`),
+            ilike(partsCategories.description, `%${query}%`)
+          ),
+          eq(partsCategories.isActive, true)
+        ))
+        .limit(3);
+
+      categories.forEach(cat => suggestions.push(cat.name));
+
+      // Get popular part names
+      const popularParts = await db.select({ name: parts.name })
+        .from(parts)
+        .where(and(
+          ilike(parts.name, `%${query}%`),
+          eq(parts.isActive, true)
+        ))
+        .orderBy(desc(parts.totalSold))
+        .limit(3);
+
+      popularParts.forEach(part => suggestions.push(part.name));
+    }
+
+    return [...new Set(suggestions)]; // Remove duplicates
   }
 }
 

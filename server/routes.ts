@@ -52,6 +52,55 @@ const iconGenerationSchema = z.object({
   style: z.string().optional(),
 });
 
+// Enhanced AI Search validation schemas
+const enhancedSearchSchema = z.object({
+  query: z.string().min(1, 'Search query is required'),
+  context: z.object({
+    userId: z.string().optional(),
+    location: z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+      maxDistance: z.number().optional(),
+    }).optional(),
+    budget: z.object({
+      min: z.number().min(0),
+      max: z.number().min(0),
+    }).optional(),
+    urgency: z.enum(['low', 'medium', 'high']).optional(),
+    searchType: z.enum(['services', 'parts', 'mixed']).optional(),
+  }).optional(),
+  filters: z.object({
+    categories: z.array(z.string()).optional(),
+    priceRange: z.object({
+      min: z.number().min(0),
+      max: z.number().min(0),
+    }).optional(),
+    inStockOnly: z.boolean().optional(),
+    providerId: z.string().optional(),
+  }).optional(),
+});
+
+const similarItemsSchema = z.object({
+  itemId: z.string().min(1, 'Item ID is required'),
+  itemType: z.enum(['service', 'part'], {
+    required_error: 'Item type must be either service or part',
+  }),
+  limit: z.number().min(1).max(20).optional(),
+});
+
+const suggestionsSchema = z.object({
+  type: z.enum(['services', 'parts', 'mixed']).optional(),
+  limit: z.number().min(1).max(50).optional(),
+});
+
+const searchAnalyticsSchema = z.object({
+  query: z.string().min(1, 'Search query is required'),
+  results: z.number().min(0),
+  category: z.string().optional(),
+  clicked: z.boolean().optional(),
+  duration: z.number().optional(),
+});
+
 // Validation middleware factory
 function validateBody(schema: z.ZodSchema) {
   return (req: any, res: any, next: any) => {
@@ -271,6 +320,216 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Search error:', error);
       res.status(500).json({ message: 'Search failed' });
+    }
+  });
+
+  // Enhanced AI Search - with context awareness and database integration
+  app.post('/api/v1/ai/search', validateBody(enhancedSearchSchema), async (req, res) => {
+    try {
+      const { query, context, filters } = req.body;
+      const userId = req.user?.uid; // Optional user context
+
+      // Track search query for analytics
+      if (userId || context?.userId) {
+        storage.trackSearchQuery(userId || context?.userId || null, query, 0);
+      }
+
+      // Perform enhanced search with AI insights
+      const searchResults = await (aiService as any).enhancedSearch(query, {
+        ...context,
+        userId: userId || context?.userId,
+      });
+
+      // Update search tracking with result count
+      if (userId || context?.userId) {
+        storage.trackSearchQuery(
+          userId || context?.userId || null, 
+          query, 
+          searchResults.totalResults,
+          context?.searchType
+        );
+      }
+
+      res.json({
+        success: true,
+        query,
+        results: searchResults,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Enhanced search error:', error);
+      res.status(500).json({ message: 'Enhanced search failed' });
+    }
+  });
+
+  // Get personalized suggestions for user
+  app.get('/api/v1/ai/suggestions', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const { type = 'mixed', limit = 10 } = req.query;
+
+      const suggestions = await storage.getPersonalizedSuggestions(
+        userId,
+        type as 'services' | 'parts' | 'mixed',
+        parseInt(limit as string)
+      );
+
+      res.json({
+        success: true,
+        suggestions,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting personalized suggestions:', error);
+      res.status(500).json({ message: 'Failed to get suggestions' });
+    }
+  });
+
+  // Get trending items curated by AI
+  app.get('/api/v1/ai/trending', async (req, res) => {
+    try {
+      const { type = 'mixed', limit = 10 } = req.query;
+
+      const trending = await storage.getTrendingItems(
+        type as 'services' | 'parts' | 'mixed',
+        parseInt(limit as string)
+      );
+
+      res.json({
+        success: true,
+        trending,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting trending items:', error);
+      res.status(500).json({ message: 'Failed to get trending items' });
+    }
+  });
+
+  // Get similar items based on AI recommendations
+  app.post('/api/v1/ai/similar', validateBody(similarItemsSchema), async (req, res) => {
+    try {
+      const { itemId, itemType, limit = 5 } = req.body;
+
+      const similar = await storage.getSimilarItems(itemId, itemType, limit);
+
+      res.json({
+        success: true,
+        similar,
+        itemId,
+        itemType,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting similar items:', error);
+      res.status(500).json({ message: 'Failed to get similar items' });
+    }
+  });
+
+  // Get search suggestions as user types
+  app.get('/api/v1/ai/search-suggestions', async (req, res) => {
+    try {
+      const { query, userId } = req.query;
+      
+      if (!query || typeof query !== 'string' || query.length < 2) {
+        return res.json({ suggestions: [] });
+      }
+
+      const suggestions = await storage.getSearchSuggestions(query, userId as string);
+
+      res.json({
+        success: true,
+        suggestions,
+        query,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting search suggestions:', error);
+      res.status(500).json({ message: 'Failed to get search suggestions' });
+    }
+  });
+
+  // Get user's search history
+  app.get('/api/v1/ai/search-history', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      const { limit = 10 } = req.query;
+
+      const history = await storage.getUserSearchHistory(
+        userId,
+        parseInt(limit as string)
+      );
+
+      res.json({
+        success: true,
+        history,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting search history:', error);
+      res.status(500).json({ message: 'Failed to get search history' });
+    }
+  });
+
+  // Get popular search queries across all users
+  app.get('/api/v1/ai/popular-searches', async (req, res) => {
+    try {
+      const { limit = 10 } = req.query;
+
+      const popular = await storage.getPopularSearchQueries(
+        parseInt(limit as string)
+      );
+
+      res.json({
+        success: true,
+        popular,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting popular searches:', error);
+      res.status(500).json({ message: 'Failed to get popular searches' });
+    }
+  });
+
+  // Analytics endpoint for search behavior tracking
+  app.post('/api/v1/ai/search-analytics', validateBody(searchAnalyticsSchema), async (req, res) => {
+    try {
+      const { query, results, category, clicked, duration } = req.body;
+      const userId = req.user?.uid || null;
+
+      // Track search analytics
+      await storage.trackSearchQuery(userId, query, results, category);
+
+      // Store additional analytics in app settings if needed
+      const analyticsKey = `search_analytics_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await storage.setSetting(analyticsKey, {
+        userId,
+        query,
+        results,
+        category,
+        clicked,
+        duration,
+        timestamp: new Date().toISOString(),
+        userAgent: req.headers['user-agent'],
+        ip: req.ip,
+      }, 'Search analytics tracking');
+
+      res.json({
+        success: true,
+        message: 'Analytics tracked successfully',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error tracking search analytics:', error);
+      res.status(500).json({ message: 'Failed to track analytics' });
     }
   });
 

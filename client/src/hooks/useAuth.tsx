@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext, createContext, ReactNode } from 'react';
-import { User } from 'firebase/auth';
+import { User } from '@/lib/firebase';
 import { onAuthStateChange, signInWithGoogle, signOutUser } from '@/lib/firebase';
 import { apiRequest } from '@/lib/queryClient';
 

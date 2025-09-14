@@ -15,6 +15,7 @@ import Services from "@/pages/Services";
 import ServiceBooking from "@/pages/ServiceBooking";
 import Parts from "@/pages/Parts";
 import PartDetail from "@/pages/PartDetail";
+import SearchResults from "@/pages/SearchResults";
 import Cart from "@/pages/Cart";
 import Checkout from "@/pages/Checkout";
 import Orders from "@/pages/Orders";
@@ -108,6 +109,8 @@ function Router() {
       <Route path="/services/:serviceId/book" component={() => <ProtectedRoute component={ServiceBooking} />} />
       <Route path="/parts" component={() => <ProtectedRoute component={Parts} />} />
       <Route path="/parts/:partId" component={() => <ProtectedRoute component={PartDetail} />} />
+      <Route path="/search" component={() => <ProtectedRoute component={SearchResults} />} />
+      <Route path="/search/:query*" component={() => <ProtectedRoute component={SearchResults} />} />
       <Route path="/cart" component={() => <ProtectedRoute component={Cart} />} />
       <Route path="/checkout" component={() => <ProtectedRoute component={Checkout} />} />
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
