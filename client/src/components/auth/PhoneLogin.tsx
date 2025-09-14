@@ -131,13 +131,7 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
 
   const onSubmit = (data: PhoneFormData) => {
     const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
-    console.log('📱 Submitting phone:', {
-      countryCode: data.countryCode,
-      phoneNumber: data.phoneNumber,
-      fullPhoneNumber,
-      phoneLength: data.phoneNumber.length,
-      formErrors: form.formState.errors
-    });
+    // Phone number submission (sensitive data not logged for security)
     otpRequestMutation.mutate(data);
   };
 

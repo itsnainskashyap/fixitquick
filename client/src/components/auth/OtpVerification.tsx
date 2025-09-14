@@ -34,7 +34,7 @@ type OtpFormData = z.infer<typeof otpSchema>;
 interface OtpVerificationProps {
   challengeId: string;
   phoneNumber: string;
-  onSuccess: (accessToken: string, refreshToken: string) => void;
+  onSuccess: (accessToken: string, refreshToken: string, userData?: any) => void;
   onBack: () => void;
   onResend: () => void;
   onError?: (error: string) => void;
@@ -137,11 +137,7 @@ export default function OtpVerification({
 
   const verifyOtpMutation = useMutation({
     mutationFn: async (data: OtpFormData) => {
-      console.log('🔐 Verifying OTP:', {
-        phone: phoneNumber,
-        code: data.otp,
-        codeLength: data.otp?.length
-      });
+      // OTP verification attempt (sensitive data not logged for security)
       
       const response = await apiRequest('POST', '/api/v1/auth/otp/verify', {
         phone: phoneNumber,
@@ -149,7 +145,7 @@ export default function OtpVerification({
       });
       
       const result = await response.json() as OtpVerifyResponse;
-      console.log('🔐 OTP Verification response:', result);
+      // OTP verification response received
       
       return result;
     },
@@ -160,7 +156,7 @@ export default function OtpVerification({
           description: "Welcome to FixitQuick!",
         });
         // Auto-login user immediately without continue button
-        onSuccess(data.accessToken, data.refreshToken || '');
+        onSuccess(data.accessToken, data.refreshToken || '', data);
       } else {
         const errorMessage = data.message || 'Invalid OTP. Please try again.';
         toast({
