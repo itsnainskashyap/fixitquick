@@ -188,10 +188,25 @@ export interface IStorage {
   }): Promise<{ success: boolean; transaction?: WalletTransaction; errors?: string[]; }>;
 
   // Provider methods
-  getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean }): Promise<ServiceProvider[]>;
+  getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean; verificationStatus?: string }): Promise<ServiceProvider[]>;
   getServiceProvider(userId: string): Promise<ServiceProvider | undefined>;
   createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider>;
   updateServiceProvider(userId: string, data: Partial<InsertServiceProvider>): Promise<ServiceProvider | undefined>;
+  
+  // Enhanced verification methods
+  getPendingVerifications(limit?: number): Promise<ServiceProvider[]>;
+  updateVerificationStatus(userId: string, params: {
+    verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended' | 'resubmission_required';
+    verifiedBy?: string;
+    rejectionReason?: string;
+    verificationNotes?: string;
+    resubmissionReason?: string;
+  }): Promise<ServiceProvider | undefined>;
+  getVerificationHistory(userId: string): Promise<any[]>;
+  
+  // Document management
+  validateDocumentUpload(fileData: { filename: string; size: number; mimetype: string; documentType: string }): Promise<{ valid: boolean; errors: string[] }>;
+  storeProviderDocument(userId: string, documentType: string, documentData: any): Promise<{ success: boolean; url?: string; error?: string }>;
 
   // Chat methods
   getChatMessages(orderId: string): Promise<ChatMessage[]>;
@@ -980,8 +995,9 @@ export class PostgresStorage implements IStorage {
       return { allowed: false, reason: 'Service provider profile not found' };
     }
 
-    if (!provider.isVerified) {
-      return { allowed: false, reason: 'Provider is not verified' };
+    // SECURITY: Check verification status - only approved providers can accept orders
+    if (provider.verificationStatus !== 'approved') {
+      return { allowed: false, reason: `Provider verification required. Current status: ${provider.verificationStatus}` };
     }
 
     const user = await this.getUser(providerId);
@@ -1445,7 +1461,7 @@ export class PostgresStorage implements IStorage {
   }
 
   // Provider methods
-  async getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean }): Promise<ServiceProvider[]> {
+  async getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean; verificationStatus?: string }): Promise<ServiceProvider[]> {
     let baseQuery = db.select().from(serviceProviders);
     
     const conditions: SQL[] = [];
@@ -1454,6 +1470,9 @@ export class PostgresStorage implements IStorage {
     }
     if (filters?.isVerified !== undefined) {
       conditions.push(eq(serviceProviders.isVerified, filters.isVerified));
+    }
+    if (filters?.verificationStatus) {
+      conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus));
     }
     
     const whereClause = combineConditions(conditions);
@@ -1480,6 +1499,268 @@ export class PostgresStorage implements IStorage {
       .where(eq(serviceProviders.userId, userId))
       .returning();
     return result[0];
+  }
+
+  // Enhanced verification methods
+  async getPendingVerifications(limit?: number): Promise<ServiceProvider[]> {
+    let query = db.select({
+      ...serviceProviders,
+      userFirstName: users.firstName,
+      userLastName: users.lastName,
+      userEmail: users.email,
+      userPhone: users.phone,
+    })
+    .from(serviceProviders)
+    .leftJoin(users, eq(serviceProviders.userId, users.id))
+    .where(or(
+      eq(serviceProviders.verificationStatus, 'pending'),
+      eq(serviceProviders.verificationStatus, 'under_review'),
+      eq(serviceProviders.verificationStatus, 'resubmission_required')
+    ))
+    .orderBy(desc(serviceProviders.createdAt));
+
+    if (limit) {
+      query = query.limit(limit);
+    }
+
+    return await query as any[];
+  }
+
+  async updateVerificationStatus(userId: string, params: {
+    verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended' | 'resubmission_required';
+    verifiedBy?: string;
+    rejectionReason?: string;
+    verificationNotes?: string;
+    resubmissionReason?: string;
+  }): Promise<ServiceProvider | undefined> {
+    const updateData: Partial<InsertServiceProvider> = {
+      verificationStatus: params.verificationStatus,
+      verificationNotes: params.verificationNotes,
+      rejectionReason: params.rejectionReason,
+      resubmissionReason: params.resubmissionReason,
+      updatedAt: sql`NOW()`,
+    };
+
+    // Set verification date and verifiedBy only for final states
+    if (params.verificationStatus === 'approved' || params.verificationStatus === 'rejected') {
+      updateData.verificationDate = sql`NOW()`;
+      updateData.verifiedBy = params.verifiedBy;
+      updateData.isVerified = params.verificationStatus === 'approved';
+      
+      // Set verification level based on approval
+      if (params.verificationStatus === 'approved') {
+        updateData.verificationLevel = 'verified';
+      } else {
+        updateData.verificationLevel = 'none';
+      }
+    }
+
+    const result = await db.update(serviceProviders)
+      .set(updateData)
+      .where(eq(serviceProviders.userId, userId))
+      .returning();
+
+    return result[0];
+  }
+
+  async getVerificationHistory(userId: string): Promise<any[]> {
+    // For now, return a simple history based on current state
+    // In a more advanced implementation, you'd have a separate verification_history table
+    const provider = await this.getServiceProvider(userId);
+    if (!provider) return [];
+
+    const history = [];
+    
+    if (provider.verificationDate) {
+      history.push({
+        status: provider.isVerified ? 'approved' : 'rejected',
+        date: provider.verificationDate,
+        verifiedBy: provider.verifiedBy,
+        notes: provider.verificationNotes,
+        rejectionReason: provider.rejectionReason,
+      });
+    }
+
+    history.push({
+      status: 'pending',
+      date: provider.createdAt,
+      notes: 'Initial application submitted',
+    });
+
+    return history.reverse(); // Show chronological order
+  }
+
+  async validateDocumentUpload(fileData: { filename: string; size: number; mimetype: string; documentType: string }): Promise<{ valid: boolean; errors: string[] }> {
+    const errors: string[] = [];
+    
+    // File size validation (10MB limit)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    if (fileData.size > MAX_FILE_SIZE) {
+      errors.push('File size must not exceed 10MB');
+    }
+
+    // File type validation
+    const allowedMimeTypes = [
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/webp',
+      'application/pdf'
+    ];
+
+    if (!allowedMimeTypes.includes(fileData.mimetype.toLowerCase())) {
+      errors.push('File type must be JPEG, PNG, WEBP, or PDF');
+    }
+
+    // Document type validation
+    const allowedDocumentTypes = [
+      'aadhar_front',
+      'aadhar_back', 
+      'photo',
+      'certificate',
+      'license',
+      'insurance',
+      'portfolio'
+    ];
+
+    if (!allowedDocumentTypes.includes(fileData.documentType)) {
+      errors.push('Invalid document type');
+    }
+
+    // Filename validation
+    if (!fileData.filename || fileData.filename.length > 255) {
+      errors.push('Invalid filename');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  async storeProviderDocument(userId: string, documentType: string, documentData: any): Promise<{ success: boolean; url?: string; error?: string }> {
+    try {
+      // Get existing provider data
+      const provider = await this.getServiceProvider(userId);
+      if (!provider) {
+        return { success: false, error: 'Provider not found' };
+      }
+
+      // Update documents object with new document data
+      const currentDocs = provider.documents || {};
+      const timestamp = new Date().toISOString();
+
+      let updatedDocs;
+
+      switch (documentType) {
+        case 'aadhar_front':
+          updatedDocs = {
+            ...currentDocs,
+            aadhar: {
+              ...currentDocs.aadhar,
+              front: documentData.url,
+              uploadedAt: timestamp,
+              verified: false,
+            }
+          };
+          break;
+          
+        case 'aadhar_back':
+          updatedDocs = {
+            ...currentDocs,
+            aadhar: {
+              ...currentDocs.aadhar,
+              back: documentData.url,
+              uploadedAt: timestamp,
+              verified: false,
+            }
+          };
+          break;
+          
+        case 'photo':
+          updatedDocs = {
+            ...currentDocs,
+            photo: {
+              url: documentData.url,
+              uploadedAt: timestamp,
+              verified: false,
+            }
+          };
+          break;
+          
+        case 'certificate':
+          const certificates = currentDocs.certificates || [];
+          certificates.push({
+            url: documentData.url,
+            name: documentData.name || 'Certificate',
+            type: documentData.type || 'General',
+            uploadedAt: timestamp,
+            verified: false,
+          });
+          updatedDocs = {
+            ...currentDocs,
+            certificates,
+          };
+          break;
+          
+        case 'license':
+          const licenses = currentDocs.licenses || [];
+          licenses.push({
+            url: documentData.url,
+            name: documentData.name || 'License',
+            type: documentData.type || 'General',
+            licenseNumber: documentData.licenseNumber,
+            expiryDate: documentData.expiryDate,
+            uploadedAt: timestamp,
+            verified: false,
+          });
+          updatedDocs = {
+            ...currentDocs,
+            licenses,
+          };
+          break;
+          
+        case 'insurance':
+          updatedDocs = {
+            ...currentDocs,
+            insurance: {
+              url: documentData.url,
+              policyNumber: documentData.policyNumber,
+              expiryDate: documentData.expiryDate,
+              uploadedAt: timestamp,
+              verified: false,
+            }
+          };
+          break;
+          
+        case 'portfolio':
+          const portfolio = currentDocs.portfolio || [];
+          portfolio.push({
+            url: documentData.url,
+            caption: documentData.caption || '',
+            uploadedAt: timestamp,
+          });
+          updatedDocs = {
+            ...currentDocs,
+            portfolio,
+          };
+          break;
+          
+        default:
+          return { success: false, error: 'Invalid document type' };
+      }
+
+      // Update provider with new documents
+      await this.updateServiceProvider(userId, {
+        documents: updatedDocs,
+        updatedAt: sql`NOW()`,
+      });
+
+      return { success: true, url: documentData.url };
+    } catch (error) {
+      console.error('Error storing provider document:', error);
+      return { success: false, error: 'Failed to store document' };
+    }
   }
 
   // Chat methods

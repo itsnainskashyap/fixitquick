@@ -201,12 +201,56 @@ export const serviceProviders = pgTable("service_providers", {
   
   // Documents and compliance - enhanced
   documents: jsonb("documents").$type<{
-    aadhar?: string;
-    photo?: string;
-    certificates?: string[];
-    licenses?: string[];
-    insurance?: string;
+    aadhar?: {
+      front?: string;
+      back?: string;
+      uploadedAt?: string;
+      verified?: boolean;
+    };
+    photo?: {
+      url?: string;
+      uploadedAt?: string;
+      verified?: boolean;
+    };
+    certificates?: {
+      url: string;
+      name: string;
+      type: string;
+      uploadedAt: string;
+      verified?: boolean;
+    }[];
+    licenses?: {
+      url: string;
+      name: string;
+      type: string;
+      licenseNumber?: string;
+      expiryDate?: string;
+      uploadedAt: string;
+      verified?: boolean;
+    }[];
+    insurance?: {
+      url?: string;
+      policyNumber?: string;
+      expiryDate?: string;
+      uploadedAt?: string;
+      verified?: boolean;
+    };
+    portfolio?: {
+      url: string;
+      caption: string;
+      uploadedAt: string;
+    }[];
   }>(),
+
+  // Enhanced verification tracking
+  verificationStatus: varchar("verification_status", { 
+    enum: ["pending", "under_review", "approved", "rejected", "suspended", "resubmission_required"] 
+  }).default("pending"),
+  verificationDate: timestamp("verification_date"),
+  verifiedBy: varchar("verified_by").references(() => users.id), // Admin who verified
+  rejectionReason: text("rejection_reason"),
+  verificationNotes: text("verification_notes"), // Internal admin notes
+  resubmissionReason: text("resubmission_reason"), // Feedback for provider on what to fix
   
   // Performance metrics - new optional fields
   responseTime: integer("avg_response_time").default(0), // seconds
@@ -917,3 +961,7 @@ export type UserLocalePreferences = typeof userLocalePreferences.$inferSelect;
 export type InsertUserLocalePreferences = z.infer<typeof insertUserLocalePreferencesSchema>;
 export type IndianRegion = typeof indianRegions.$inferSelect;
 export type InsertIndianRegion = z.infer<typeof insertIndianRegionSchema>;
+export type ServiceBooking = typeof serviceBookings.$inferSelect;
+export type InsertServiceBooking = z.infer<typeof insertServiceBookingSchema>;
+export type ProviderJobRequest = typeof providerJobRequests.$inferSelect;
+export type InsertProviderJobRequest = z.infer<typeof insertProviderJobRequestSchema>;

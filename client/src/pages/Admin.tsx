@@ -95,6 +95,39 @@ interface Verification {
   submittedAt: string;
 }
 
+interface ProviderApplication {
+  id: string;
+  userId: string;
+  businessName: string;
+  contactPerson: string;
+  email: string;
+  phone: string;
+  businessType: string;
+  description: string;
+  experience: number;
+  serviceRadius: number;
+  priceRange: string;
+  emergencyServices: boolean;
+  serviceCategories: string[];
+  skills: string[];
+  specializations: string[];
+  verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended';
+  verificationDate?: string;
+  verificationNotes?: string;
+  adminNotes?: string;
+  documents?: {
+    aadhar?: { front?: string; back?: string; verified?: boolean };
+    photo?: { url?: string; verified?: boolean };
+    businessLicense?: { url?: string; verified?: boolean };
+    insurance?: { url?: string; verified?: boolean };
+    certificates?: Array<{ url: string; name: string; verified?: boolean }>;
+    licenses?: Array<{ url: string; name: string; verified?: boolean }>;
+    portfolio?: Array<{ url: string; caption?: string }>;
+  };
+  createdAt: string;
+  submittedAt: string;
+}
+
 interface Category {
   id: string;
   name: string;
@@ -110,6 +143,447 @@ interface Category {
   hasChildren?: boolean;
   children?: Category[];
 }
+
+// Provider Verification Card Component
+interface ProviderVerificationCardProps {
+  provider: ProviderApplication;
+  onStatusChange: (providerId: string, status: 'under_review' | 'approved' | 'rejected', notes?: string) => void;
+  isUpdating: boolean;
+}
+
+const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({ 
+  provider, 
+  onStatusChange, 
+  isUpdating 
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const [notes, setNotes] = useState(provider.adminNotes || '');
+  const [showNotesDialog, setShowNotesDialog] = useState(false);
+  const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'under_review':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'approved':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'rejected':
+        return 'bg-red-100 text-red-800 border-red-200';
+      case 'suspended':
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const handleStatusChangeWithNotes = (status: 'approved' | 'rejected') => {
+    setActionType(status);
+    setShowNotesDialog(true);
+  };
+
+  const confirmStatusChange = () => {
+    if (actionType) {
+      onStatusChange(provider.userId, actionType, notes);
+      setShowNotesDialog(false);
+      setActionType(null);
+    }
+  };
+
+  const hasRequiredDocuments = () => {
+    return provider.documents?.aadhar?.front && 
+           provider.documents?.aadhar?.back && 
+           provider.documents?.photo?.url;
+  };
+
+  return (
+    <Card className={`${provider.verificationStatus === 'pending' ? 'border-yellow-300 shadow-yellow-100' : ''}`}>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center space-x-3 mb-2">
+              <h3 className="text-xl font-semibold text-foreground">{provider.businessName}</h3>
+              <Badge className={getStatusColor(provider.verificationStatus)}>
+                {provider.verificationStatus.replace('_', ' ').toUpperCase()}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center space-x-2">
+                <User className="w-4 h-4" />
+                <span>{provider.contactPerson}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Mail className="w-4 h-4" />
+                <span>{provider.email}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Phone className="w-4 h-4" />
+                <span>{provider.phone}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-muted-foreground">
+              Applied: {new Date(provider.submittedAt).toLocaleDateString()}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setExpanded(!expanded)}
+              data-testid={`toggle-provider-${provider.id}`}
+            >
+              {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      {expanded && (
+        <CardContent className="pt-0">
+          <Tabs defaultValue="business" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="business">Business Info</TabsTrigger>
+              <TabsTrigger value="services">Services</TabsTrigger>
+              <TabsTrigger value="documents">Documents</TabsTrigger>
+              <TabsTrigger value="verification">Verification</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="business" className="mt-4">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Business Type</Label>
+                    <p className="capitalize">{provider.businessType}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Experience</Label>
+                    <p>{provider.experience} years</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Service Radius</Label>
+                    <p>{provider.serviceRadius} km</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Price Range</Label>
+                    <p className="capitalize">{provider.priceRange}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Emergency Services</Label>
+                    <p>{provider.emergencyServices ? 'Yes' : 'No'}</p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Business Description</Label>
+                  <p className="mt-1 text-sm leading-6">{provider.description}</p>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="services" className="mt-4">
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Service Categories</Label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {provider.serviceCategories?.map((category, index) => (
+                      <Badge key={index} variant="outline">{category}</Badge>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Skills</Label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {provider.skills?.map((skill, index) => (
+                      <Badge key={index} variant="secondary" className="text-xs">{skill}</Badge>
+                    ))}
+                  </div>
+                </div>
+                {provider.specializations && provider.specializations.length > 0 && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Specializations</Label>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {provider.specializations.map((spec, index) => (
+                        <Badge key={index} variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          {spec}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="documents" className="mt-4">
+              <div className="space-y-6">
+                {/* Required Documents */}
+                <div>
+                  <h4 className="font-semibold mb-3 flex items-center">
+                    <FileText className="w-4 h-4 mr-2" />
+                    Required Documents
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <DocumentPreview
+                      title="Aadhaar Front"
+                      url={provider.documents?.aadhar?.front}
+                      verified={provider.documents?.aadhar?.verified}
+                      required={true}
+                    />
+                    <DocumentPreview
+                      title="Aadhaar Back"
+                      url={provider.documents?.aadhar?.back}
+                      verified={provider.documents?.aadhar?.verified}
+                      required={true}
+                    />
+                    <DocumentPreview
+                      title="Profile Photo"
+                      url={provider.documents?.photo?.url}
+                      verified={provider.documents?.photo?.verified}
+                      required={true}
+                    />
+                  </div>
+                </div>
+
+                {/* Optional Documents */}
+                {(provider.documents?.businessLicense?.url || provider.documents?.insurance?.url) && (
+                  <div>
+                    <h4 className="font-semibold mb-3 flex items-center">
+                      <Award className="w-4 h-4 mr-2" />
+                      Additional Documents
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {provider.documents?.businessLicense?.url && (
+                        <DocumentPreview
+                          title="Business License"
+                          url={provider.documents.businessLicense.url}
+                          verified={provider.documents.businessLicense.verified}
+                          required={false}
+                        />
+                      )}
+                      {provider.documents?.insurance?.url && (
+                        <DocumentPreview
+                          title="Insurance Certificate"
+                          url={provider.documents.insurance.url}
+                          verified={provider.documents.insurance.verified}
+                          required={false}
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Document Status Summary */}
+                <div className="p-4 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Document Completeness</span>
+                    {hasRequiredDocuments() ? (
+                      <Badge className="bg-green-100 text-green-800">
+                        <CheckCircle className="w-3 h-3 mr-1" />
+                        Complete
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-red-100 text-red-800">
+                        <AlertTriangle className="w-3 h-3 mr-1" />
+                        Incomplete
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="verification" className="mt-4">
+              <div className="space-y-4">
+                {/* Verification Status */}
+                <div className="p-4 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">Current Status</span>
+                    <Badge className={getStatusColor(provider.verificationStatus)}>
+                      {provider.verificationStatus.replace('_', ' ').toUpperCase()}
+                    </Badge>
+                  </div>
+                  {provider.verificationDate && (
+                    <p className="text-sm text-muted-foreground">
+                      Last updated: {new Date(provider.verificationDate).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+
+                {/* Admin Notes */}
+                {provider.adminNotes && (
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2 flex items-center">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Admin Notes
+                    </h4>
+                    <p className="text-sm leading-6">{provider.adminNotes}</p>
+                  </div>
+                )}
+
+                {/* Verification Actions */}
+                {(provider.verificationStatus === 'pending' || provider.verificationStatus === 'under_review') && (
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-3">Verification Actions</h4>
+                      
+                      {!hasRequiredDocuments() && (
+                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                          <div className="flex items-start space-x-2">
+                            <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                            <div>
+                              <p className="text-sm font-medium text-yellow-800">Missing Required Documents</p>
+                              <p className="text-sm text-yellow-700">
+                                Provider must upload all required documents before verification can be completed.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex space-x-2">
+                        {provider.verificationStatus === 'pending' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onStatusChange(provider.userId, 'under_review')}
+                            disabled={isUpdating || !hasRequiredDocuments()}
+                            data-testid={`review-provider-${provider.id}`}
+                          >
+                            <FileText className="w-4 h-4 mr-1" />
+                            Start Review
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleStatusChangeWithNotes('reject')}
+                          disabled={isUpdating}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          data-testid={`reject-provider-${provider.id}`}
+                        >
+                          <XCircle className="w-4 h-4 mr-1" />
+                          Reject
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          onClick={() => handleStatusChangeWithNotes('approve')}
+                          disabled={isUpdating || !hasRequiredDocuments()}
+                          data-testid={`approve-provider-${provider.id}`}
+                        >
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                          Approve
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {/* Verification Notes Dialog */}
+          <Dialog open={showNotesDialog} onOpenChange={setShowNotesDialog}>
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader>
+                <DialogTitle>
+                  {actionType === 'approve' ? 'Approve Provider' : 'Reject Provider'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="verification-notes">
+                    {actionType === 'approve' ? 'Approval Notes (Optional)' : 'Rejection Reason (Required)'}
+                  </Label>
+                  <Textarea
+                    id="verification-notes"
+                    placeholder={
+                      actionType === 'approve' 
+                        ? "Add any notes about the approval..." 
+                        : "Please explain why this application is being rejected..."
+                    }
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="mt-2 min-h-[100px]"
+                  />
+                </div>
+                <div className="flex justify-end space-x-2">
+                  <Button variant="outline" onClick={() => setShowNotesDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={confirmStatusChange}
+                    disabled={actionType === 'reject' && !notes.trim()}
+                    variant={actionType === 'approve' ? 'default' : 'destructive'}
+                  >
+                    {actionType === 'approve' ? 'Approve Provider' : 'Reject Provider'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </CardContent>
+      )}
+    </Card>
+  );
+};
+
+// Document Preview Component
+interface DocumentPreviewProps {
+  title: string;
+  url?: string;
+  verified?: boolean;
+  required: boolean;
+}
+
+const DocumentPreview: React.FC<DocumentPreviewProps> = ({ title, url, verified, required }) => {
+  return (
+    <div className="border rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium">{title}</span>
+        <div className="flex items-center space-x-1">
+          {required && (
+            <Badge variant="outline" className="text-xs">Required</Badge>
+          )}
+          {url ? (
+            verified ? (
+              <Badge className="bg-green-100 text-green-800 text-xs">
+                <CheckCircle className="w-2 h-2 mr-1" />
+                Verified
+              </Badge>
+            ) : (
+              <Badge className="bg-yellow-100 text-yellow-800 text-xs">
+                <Clock className="w-2 h-2 mr-1" />
+                Pending
+              </Badge>
+            )
+          ) : (
+            <Badge className="bg-red-100 text-red-800 text-xs">
+              <X className="w-2 h-2 mr-1" />
+              Missing
+            </Badge>
+          )}
+        </div>
+      </div>
+      
+      {url ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.open(url, '_blank')}
+          className="w-full"
+        >
+          <Eye className="w-3 h-3 mr-1" />
+          View Document
+        </Button>
+      ) : (
+        <div className="w-full h-8 bg-gray-100 rounded flex items-center justify-center">
+          <span className="text-xs text-muted-foreground">Not uploaded</span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function Admin() {
   const { user } = useAuth();
@@ -181,6 +655,16 @@ export default function Admin() {
     enabled: !!user,
   });
 
+  // Fetch all provider verifications (including approved/rejected)
+  const { data: allProviders } = useQuery({
+    queryKey: ['/api/v1/admin/providers'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/providers');
+      return response.json();
+    },
+    enabled: !!user,
+  });
+
   // Fetch category hierarchy
   const { data: categoryHierarchy } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/hierarchy'],
@@ -233,25 +717,33 @@ export default function Admin() {
     },
   });
 
-  // Approve/reject verification mutation
-  const verificationMutation = useMutation({
-    mutationFn: async ({ verificationId, status, notes }: { 
-      verificationId: string; 
-      status: 'approved' | 'rejected'; 
+  // Provider verification mutation
+  const providerVerificationMutation = useMutation({
+    mutationFn: async ({ providerId, status, notes }: { 
+      providerId: string; 
+      status: 'under_review' | 'approved' | 'rejected'; 
       notes?: string;
     }) => {
-      const response = await apiRequest('POST', `/api/v1/admin/verifications/${verificationId}`, {
-        status,
-        notes,
+      // Map frontend status to backend action
+      const actionMap: Record<string, string> = {
+        'under_review': 'under_review', // Keep as is - may need backend support
+        'approved': 'approve',
+        'rejected': 'reject'
+      };
+      
+      const response = await apiRequest('POST', `/api/v1/admin/verifications/${providerId}/status`, {
+        action: actionMap[status] || status,
+        notes: notes,
       });
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/verifications/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/providers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
       toast({
-        title: "Verification processed",
-        description: "Verification status has been updated.",
+        title: "Provider verification updated",
+        description: "Provider verification status has been updated.",
       });
     },
   });
@@ -340,8 +832,8 @@ export default function Admin() {
     updateUserMutation.mutate({ userId, updates });
   };
 
-  const handleVerification = (verificationId: string, status: 'approved' | 'rejected', notes?: string) => {
-    verificationMutation.mutate({ verificationId, status, notes });
+  const handleProviderVerification = (providerId: string, status: 'under_review' | 'approved' | 'rejected', notes?: string) => {
+    providerVerificationMutation.mutate({ providerId, status, notes });
   };
 
   const handleRefund = (orderId: string, amount: number, reason: string) => {
@@ -823,79 +1315,105 @@ export default function Admin() {
           </TabsContent>
 
           <TabsContent value="verifications" className="mt-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold">Verification Requests</h2>
-              <Badge className="bg-yellow-100 text-yellow-800">
-                {verifications?.length || 0} Pending
-              </Badge>
+            <div className="space-y-6">
+              {/* Verification Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold">Provider Verification</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Review and manage provider applications and verifications
+                  </p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Badge className="bg-yellow-100 text-yellow-800">
+                    {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'pending').length || 0} Pending
+                  </Badge>
+                  <Badge className="bg-blue-100 text-blue-800">
+                    {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'under_review').length || 0} Under Review
+                  </Badge>
+                  <Badge className="bg-green-100 text-green-800">
+                    {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'approved').length || 0} Approved
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Verification Statistics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Clock className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'pending').length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Pending Review</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <FileText className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'under_review').length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Under Review</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'approved').length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Approved</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <XCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {allProviders?.filter((p: ProviderApplication) => p.verificationStatus === 'rejected').length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Rejected</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Provider Applications List */}
+              {allProviders && allProviders.length > 0 ? (
+                <div className="space-y-6">
+                  {allProviders
+                    .sort((a: ProviderApplication, b: ProviderApplication) => {
+                      // Sort by status priority: pending -> under_review -> rejected -> approved
+                      const statusPriority: Record<string, number> = {
+                        'pending': 1,
+                        'under_review': 2,
+                        'rejected': 3,
+                        'approved': 4,
+                        'suspended': 5
+                      };
+                      return statusPriority[a.verificationStatus] - statusPriority[b.verificationStatus];
+                    })
+                    .map((provider: ProviderApplication) => (
+                      <ProviderVerificationCard
+                        key={provider.id}
+                        provider={provider}
+                        onStatusChange={handleProviderVerification}
+                        isUpdating={providerVerificationMutation.isPending}
+                      />
+                    ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Shield className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <h3 className="font-medium text-foreground mb-2">No provider applications</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Provider applications will appear here when submitted
+                  </p>
+                </div>
+              )}
             </div>
-
-            {verifications && verifications.length > 0 ? (
-              <div className="space-y-4">
-                {verifications.map((verification: Verification) => (
-                  <Card key={verification.id}>
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-4">
-                        <div>
-                          <h3 className="font-semibold text-foreground">{verification.userName}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {verification.type.replace('_', ' ').toUpperCase()} Verification
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Submitted: {new Date(verification.submittedAt).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <Badge className="bg-yellow-100 text-yellow-800">
-                          {verification.status}
-                        </Badge>
-                      </div>
-
-                      <div className="flex space-x-2 mb-4">
-                        {verification.documents.map((doc, index) => (
-                          <Button
-                            key={index}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(doc, '_blank')}
-                          >
-                            <Eye className="w-4 h-4 mr-1" />
-                            Document {index + 1}
-                          </Button>
-                        ))}
-                      </div>
-
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleVerification(verification.id, 'rejected')}
-                          data-testid={`reject-verification-${verification.id}`}
-                        >
-                          <XCircle className="w-4 h-4 mr-1" />
-                          Reject
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => handleVerification(verification.id, 'approved')}
-                          data-testid={`approve-verification-${verification.id}`}
-                        >
-                          <CheckCircle className="w-4 h-4 mr-1" />
-                          Approve
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <Shield className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
-                <h3 className="font-medium text-foreground mb-2">No pending verifications</h3>
-                <p className="text-sm text-muted-foreground">
-                  Verification requests will appear here when submitted
-                </p>
-              </div>
-            )}
           </TabsContent>
 
           <TabsContent value="analytics" className="mt-6">

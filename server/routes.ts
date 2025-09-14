@@ -25,6 +25,8 @@ import {
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
+import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
+import { objectStorageService } from "./services/objectStorage";
 
 // Rate limiting
 const limiter = rateLimit({
@@ -172,6 +174,47 @@ const searchAnalyticsSchema = z.object({
   category: z.string().optional(),
   clicked: z.boolean().optional(),
   duration: z.number().optional(),
+});
+
+// Provider verification schemas
+const providerRegistrationSchema = z.object({
+  businessName: z.string().min(1, 'Business name is required').max(100),
+  businessType: z.enum(['individual', 'company']),
+  serviceIds: z.array(z.string()).min(1, 'At least one service must be selected'),
+  skills: z.array(z.string()).optional(),
+  experienceYears: z.number().min(0).max(50),
+  serviceRadius: z.number().min(1).max(100).default(25),
+  serviceAreas: z.array(z.object({
+    name: z.string(),
+    cities: z.array(z.string()),
+  })).optional(),
+});
+
+const documentUploadSchema = z.object({
+  documentType: z.enum(['aadhar_front', 'aadhar_back', 'photo', 'certificate', 'license', 'insurance', 'portfolio']),
+  filename: z.string().min(1).max(255),
+  size: z.number().min(1).max(10 * 1024 * 1024), // 10MB limit
+  mimetype: z.string(),
+});
+
+const verificationActionSchema = z.object({
+  action: z.enum(['approve', 'reject', 'request_changes', 'suspend', 'under_review']),
+  notes: z.string().optional(),
+  rejectionReason: z.string().optional(),
+  resubmissionReason: z.string().optional(),
+});
+
+const updateProviderProfileSchema = z.object({
+  businessName: z.string().max(100).optional(),
+  serviceIds: z.array(z.string()).optional(),
+  skills: z.array(z.string()).optional(),
+  experienceYears: z.number().min(0).max(50).optional(),
+  serviceRadius: z.number().min(1).max(100).optional(),
+  availability: z.object({}).optional(),
+  serviceAreas: z.array(z.object({
+    name: z.string(),
+    cities: z.array(z.string()),
+  })).optional(),
 });
 
 // Enhanced AI validation schemas
@@ -3145,6 +3188,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Manual provider assignment endpoint
+  app.put('/api/v1/service-bookings/:bookingId/assign', authMiddleware, requireRole(['admin', 'service_provider']), async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const { providerId } = req.body;
+      const userRole = req.user?.role || 'user';
+      const userId = req.user?.id;
+
+      // Validate request body
+      if (!providerId) {
+        return res.status(400).json({ message: 'Provider ID is required' });
+      }
+
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      // Check if booking is in a state that allows assignment
+      if (!['pending', 'provider_search'].includes(booking.status)) {
+        return res.status(400).json({ 
+          message: 'Booking cannot be assigned in current status',
+          currentStatus: booking.status 
+        });
+      }
+
+      // For service providers, they can only assign themselves
+      if (userRole === 'service_provider' && providerId !== userId) {
+        return res.status(403).json({ message: 'Service providers can only assign themselves' });
+      }
+
+      // Verify the provider exists and is a service provider
+      const provider = await storage.getUser(providerId);
+      if (!provider || provider.role !== 'service_provider') {
+        return res.status(404).json({ message: 'Provider not found or not a service provider' });
+      }
+
+      // Update booking with assigned provider
+      const updatedBooking = await storage.updateServiceBooking(bookingId, {
+        assignedProviderId: providerId,
+        assignedAt: new Date(),
+        assignmentMethod: userRole === 'admin' ? 'manual' : 'auto',
+        status: 'provider_assigned',
+        updatedAt: new Date(),
+      });
+
+      // Cancel other pending job requests
+      await storage.cancelOtherJobRequests(bookingId, providerId);
+
+      // Send notifications
+      await notificationService.notifyProviderAssignment(providerId, bookingId);
+      await notificationService.notifyCustomerProviderAssigned(booking.userId, bookingId, providerId);
+
+      res.json({
+        success: true,
+        message: 'Provider assigned successfully',
+        booking: updatedBooking,
+      });
+    } catch (error) {
+      console.error('Error assigning provider to booking:', error);
+      res.status(500).json({ message: 'Failed to assign provider' });
+    }
+  });
+
+  // ========================================
+  // PROVIDER JOB REQUEST ENDPOINTS
+  // ========================================
+
+  // Provider accepts job request
+  app.post('/api/v1/provider-job-requests/:bookingId/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const providerId = req.user?.id;
+      const { estimatedArrival, quotedPrice, notes } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Accept the job request
+      const result = await storage.acceptProviderJobRequest(bookingId, providerId, {
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined,
+        quotedPrice: quotedPrice ? Number(quotedPrice) : undefined,
+        notes,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({ 
+          message: result.message || 'Failed to accept job request' 
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Job request accepted successfully',
+        booking: result.booking,
+      });
+    } catch (error) {
+      console.error('Error accepting job request:', error);
+      res.status(500).json({ message: 'Failed to accept job request' });
+    }
+  });
+
+  // Provider declines job request
+  app.post('/api/v1/provider-job-requests/:bookingId/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const providerId = req.user?.id;
+      const { reason } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Decline the job request
+      const result = await storage.declineProviderJobRequest(bookingId, providerId, reason);
+
+      if (!result.success) {
+        return res.status(400).json({ 
+          message: result.message || 'Failed to decline job request' 
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Job request declined successfully',
+      });
+    } catch (error) {
+      console.error('Error declining job request:', error);
+      res.status(500).json({ message: 'Failed to decline job request' });
+    }
+  });
+
   // Helper function to initiate provider search for instant bookings
   async function initiateProviderSearch(booking: any) {
     try {
@@ -4658,6 +4834,482 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error processing verification:', error);
       res.status(500).json({ message: 'Failed to process verification' });
+    }
+  });
+
+  // ================================
+  // ENHANCED PROVIDER VERIFICATION ENDPOINTS
+  // ================================
+
+  // Provider registration with comprehensive verification
+  app.post('/api/v1/providers/register', authMiddleware, validateBody(providerRegistrationSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      // Check if user already has provider profile
+      const existingProvider = await storage.getServiceProvider(userId);
+      if (existingProvider) {
+        return res.status(400).json({ message: 'Provider profile already exists' });
+      }
+
+      const { businessName, businessType, serviceIds, skills, experienceYears, serviceRadius, serviceAreas } = req.body;
+
+      // Validate service IDs exist
+      const validServices = await Promise.all(
+        serviceIds.map((id: string) => storage.getService(id))
+      );
+
+      if (validServices.some(service => !service)) {
+        return res.status(400).json({ message: 'Invalid service ID provided' });
+      }
+
+      // Create service provider profile
+      const providerData = {
+        userId,
+        businessName,
+        businessType,
+        serviceIds,
+        skills: skills || [],
+        experienceYears,
+        serviceRadius,
+        serviceAreas: serviceAreas || [],
+        verificationStatus: 'pending' as const,
+        isVerified: false,
+        verificationLevel: 'none' as const,
+        rating: '0.00',
+        totalCompletedOrders: 0,
+        totalRatings: 0,
+        responseTime: 0,
+        completionRate: '0.00',
+        onTimeRate: '0.00',
+        isOnline: false,
+        isAvailable: true,
+      };
+
+      const provider = await storage.createServiceProvider(providerData);
+
+      // Send notification to admins about new provider registration
+      const adminUsers = await storage.getUsersByRole('admin');
+      await Promise.all(
+        adminUsers.map(admin =>
+          storage.createNotification({
+            userId: admin.id,
+            title: 'New Provider Registration',
+            body: `${businessName} has registered as a service provider and is pending verification.`,
+            type: 'system',
+            isRead: false,
+          })
+        )
+      );
+
+      res.json({
+        success: true,
+        provider,
+        message: 'Provider profile created successfully. Please upload required documents to complete verification.',
+      });
+    } catch (error) {
+      console.error('Error creating provider profile:', error);
+      res.status(500).json({ message: 'Failed to create provider profile' });
+    }
+  });
+
+  // Document upload endpoint with proper file handling
+  app.post('/api/v1/providers/documents/upload', authMiddleware, ...validateUpload, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      // Check if user is a service provider
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+
+      const { documentType } = req.body;
+      const file = req.file!; // File is validated by middleware
+
+      console.log(`📄 Document upload request:`, {
+        userId,
+        documentType,
+        filename: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype
+      });
+
+      // Upload file to object storage
+      const uploadResult = await objectStorageService.uploadFile(file, documentType, userId, false);
+
+      if (!uploadResult.success) {
+        return res.status(400).json({ 
+          success: false,
+          message: uploadResult.error || 'Failed to upload file' 
+        });
+      }
+
+      // Store document metadata in database
+      const documentData = {
+        url: uploadResult.url,
+        filename: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype,
+        metadata: uploadResult.metadata,
+      };
+
+      const result = await storage.storeProviderDocument(userId, documentType, documentData);
+
+      if (!result.success) {
+        // If database storage fails, we should clean up the uploaded file
+        await objectStorageService.deleteFile(uploadResult.metadata?.path || '');
+        return res.status(400).json({ 
+          success: false,
+          message: result.error || 'Failed to store document' 
+        });
+      }
+
+      // Check if all required documents are now uploaded
+      const updatedProvider = await storage.getServiceProvider(userId);
+      const docs = updatedProvider?.documents;
+      const hasRequiredDocs = docs?.aadhar?.front && docs?.aadhar?.back && docs?.photo?.url;
+
+      // Auto-advance to under_review if all required docs are uploaded
+      if (hasRequiredDocs && provider.verificationStatus === 'pending') {
+        await storage.updateVerificationStatus(userId, {
+          verificationStatus: 'under_review',
+        });
+
+        // Notify admins about completed application
+        const adminUsers = await storage.getUsersByRole('admin');
+        await Promise.all(
+          adminUsers.map(admin =>
+            storage.createNotification({
+              userId: admin.id,
+              title: 'Provider Application Complete',
+              body: `${provider.businessName || 'A provider'} has uploaded all required documents and is ready for verification.`,
+              type: 'system',
+              isRead: false,
+            })
+          )
+        );
+      }
+
+      res.json({
+        success: true,
+        documentUrl: result.url,
+        documentType,
+        filename: file.originalname,
+        verificationStatus: hasRequiredDocs ? 'under_review' : 'pending',
+        message: 'Document uploaded successfully',
+      });
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to upload document' 
+      });
+    }
+  });
+
+  // Get provider documents
+  app.get('/api/v1/providers/documents', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+
+      res.json({
+        success: true,
+        documents: provider.documents || {},
+      });
+    } catch (error) {
+      console.error('Error fetching provider documents:', error);
+      res.status(500).json({ message: 'Failed to fetch documents' });
+    }
+  });
+
+  // Get provider profile and verification status
+  app.get('/api/v1/providers/profile', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+
+      // Get user details
+      const user = await storage.getUser(userId);
+      
+      // Get verification history
+      const history = await storage.getVerificationHistory(userId);
+
+      res.json({
+        success: true,
+        profile: {
+          ...provider,
+          user: {
+            firstName: user?.firstName,
+            lastName: user?.lastName,
+            email: user?.email,
+            phone: user?.phone,
+          },
+          verificationHistory: history,
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching provider profile:', error);
+      res.status(500).json({ message: 'Failed to fetch provider profile' });
+    }
+  });
+
+  // Update provider profile
+  app.put('/api/v1/providers/profile', authMiddleware, validateBody(updateProviderProfileSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+
+      // Update provider profile
+      const updatedProvider = await storage.updateServiceProvider(userId, req.body);
+
+      res.json({
+        success: true,
+        provider: updatedProvider,
+        message: 'Provider profile updated successfully',
+      });
+    } catch (error) {
+      console.error('Error updating provider profile:', error);
+      res.status(500).json({ message: 'Failed to update provider profile' });
+    }
+  });
+
+  // Enhanced admin verification endpoints
+
+  // Get pending verifications with comprehensive data
+  app.get('/api/v1/admin/verifications/pending', adminSessionMiddleware, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || undefined;
+      
+      // Use enhanced method to get pending verifications with user data
+      const pendingVerifications = await storage.getPendingVerifications(limit);
+      
+      res.json({
+        success: true,
+        verifications: pendingVerifications,
+        count: pendingVerifications.length,
+      });
+    } catch (error) {
+      console.error('Error fetching pending verifications:', error);
+      res.status(500).json({ message: 'Failed to fetch pending verifications' });
+    }
+  });
+
+  // Update provider verification status (enhanced version)
+  app.post('/api/v1/admin/verifications/:providerId/status', adminSessionMiddleware, validateBody(verificationActionSchema), async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const { action, notes, rejectionReason, resubmissionReason } = req.body;
+      const adminId = req.user?.id;
+
+      if (!providerId) {
+        return res.status(400).json({ message: 'Provider ID is required' });
+      }
+
+      const provider = await storage.getServiceProvider(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider not found' });
+      }
+
+      // Map action to verification status
+      let verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended' | 'resubmission_required';
+      
+      switch (action) {
+        case 'approve':
+          verificationStatus = 'approved';
+          break;
+        case 'reject':
+          verificationStatus = 'rejected';
+          break;
+        case 'request_changes':
+          verificationStatus = 'resubmission_required';
+          break;
+        case 'suspend':
+          verificationStatus = 'suspended';
+          break;
+        case 'under_review':
+          verificationStatus = 'under_review';
+          break;
+        default:
+          return res.status(400).json({ message: 'Invalid action' });
+      }
+
+      // Update verification status
+      const updatedProvider = await storage.updateVerificationStatus(providerId, {
+        verificationStatus,
+        verifiedBy: adminId,
+        rejectionReason,
+        verificationNotes: notes,
+        resubmissionReason,
+      });
+
+      // Create notification for provider
+      const user = await storage.getUser(providerId);
+      const notificationTitle = `Verification ${action === 'approve' ? 'Approved' : 
+                                              action === 'reject' ? 'Rejected' : 
+                                              action === 'request_changes' ? 'Changes Requested' : 
+                                              action === 'suspend' ? 'Suspended' : 'Under Review'}`;
+      
+      let notificationBody = '';
+      switch (action) {
+        case 'approve':
+          notificationBody = 'Congratulations! Your provider application has been approved. You can now start accepting service requests.';
+          break;
+        case 'reject':
+          notificationBody = `Your provider application was rejected. ${rejectionReason || 'Please contact support for more information.'}`;
+          break;
+        case 'request_changes':
+          notificationBody = `Changes requested to your provider application. ${resubmissionReason || 'Please review and resubmit your application.'}`;
+          break;
+        case 'suspend':
+          notificationBody = `Your provider account has been suspended. ${notes || 'Please contact support for more information.'}`;
+          break;
+        case 'under_review':
+          notificationBody = 'Your provider application is now under review. We will notify you of any updates.';
+          break;
+      }
+
+      await storage.createNotification({
+        userId: providerId,
+        title: notificationTitle,
+        body: notificationBody,
+        type: 'system',
+        isRead: false,
+      });
+
+      res.json({
+        success: true,
+        provider: updatedProvider,
+        message: `Provider verification ${action} successfully`,
+      });
+    } catch (error) {
+      console.error('Error updating provider verification:', error);
+      res.status(500).json({ message: 'Failed to update provider verification' });
+    }
+  });
+
+  // Get provider verification history
+  app.get('/api/v1/admin/verifications/:providerId/history', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      
+      if (!providerId) {
+        return res.status(400).json({ message: 'Provider ID is required' });
+      }
+
+      const history = await storage.getVerificationHistory(providerId);
+      
+      res.json({
+        success: true,
+        history,
+      });
+    } catch (error) {
+      console.error('Error fetching verification history:', error);
+      res.status(500).json({ message: 'Failed to fetch verification history' });
+    }
+  });
+
+  // Get provider documents for admin review
+  app.get('/api/v1/admin/verifications/:providerId/documents', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      
+      if (!providerId) {
+        return res.status(400).json({ message: 'Provider ID is required' });
+      }
+
+      const provider = await storage.getServiceProvider(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider not found' });
+      }
+
+      const user = await storage.getUser(providerId);
+
+      res.json({
+        success: true,
+        provider: {
+          ...provider,
+          user: {
+            firstName: user?.firstName,
+            lastName: user?.lastName,
+            email: user?.email,
+            phone: user?.phone,
+          },
+        },
+        documents: provider.documents || {},
+      });
+    } catch (error) {
+      console.error('Error fetching provider documents:', error);
+      res.status(500).json({ message: 'Failed to fetch provider documents' });
+    }
+  });
+
+  // Provider resubmission after rejection
+  app.post('/api/v1/providers/resubmit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const provider = await storage.getServiceProvider(userId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
+
+      if (provider.verificationStatus !== 'rejected' && provider.verificationStatus !== 'resubmission_required') {
+        return res.status(400).json({ 
+          message: 'Provider is not eligible for resubmission',
+          currentStatus: provider.verificationStatus 
+        });
+      }
+
+      // Reset verification status to pending
+      await storage.updateVerificationStatus(userId, {
+        verificationStatus: 'pending',
+      });
+
+      // Clear rejection reason and notes
+      await storage.updateServiceProvider(userId, {
+        rejectionReason: null,
+        resubmissionReason: null,
+      });
+
+      res.json({
+        success: true,
+        message: 'Application resubmitted successfully. Please ensure all documents are uploaded.',
+      });
+    } catch (error) {
+      console.error('Error resubmitting provider application:', error);
+      res.status(500).json({ message: 'Failed to resubmit application' });
     }
   });
 

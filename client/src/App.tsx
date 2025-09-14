@@ -39,6 +39,8 @@ import PartsProvider from "@/pages/PartsProvider";
 import Admin from "@/pages/Admin";
 import Subcategories from "@/pages/Subcategories";
 import NotFound from "@/pages/not-found";
+import ProviderRegistration from "@/pages/ProviderRegistration";
+import ProviderPending from "@/pages/ProviderPending";
 
 // Dashboard routing based on user role
 const getDashboardRoute = (role: string) => {
@@ -155,6 +157,16 @@ function Router() {
       
       {/* Category Hierarchy Routes */}
       <Route path="/categories/:categoryId/subcategories" component={() => <ProtectedRoute component={Subcategories} />} />
+      
+      {/* Provider Registration Routes */}
+      <Route 
+        path="/provider/register" 
+        component={() => <ProtectedRoute component={ProviderRegistration} />} 
+      />
+      <Route 
+        path="/provider-pending" 
+        component={() => <ProtectedRoute component={ProviderPending} />} 
+      />
       
       {/* Service Provider Routes */}
       <Route 

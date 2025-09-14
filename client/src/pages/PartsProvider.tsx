@@ -31,7 +31,11 @@ import {
   Upload,
   BarChart3,
   Settings,
-  Percent
+  Percent,
+  Shield,
+  Award,
+  FileText,
+  Clock
 } from 'lucide-react';
 
 interface Part {
@@ -71,6 +75,20 @@ interface ProviderStats {
   activeListings: number;
   lowStockItems: number;
   pendingOrders: number;
+}
+
+interface ProviderVerificationData {
+  id: string;
+  verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended';
+  verificationDate?: string;
+  adminNotes?: string;
+  businessName: string;
+  documents?: {
+    aadhar?: { front?: string; back?: string; verified?: boolean };
+    photo?: { url?: string; verified?: boolean };
+    businessLicense?: { url?: string; verified?: boolean };
+    insurance?: { url?: string; verified?: boolean };
+  };
 }
 
 export default function PartsProvider() {
@@ -116,6 +134,16 @@ export default function PartsProvider() {
   const { data: orders } = useQuery({
     queryKey: ['/api/v1/parts-provider/orders', user?.uid],
     queryFn: () => fetch(`/api/v1/parts-provider/orders/${user?.uid}`).then(res => res.json()),
+    enabled: !!user?.uid,
+  });
+
+  // Fetch provider verification data
+  const { data: verificationData } = useQuery<ProviderVerificationData>({
+    queryKey: ['/api/v1/providers/verification', user?.uid],
+    queryFn: async () => {
+      const response = await apiRequest('GET', `/api/v1/providers/verification/${user?.uid}`);
+      return response.json();
+    },
     enabled: !!user?.uid,
   });
 
@@ -259,6 +287,68 @@ export default function PartsProvider() {
     }
   };
 
+  // Verification status helpers
+  const getVerificationStatusInfo = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return {
+          color: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+          icon: Clock,
+          title: 'Verification Pending',
+          description: 'Your documents are being reviewed'
+        };
+      case 'under_review':
+        return {
+          color: 'bg-blue-100 text-blue-800 border-blue-200', 
+          icon: FileText,
+          title: 'Under Review',
+          description: 'Admin is reviewing your application'
+        };
+      case 'approved':
+        return {
+          color: 'bg-green-100 text-green-800 border-green-200',
+          icon: CheckCircle,
+          title: 'Verified Provider',
+          description: 'Your account is fully verified'
+        };
+      case 'rejected':
+        return {
+          color: 'bg-red-100 text-red-800 border-red-200',
+          icon: XCircle,
+          title: 'Verification Required',
+          description: 'Please update your documents'
+        };
+      case 'suspended':
+        return {
+          color: 'bg-gray-100 text-gray-800 border-gray-200',
+          icon: AlertTriangle,
+          title: 'Account Suspended',
+          description: 'Contact support for assistance'
+        };
+      default:
+        return {
+          color: 'bg-gray-100 text-gray-800 border-gray-200',
+          icon: Shield,
+          title: 'Unverified',
+          description: 'Complete your verification'
+        };
+    }
+  };
+
+  const getVerificationBadge = () => {
+    if (!verificationData) return null;
+    
+    const statusInfo = getVerificationStatusInfo(verificationData.verificationStatus);
+    const StatusIcon = statusInfo.icon;
+
+    return (
+      <Badge className={`${statusInfo.color} flex items-center space-x-1`}>
+        <StatusIcon className="w-3 h-3" />
+        <span>{statusInfo.title}</span>
+      </Badge>
+    );
+  };
+
   const pendingOrders = orders?.filter((order: PartsOrder) => order.status === 'pending') || [];
   const activeOrders = orders?.filter((order: PartsOrder) => 
     ['accepted', 'shipped'].includes(order.status)
@@ -271,8 +361,13 @@ export default function PartsProvider() {
       <header className="bg-primary text-primary-foreground p-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">Parts Provider Dashboard</h1>
-            <p className="text-sm opacity-90">Welcome back, {user.displayName}</p>
+            <div className="flex items-center space-x-3">
+              <div>
+                <h1 className="text-xl font-bold">Parts Provider Dashboard</h1>
+                <p className="text-sm opacity-90">Welcome back, {user.displayName}</p>
+              </div>
+              {getVerificationBadge()}
+            </div>
           </div>
           
           <div className="flex items-center space-x-3">
