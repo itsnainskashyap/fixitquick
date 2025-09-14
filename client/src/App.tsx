@@ -193,14 +193,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {/* Only enable WebSocket in production to prevent dev mounting issues */}
-        {import.meta.env.PROD ? (
-          <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
-            {AppContent}
-          </WebSocketProvider>
-        ) : (
-          AppContent
-        )}
+        <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+          {AppContent}
+        </WebSocketProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
