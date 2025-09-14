@@ -4,9 +4,14 @@ import { onAuthStateChange, signInWithGoogle, signOutUser } from '@/lib/firebase
 import { apiRequest } from '@/lib/queryClient';
 
 interface AuthUser extends User {
+  // Additional backend properties
+  id?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
   role?: 'user' | 'service_provider' | 'parts_provider' | 'admin';
   isVerified?: boolean;
-  walletBalance?: number;
+  walletBalance?: string; // Backend returns as string
   fixiPoints?: number;
   location?: {
     latitude: number;
@@ -16,6 +21,10 @@ interface AuthUser extends User {
     address: string;
     pincode?: string;
   };
+  profileImageUrl?: string;
+  isActive?: boolean;
+  createdAt?: string | Date;
+  lastLoginAt?: string | Date;
 }
 
 interface AuthContextType {

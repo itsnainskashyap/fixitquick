@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
@@ -9,9 +10,15 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { apiRequest } from '@/lib/queryClient';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { 
   User, 
   Settings, 
@@ -31,16 +38,66 @@ import {
   Moon,
   Sun,
   Volume2,
-  VolumeX
+  VolumeX,
+  Edit3,
+  Check,
+  X,
+  Loader2
 } from 'lucide-react';
 
+// Email update validation schema
+const emailUpdateSchema = z.object({
+  email: z.string()
+    .email('Please enter a valid email address')
+    .min(1, 'Email address is required'),
+});
+
+type EmailUpdateFormData = z.infer<typeof emailUpdateSchema>;
+
 export default function Account() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, refreshUser } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  
+  // Email update form
+  const emailForm = useForm<EmailUpdateFormData>({
+    resolver: zodResolver(emailUpdateSchema),
+    defaultValues: {
+      email: user?.email || '',
+    },
+  });
+  
+  // Email update mutation
+  const updateEmailMutation = useMutation({
+    mutationFn: async (data: EmailUpdateFormData) => {
+      const response = await apiRequest('PATCH', '/api/v1/users/me/email', data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      // Update user context with new email
+      refreshUser();
+      // Reset form state
+      setIsEditingEmail(false);
+      emailForm.reset({ email: data.user.email });
+      toast({
+        title: "Email updated successfully",
+        description: "Your email address has been updated and saved.",
+      });
+    },
+    onError: (error: any) => {
+      console.error('Email update error:', error);
+      toast({
+        title: "Failed to update email",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleSignOut = async () => {
     try {
@@ -61,6 +118,20 @@ export default function Account() {
 
   const handleEditProfile = () => {
     setLocation('/account/edit');
+  };
+  
+  const handleEmailEdit = () => {
+    setIsEditingEmail(true);
+    emailForm.reset({ email: user?.email || '' });
+  };
+  
+  const handleEmailCancel = () => {
+    setIsEditingEmail(false);
+    emailForm.reset({ email: user?.email || '' });
+  };
+  
+  const handleEmailSubmit = (data: EmailUpdateFormData) => {
+    updateEmailMutation.mutate(data);
   };
 
   const handleNotificationToggle = async (enabled: boolean) => {
@@ -143,56 +214,169 @@ export default function Account() {
       <Header />
 
       <main className="pt-32 px-4 pb-6">
-        {/* Profile Section */}
+        {/* Profile Header Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="mb-6"
         >
-          <Card>
+          <Card className="bg-gradient-to-r from-primary/10 to-secondary/10">
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
-                <Avatar className="w-16 h-16">
-                  <AvatarImage src={user.photoURL || ''} alt={user.displayName || ''} />
-                  <AvatarFallback>
-                    {user.displayName?.split(' ').map(n => n[0]).join('') || 'U'}
+                <Avatar className="w-20 h-20 border-4 border-background shadow-lg">
+                  <AvatarImage src={user.photoURL || user.profileImageUrl || ''} alt={user.displayName || ''} />
+                  <AvatarFallback className="text-lg font-semibold">
+                    {user.firstName && user.lastName 
+                      ? `${user.firstName[0]}${user.lastName[0]}` 
+                      : user.displayName?.split(' ').map(n => n[0]).join('') || 'U'}
                   </AvatarFallback>
                 </Avatar>
                 
                 <div className="flex-1">
-                  <h2 className="text-xl font-semibold text-foreground">
-                    {user.displayName || 'User'}
-                  </h2>
+                  <h1 className="text-2xl font-bold text-foreground mb-1">
+                    {user.firstName && user.lastName 
+                      ? `${user.firstName} ${user.lastName}` 
+                      : user.displayName || 'User'}
+                  </h1>
                   
-                  <div className="flex items-center space-x-2 mt-1">
-                    <Mail className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-muted-foreground">{user.email}</span>
-                  </div>
+                  {/* Prominent Phone Display */}
+                  {user.phone && (
+                    <div className="flex items-center space-x-2 mb-2">
+                      <div className="w-8 h-8 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center">
+                        <Phone className="w-4 h-4 text-green-600 dark:text-green-400" />
+                      </div>
+                      <span className="text-lg font-medium text-foreground">{user.phone}</span>
+                      {user.isVerified && (
+                        <Badge variant="default" className="text-xs ml-2">
+                          <Shield className="w-3 h-3 mr-1" />
+                          Verified
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                   
-                  {user.phoneNumber && (
+                  {/* Location Display */}
+                  {user.location?.city && (
                     <div className="flex items-center space-x-2 mt-1">
-                      <Phone className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">{user.phoneNumber}</span>
+                      <MapPin className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">
+                        {user.location.city}{user.location.area ? `, ${user.location.area}` : ''}
+                      </span>
                     </div>
                   )}
                   
                   <div className="flex items-center space-x-2 mt-2">
-                    {user.isVerified && (
-                      <Badge variant="default" className="text-xs">
-                        <Shield className="w-3 h-3 mr-1" />
-                        Verified
+                    <Badge variant="outline" className="text-xs">
+                      Member since {user.createdAt ? new Date(user.createdAt).getFullYear() : new Date().getFullYear()}
+                    </Badge>
+                    {user.walletBalance && parseFloat(user.walletBalance.toString()) > 0 && (
+                      <Badge variant="secondary" className="text-xs">
+                        ₹{user.walletBalance} wallet
                       </Badge>
                     )}
-                    <Badge variant="outline" className="text-xs">
-                      Member since {new Date(user.createdAt || Date.now()).getFullYear()}
-                    </Badge>
                   </div>
                 </div>
-                
-                <Button variant="outline" onClick={handleEditProfile} data-testid="edit-profile">
-                  Edit
-                </Button>
               </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+        
+        {/* Email Management Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-6"
+        >
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center space-x-2">
+                <Mail className="w-5 h-5 text-primary" />
+                <span>Email Address</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!isEditingEmail ? (
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    {user.email ? (
+                      <div>
+                        <p className="text-base font-medium text-foreground">{user.email}</p>
+                        <p className="text-sm text-muted-foreground">Your email address for notifications and account recovery</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-base text-muted-foreground italic">No email address set</p>
+                        <p className="text-sm text-muted-foreground">Add your Gmail to receive important notifications</p>
+                      </div>
+                    )}
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleEmailEdit}
+                    data-testid="edit-email-button"
+                  >
+                    <Edit3 className="w-4 h-4 mr-2" />
+                    {user.email ? 'Update' : 'Add Email'}
+                  </Button>
+                </div>
+              ) : (
+                <Form {...emailForm}>
+                  <form onSubmit={emailForm.handleSubmit(handleEmailSubmit)} className="space-y-4">
+                    <FormField
+                      control={emailForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email Address</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type="email"
+                              placeholder="Enter your Gmail or email address"
+                              data-testid="email-input"
+                              disabled={updateEmailMutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="flex space-x-2">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={updateEmailMutation.isPending}
+                        data-testid="save-email-button"
+                      >
+                        {updateEmailMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4 mr-2" />
+                            Save
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleEmailCancel}
+                        disabled={updateEmailMutation.isPending}
+                        data-testid="cancel-email-button"
+                      >
+                        <X className="w-4 h-4 mr-2" />
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -201,7 +385,7 @@ export default function Account() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
+          transition={{ delay: 0.2 }}
           className="grid grid-cols-3 gap-4 mb-6"
         >
           <Card>
@@ -213,15 +397,15 @@ export default function Account() {
           
           <Card>
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-primary mb-1">4.8</div>
-              <div className="text-xs text-muted-foreground">Avg Rating</div>
+              <div className="text-2xl font-bold text-primary mb-1">₹{user.walletBalance || '0'}</div>
+              <div className="text-xs text-muted-foreground">Wallet Balance</div>
             </CardContent>
           </Card>
           
           <Card>
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-primary mb-1">₹2.5K</div>
-              <div className="text-xs text-muted-foreground">Total Savings</div>
+              <div className="text-2xl font-bold text-primary mb-1">{user.fixiPoints || 0}</div>
+              <div className="text-xs text-muted-foreground">FixiPoints</div>
             </CardContent>
           </Card>
         </motion.div>
@@ -230,7 +414,7 @@ export default function Account() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.3 }}
           className="mb-6"
         >
           <Card>
@@ -309,7 +493,7 @@ export default function Account() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.4 }}
           className="space-y-2 mb-6"
         >
           {menuItems.map((item, index) => {
@@ -349,7 +533,7 @@ export default function Account() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.5 }}
         >
           <Button
             variant="outline"
@@ -366,7 +550,7 @@ export default function Account() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
+          transition={{ delay: 0.6 }}
           className="text-center mt-6"
         >
           <p className="text-xs text-muted-foreground">
