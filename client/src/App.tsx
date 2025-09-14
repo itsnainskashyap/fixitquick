@@ -38,15 +38,23 @@ const getDashboardRoute = (role: string) => {
   }
 };
 
-// Smart home component that redirects authenticated users to their dashboard
+// Smart home component that redirects specific role users to their dashboard
 function SmartHome() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
     if (isAuthenticated && user?.role && !isLoading) {
-      const dashboardPath = getDashboardRoute(user.role);
-      setLocation(dashboardPath);
+      // Only redirect specific role users to their dashboards
+      // Regular users (role: 'user' or undefined) stay on home page
+      if (user.role === 'service_provider') {
+        setLocation('/provider');
+      } else if (user.role === 'parts_provider') {
+        setLocation('/parts-provider');
+      } else if (user.role === 'admin') {
+        setLocation('/admin');
+      }
+      // Regular users with role 'user' or no specific role stay on home page
     } else if (!isLoading && !isAuthenticated) {
       // Redirect unauthenticated users to login
       setLocation('/login');
@@ -62,7 +70,7 @@ function SmartHome() {
     );
   }
 
-  // Show home for authenticated users (will redirect via useEffect)
+  // Show home for authenticated users (regular users stay here, others redirect via useEffect)
   return <Home />;
 }
 
