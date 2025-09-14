@@ -234,6 +234,15 @@ export interface IStorage {
   updateOtpChallenge(id: string, data: Partial<InsertOtpChallenge>): Promise<OtpChallenge | undefined>;
   expireOtpChallenge(id: string): Promise<void>;
   incrementOtpAttempts(id: string): Promise<OtpChallenge | undefined>;
+  expireOtpChallenges(phone: string): Promise<void>;
+  getActiveOtpChallenge(phone: string): Promise<OtpChallenge | undefined>;
+  getRecentOtpChallenges(phone: string, seconds: number): Promise<OtpChallenge[]>;
+  getRecentOtpChallengesByIp(ip: string, seconds: number): Promise<OtpChallenge[]>;
+  getOtpStatistics(hours: number): Promise<{
+    totalSent: number;
+    totalVerified: number;
+    successRate: number;
+  }>;
   cleanupExpiredOtpChallenges(): Promise<void>;
 
   // User Session methods
@@ -1790,6 +1799,78 @@ export class PostgresStorage implements IStorage {
       .where(eq(otpChallenges.id, id))
       .returning();
     return result[0];
+  }
+
+  async expireOtpChallenges(phone: string): Promise<void> {
+    await db.update(otpChallenges)
+      .set({ status: "expired" })
+      .where(and(
+        eq(otpChallenges.phone, phone),
+        eq(otpChallenges.status, "sent")
+      ));
+  }
+
+  async getActiveOtpChallenge(phone: string): Promise<OtpChallenge | undefined> {
+    const result = await db.select().from(otpChallenges)
+      .where(and(
+        eq(otpChallenges.phone, phone),
+        eq(otpChallenges.status, "sent"),
+        gte(otpChallenges.expiresAt, new Date())
+      ))
+      .orderBy(desc(otpChallenges.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getRecentOtpChallenges(phone: string, seconds: number): Promise<OtpChallenge[]> {
+    const cutoffTime = new Date(Date.now() - seconds * 1000);
+    return await db.select().from(otpChallenges)
+      .where(and(
+        eq(otpChallenges.phone, phone),
+        gte(otpChallenges.createdAt, cutoffTime)
+      ))
+      .orderBy(desc(otpChallenges.createdAt));
+  }
+
+  async getRecentOtpChallengesByIp(ip: string, seconds: number): Promise<OtpChallenge[]> {
+    if (!ip) return [];
+    
+    const cutoffTime = new Date(Date.now() - seconds * 1000);
+    return await db.select().from(otpChallenges)
+      .where(and(
+        eq(otpChallenges.ip, ip),
+        gte(otpChallenges.createdAt, cutoffTime)
+      ))
+      .orderBy(desc(otpChallenges.createdAt));
+  }
+
+  async getOtpStatistics(hours: number): Promise<{
+    totalSent: number;
+    totalVerified: number;
+    successRate: number;
+  }> {
+    const cutoffTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+    
+    const totalSentResult = await db.select({ count: count() })
+      .from(otpChallenges)
+      .where(gte(otpChallenges.createdAt, cutoffTime));
+    
+    const totalVerifiedResult = await db.select({ count: count() })
+      .from(otpChallenges)
+      .where(and(
+        eq(otpChallenges.status, "verified"),
+        gte(otpChallenges.createdAt, cutoffTime)
+      ));
+    
+    const totalSent = totalSentResult[0].count;
+    const totalVerified = totalVerifiedResult[0].count;
+    const successRate = totalSent > 0 ? (totalVerified / totalSent) * 100 : 0;
+    
+    return {
+      totalSent,
+      totalVerified,
+      successRate: parseFloat(successRate.toFixed(2))
+    };
   }
 
   async cleanupExpiredOtpChallenges(): Promise<void> {
