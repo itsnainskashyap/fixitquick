@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { auth, db } from '../services/firebase';
+import { jwtService } from '../utils/jwt';
+import { storage } from '../storage';
 
 interface AuthenticatedRequest extends Request {
   user?: {
@@ -17,7 +19,7 @@ interface AuthMiddlewareOptions {
   requireVerified?: boolean;
 }
 
-// Main authentication middleware
+// Enhanced authentication middleware supporting both JWT and Firebase tokens
 export const authMiddleware = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -32,7 +34,7 @@ export const authMiddleware = async (
       });
     }
 
-    const token = authHeader.split('Bearer ')[1];
+    const token = authHeader.split('Bearer ')[1]?.trim();
     
     if (!token) {
       return res.status(401).json({ 
@@ -40,70 +42,122 @@ export const authMiddleware = async (
       });
     }
 
-    // Verify the Firebase ID token
-    const decodedToken = await auth.verifyIdToken(token);
-    
-    // Get additional user data from Firestore
-    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-    
-    if (!userDoc.exists) {
-      return res.status(404).json({ 
-        message: 'User not found' 
-      });
-    }
-
-    const userData = userDoc.data();
-    
-    // Check if user is active
-    if (userData?.isActive === false) {
-      return res.status(403).json({ 
-        message: 'Account suspended' 
-      });
-    }
-
-    // Attach user data to request
-    req.user = {
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      role: userData?.role || 'user',
-      isVerified: userData?.isVerified || false,
-      displayName: userData?.displayName,
-      photoURL: userData?.photoURL,
-      ...userData,
-    };
-
-    // Update last active timestamp
+    // Try JWT verification first (for SMS auth users)
     try {
-      await db.collection('users').doc(decodedToken.uid).update({
-        lastActive: new Date(),
-      });
-    } catch (updateError) {
-      console.error('Error updating last active:', updateError);
-      // Don't fail the request if we can't update last active
+      const jwtPayload = await jwtService.verifyAccessToken(token);
+      if (jwtPayload) {
+        // Get user data from database
+        const user = await storage.getUser(jwtPayload.userId);
+        if (!user || !user.isActive) {
+          return res.status(404).json({ 
+            message: 'User not found or inactive' 
+          });
+        }
+
+        // Attach user data to request in compatible format
+        req.user = {
+          uid: user.id,
+          email: user.email || undefined,
+          phone: user.phone || undefined,
+          role: user.role || 'user',
+          isVerified: user.isVerified || false,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          profileImageUrl: user.profileImageUrl,
+          walletBalance: user.walletBalance,
+          fixiPoints: user.fixiPoints,
+          location: user.location,
+          isActive: user.isActive,
+          lastLoginAt: user.lastLoginAt,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        };
+
+        // Update last active timestamp
+        try {
+          await storage.updateUser(user.id, { lastLoginAt: new Date() });
+        } catch (updateError) {
+          console.error('Error updating last login:', updateError);
+          // Don't fail the request if we can't update last login
+        }
+
+        return next();
+      }
+    } catch (jwtError) {
+      console.log('JWT verification failed, trying Firebase auth...');
     }
 
-    next();
+    // Fallback to Firebase authentication for existing users
+    try {
+      const decodedToken = await auth.verifyIdToken(token);
+      
+      // Get additional user data from Firestore
+      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({ 
+          message: 'User not found' 
+        });
+      }
+
+      const userData = userDoc.data();
+      
+      // Check if user is active
+      if (userData?.isActive === false) {
+        return res.status(403).json({ 
+          message: 'Account suspended' 
+        });
+      }
+
+      // Attach user data to request
+      req.user = {
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        role: userData?.role || 'user',
+        isVerified: userData?.isVerified || false,
+        displayName: userData?.displayName,
+        photoURL: userData?.photoURL,
+        ...userData,
+      };
+
+      // Update last active timestamp
+      try {
+        await db.collection('users').doc(decodedToken.uid).update({
+          lastActive: new Date(),
+        });
+      } catch (updateError) {
+        console.error('Error updating last active:', updateError);
+        // Don't fail the request if we can't update last active
+      }
+
+      next();
+    } catch (firebaseError: any) {
+      console.error('Firebase authentication failed:', firebaseError);
+      
+      if (firebaseError?.code === 'auth/id-token-expired') {
+        return res.status(401).json({ 
+          message: 'Token expired - Please login again' 
+        });
+      }
+      
+      if (firebaseError?.code === 'auth/id-token-revoked') {
+        return res.status(401).json({ 
+          message: 'Token revoked - Please login again' 
+        });
+      }
+      
+      if (firebaseError?.code === 'auth/invalid-id-token') {
+        return res.status(401).json({ 
+          message: 'Invalid token' 
+        });
+      }
+
+      return res.status(401).json({ 
+        message: 'Authentication failed' 
+      });
+    }
   } catch (error) {
     console.error('Authentication error:', error);
-    
-    if (error.code === 'auth/id-token-expired') {
-      return res.status(401).json({ 
-        message: 'Token expired - Please login again' 
-      });
-    }
-    
-    if (error.code === 'auth/id-token-revoked') {
-      return res.status(401).json({ 
-        message: 'Token revoked - Please login again' 
-      });
-    }
-    
-    if (error.code === 'auth/invalid-id-token') {
-      return res.status(401).json({ 
-        message: 'Invalid token' 
-      });
-    }
-
     return res.status(401).json({ 
       message: 'Authentication failed' 
     });
@@ -129,6 +183,37 @@ export const optionalAuth = async (
       return next(); // Continue without user data
     }
 
+    // Try JWT verification first
+    try {
+      const jwtPayload = await jwtService.verifyAccessToken(token);
+      if (jwtPayload) {
+        const user = await storage.getUser(jwtPayload.userId);
+        if (user && user.isActive) {
+          req.user = {
+            uid: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: user.role || 'user',
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          };
+        }
+        return next();
+      }
+    } catch (jwtError) {
+      // Continue to Firebase auth fallback
+    }
+
+    // Fallback to Firebase authentication
     const decodedToken = await auth.verifyIdToken(token);
     const userDoc = await db.collection('users').doc(decodedToken.uid).get();
     

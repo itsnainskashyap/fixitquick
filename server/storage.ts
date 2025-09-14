@@ -249,7 +249,8 @@ export interface IStorage {
   createUserSession(session: InsertUserSession): Promise<UserSession>;
   getUserSession(userId: string, refreshTokenHash: string): Promise<UserSession | undefined>;
   getUserSessions(userId: string): Promise<UserSession[]>;
-  revokeUserSession(id: string): Promise<void>;
+  revokeUserSession(sessionId: string): Promise<void>; // SECURITY FIX: Revoke by sessionId not database id
+  revokeUserSessionById(id: string): Promise<void>; // Keep old method for compatibility
   revokeAllUserSessions(userId: string): Promise<void>;
   cleanupExpiredSessions(): Promise<void>;
 }
@@ -320,6 +321,53 @@ export class PostgresStorage implements IStorage {
   async getUsersCount(): Promise<number> {
     const result = await db.select({ count: count() }).from(users);
     return result[0].count;
+  }
+
+  async getUserByPhone(phone: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+    return result[0];
+  }
+
+  // User Session methods
+  async createUserSession(session: InsertUserSession): Promise<UserSession> {
+    const result = await db.insert(userSessions).values(session).returning();
+    return result[0];
+  }
+
+  async getUserSession(userId: string, refreshTokenHash: string): Promise<UserSession | undefined> {
+    const result = await db.select().from(userSessions)
+      .where(and(
+        eq(userSessions.userId, userId),
+        eq(userSessions.refreshTokenHash, refreshTokenHash),
+        sql`${userSessions.revokedAt} IS NULL`
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async revokeUserSession(sessionId: string): Promise<void> {
+    // SECURITY FIX: Revoke by sessionId not database id
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(userSessions.sessionId, sessionId));
+  }
+
+  async revokeUserSessionById(id: string): Promise<void> {
+    // Keep old method for compatibility
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(userSessions.id, id));
+  }
+
+  async revokeAllUserSessions(userId: string): Promise<void> {
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(userSessions.userId, userId));
+  }
+
+  async cleanupExpiredSessions(): Promise<void> {
+    await db.delete(userSessions)
+      .where(sql`${userSessions.expiresAt} < NOW() OR ${userSessions.revokedAt} IS NOT NULL`);
   }
 
   // Service Category methods
@@ -1906,7 +1954,15 @@ export class PostgresStorage implements IStorage {
       .orderBy(desc(userSessions.createdAt));
   }
 
-  async revokeUserSession(id: string): Promise<void> {
+  async revokeUserSession(sessionId: string): Promise<void> {
+    // SECURITY FIX: Revoke by sessionId not database id
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(userSessions.sessionId, sessionId));
+  }
+
+  async revokeUserSessionById(id: string): Promise<void> {
+    // Keep old method for compatibility
     await db.update(userSessions)
       .set({ revokedAt: new Date() })
       .where(eq(userSessions.id, id));

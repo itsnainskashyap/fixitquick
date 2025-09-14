@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import cors from 'cors';
 import helmet from 'helmet';
@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { storage } from "./storage";
-import { authMiddleware, requireRole } from "./middleware/auth";
+import { authMiddleware, requireRole, type AuthenticatedRequest } from "./middleware/auth";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
@@ -16,12 +16,31 @@ import {
   insertOrderSchema,
   insertPartSchema,
 } from "@shared/schema";
+import { twilioService } from "./services/twilio";
+import { jwtService } from "./utils/jwt";
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
+});
+
+// Specific rate limiters for OTP endpoints
+const otpRequestLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 1, // 1 request per minute per IP
+  message: 'Too many OTP requests. Please wait before requesting again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const otpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 verify attempts per 15 minutes per IP
+  message: 'Too many verification attempts. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Validation schemas for API routes
@@ -101,6 +120,54 @@ const searchAnalyticsSchema = z.object({
   duration: z.number().optional(),
 });
 
+// Authentication validation schemas
+const otpRequestSchema = z.object({
+  phone: z.string()
+    .min(10, 'Phone number must be at least 10 digits')
+    .max(15, 'Phone number cannot exceed 15 digits')
+    .regex(/^(\+?[1-9]\d{0,3})?[0-9\s\-\(\)]{7,14}$/, 'Invalid phone number format'),
+});
+
+const otpVerifySchema = z.object({
+  phone: z.string()
+    .min(10, 'Phone number must be at least 10 digits')
+    .max(15, 'Phone number cannot exceed 15 digits')
+    .regex(/^(\+?[1-9]\d{0,3})?[0-9\s\-\(\)]{7,14}$/, 'Invalid phone number format'),
+  code: z.string()
+    .length(6, 'Verification code must be exactly 6 digits')
+    .regex(/^\d{6}$/, 'Verification code must contain only digits'),
+});
+
+const onboardingSchema = z.object({
+  firstName: z.string()
+    .min(1, 'First name is required')
+    .max(50, 'First name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s'-]+$/, 'First name can only contain letters, spaces, apostrophes, and hyphens'),
+  lastName: z.string()
+    .max(50, 'Last name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s'-]*$/, 'Last name can only contain letters, spaces, apostrophes, and hyphens')
+    .optional(),
+  location: z.object({
+    address: z.string().min(1, 'Address is required'),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    city: z.string().min(1, 'City is required'),
+    pincode: z.string()
+      .min(4, 'Pincode must be at least 4 characters')
+      .max(10, 'Pincode cannot exceed 10 characters'),
+  }),
+  email: z.string()
+    .email('Valid email address is required')
+    .optional()
+    .or(z.literal('')),
+});
+
+const emailUpdateSchema = z.object({
+  email: z.string()
+    .email('Valid email address is required')
+    .min(1, 'Email address is required'),
+});
+
 // Validation middleware factory
 function validateBody(schema: z.ZodSchema) {
   return (req: any, res: any, next: any) => {
@@ -132,7 +199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       : ['http://localhost:5000', 'http://localhost:3000'],
     credentials: true,
   }));
-  app.use(limiter);
+  // Note: Apply rate limiting selectively to specific routes, not globally
 
   // Health check
   app.get('/api/health', (req, res) => {
@@ -218,7 +285,314 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Authentication routes
-  app.post('/api/v1/auth/login', validateBody(loginSchema), async (req, res) => {
+  
+  // POST /api/v1/auth/otp/request - Send OTP with rate limiting
+  app.post('/api/v1/auth/otp/request', otpRequestLimiter, validateBody(otpRequestSchema), async (req: Request, res: Response) => {
+    try {
+      const { phone } = req.body;
+      const ip = req.ip || req.socket.remoteAddress;
+      const userAgent = req.get('User-Agent');
+
+      const result = await twilioService.sendOTP(phone, ip, userAgent);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          canResend: result.canResend,
+          nextResendAt: result.nextResendAt
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message,
+        challengeId: result.challengeId,
+        canResend: result.canResend,
+        nextResendAt: result.nextResendAt
+      });
+
+    } catch (error) {
+      console.error('Error requesting OTP:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send verification code. Please try again.'
+      });
+    }
+  });
+
+  // POST /api/v1/auth/otp/verify - Verify OTP + set httpOnly cookie
+  app.post('/api/v1/auth/otp/verify', otpVerifyLimiter, validateBody(otpVerifySchema), async (req: Request, res: Response) => {
+    try {
+      const { phone, code } = req.body;
+      const ip = req.ip || req.socket.remoteAddress;
+      const userAgent = req.get('User-Agent');
+
+      // Verify OTP
+      const verifyResult = await twilioService.verifyOTP(phone, code, ip);
+      
+      if (!verifyResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: verifyResult.message,
+          remainingAttempts: verifyResult.remainingAttempts,
+          isExpired: verifyResult.isExpired,
+          isLocked: verifyResult.isLocked
+        });
+      }
+
+      // Check if user exists
+      let user = await storage.getUserByPhone(phone);
+      let isNewUser = false;
+      let needsOnboarding = false;
+
+      if (!user) {
+        // Create new user
+        isNewUser = true;
+        needsOnboarding = true;
+        user = await storage.createUser({
+          id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          phone,
+          role: 'user',
+          isVerified: true,
+          walletBalance: '0.00',
+          fixiPoints: 0,
+          isActive: true,
+        });
+      } else {
+        // Update existing user verification status
+        user = await storage.updateUser(user.id, { 
+          isVerified: true,
+          lastLoginAt: new Date()
+        }) || user;
+        
+        // Check if user needs onboarding (missing essential info)
+        needsOnboarding = !user.firstName || !user.location;
+      }
+
+      // Generate JWT token pair
+      const tokenPair = await jwtService.generateTokenPair(
+        user.id,
+        user.phone!,
+        user.role || 'user',
+        { ip, userAgent }
+      );
+
+      // Set httpOnly cookie for refresh token
+      res.cookie('refreshToken', tokenPair.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        path: '/'
+      });
+
+      // Return access token and user data (NEVER refresh token in JSON)
+      res.json({
+        success: true,
+        message: 'Phone number verified successfully',
+        accessToken: tokenPair.accessToken,
+        user: {
+          id: user.id,
+          phone: user.phone,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          walletBalance: user.walletBalance,
+          fixiPoints: user.fixiPoints,
+          location: user.location,
+          profileImageUrl: user.profileImageUrl,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
+          lastLoginAt: user.lastLoginAt
+        },
+        isNewUser,
+        needsOnboarding
+      });
+
+    } catch (error) {
+      console.error('Error verifying OTP:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Verification failed. Please try again.'
+      });
+    }
+  });
+
+  // POST /api/v1/auth/refresh - Rotate tokens with cookie handling
+  app.post('/api/v1/auth/refresh', async (req: Request, res: Response) => {
+    try {
+      // Debug logging for cookie parsing
+      console.log('Refresh endpoint - cookies object:', req.cookies ? 'present' : 'undefined');
+      console.log('Refresh endpoint - cookie count:', req.cookies ? Object.keys(req.cookies).length : 0);
+      
+      const refreshTokenFromCookie = req.cookies?.refreshToken;
+      
+      if (!refreshTokenFromCookie) {
+        console.log('Refresh endpoint - No refresh token found in cookies');
+        return res.status(401).json({
+          success: false,
+          message: 'No refresh token provided'
+        });
+      }
+
+      const ip = req.ip || req.socket.remoteAddress;
+      const userAgent = req.get('User-Agent');
+
+      // Refresh access token
+      const refreshResult = await jwtService.refreshAccessToken(refreshTokenFromCookie, { ip, userAgent });
+      
+      if (!refreshResult) {
+        // Clear invalid cookie
+        res.clearCookie('refreshToken', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          path: '/'
+        });
+        
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid refresh token. Please log in again.'
+        });
+      }
+
+      // Set new httpOnly cookie for new refresh token
+      res.cookie('refreshToken', refreshResult.newRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        path: '/'
+      });
+
+      // Get updated user data
+      const user = await storage.getUser(refreshResult.userId);
+      
+      res.json({
+        success: true,
+        accessToken: refreshResult.accessToken,
+        user: user ? {
+          id: user.id,
+          phone: user.phone,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          walletBalance: user.walletBalance,
+          fixiPoints: user.fixiPoints,
+          location: user.location,
+          profileImageUrl: user.profileImageUrl,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
+          lastLoginAt: user.lastLoginAt
+        } : null
+      });
+
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      
+      // Clear any potentially invalid cookies
+      if (req.cookies?.refreshToken) {
+        res.clearCookie('refreshToken', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          path: '/'
+        });
+      }
+      
+      res.status(500).json({
+        success: false,
+        message: 'Failed to refresh token'
+      });
+    }
+  });
+
+  // POST /api/v1/auth/logout - Clear httpOnly cookies
+  app.post('/api/v1/auth/logout', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const refreshTokenFromCookie = req.cookies?.refreshToken;
+      
+      // Revoke refresh token if present
+      if (refreshTokenFromCookie) {
+        await jwtService.revokeRefreshToken(refreshTokenFromCookie);
+      }
+
+      // Clear httpOnly cookie
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/'
+      });
+
+      res.json({
+        success: true,
+        message: 'Logged out successfully'
+      });
+
+    } catch (error) {
+      console.error('Error during logout:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Logout failed'
+      });
+    }
+  });
+
+  // GET /api/v1/auth/me - Get authenticated user
+  app.get('/api/v1/auth/me', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        user: {
+          id: user.id,
+          phone: user.phone,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          walletBalance: user.walletBalance,
+          fixiPoints: user.fixiPoints,
+          location: user.location,
+          profileImageUrl: user.profileImageUrl,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
+          lastLoginAt: user.lastLoginAt
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching authenticated user:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch user information'
+      });
+    }
+  });
+
+  app.post('/api/v1/auth/login', validateBody(loginSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { uid, email, firstName, lastName, profileImageUrl } = req.body;
       
@@ -256,7 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/auth/user', authMiddleware, async (req, res) => {
+  app.get('/api/v1/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user?.uid;
       if (!userId) {
@@ -276,7 +650,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WebSocket token endpoint for secure WebSocket authentication
-  app.post('/api/v1/auth/ws-token', authMiddleware, async (req, res) => {
+  app.post('/api/v1/auth/ws-token', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user?.uid;
       if (!userId) {
@@ -308,6 +682,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error generating WebSocket token:', error);
       res.status(500).json({ message: 'Failed to generate WebSocket token' });
+    }
+  });
+
+  // END OF AUTHENTICATION ROUTES - All duplicates below this will be removed
+
+  // PATCH /api/v1/users/me/email - Update user email
+  app.patch('/api/v1/users/me/email', authMiddleware, validateBody(emailUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Unauthorized' 
+        });
+      }
+
+      const { email } = req.body;
+
+      // Check if email is already used by another user
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser && existingUser.id !== userId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email address is already in use'
+        });
+      }
+
+      // Update user email
+      const updatedUser = await storage.updateUser(userId, { email });
+
+      if (!updatedUser) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'User not found' 
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Email updated successfully',
+        user: {
+          id: updatedUser.id,
+          phone: updatedUser.phone,
+          email: updatedUser.email,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          role: updatedUser.role,
+          isVerified: updatedUser.isVerified,
+          walletBalance: updatedUser.walletBalance,
+          fixiPoints: updatedUser.fixiPoints,
+          location: updatedUser.location,
+          profileImageUrl: updatedUser.profileImageUrl
+        }
+      });
+    } catch (error) {
+      console.error('Error updating email:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to update email' 
+      });
     }
   });
 

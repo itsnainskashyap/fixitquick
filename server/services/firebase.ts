@@ -21,7 +21,7 @@ export const db = {
       set: async (data: any) => ({ id }),
       get: async () => ({
         exists: true,
-        data: () => ({ id, ...data, createdAt: new Date() })
+        data: () => ({ id, createdAt: new Date() })
       }),
       update: async (data: any) => ({ id }),
       delete: async () => ({ id })

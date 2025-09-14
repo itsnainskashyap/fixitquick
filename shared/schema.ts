@@ -61,6 +61,7 @@ export const otpChallenges = pgTable("otp_challenges", {
 // User sessions for JWT refresh token management
 export const userSessions = pgTable("user_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").notNull().unique(), // SECURITY FIX: Store sessionId for proper token rotation
   userId: varchar("user_id").references(() => users.id).notNull(),
   refreshTokenHash: varchar("refresh_token_hash").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -72,6 +73,7 @@ export const userSessions = pgTable("user_sessions", {
   userIdIdx: index("session_user_id_idx").on(table.userId),
   expiresIdx: index("session_expires_idx").on(table.expiresAt),
   tokenIdx: index("session_token_idx").on(table.refreshTokenHash),
+  sessionIdIdx: index("session_session_id_idx").on(table.sessionId), // SECURITY FIX: Index for sessionId lookups
 }));
 
 // Service categories
