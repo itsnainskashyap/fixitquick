@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   type User,
   type InsertUser,
+  type UpsertUser,
   type ServiceCategory,
   type InsertServiceCategory,
   type Service,
@@ -80,6 +81,9 @@ export interface IStorage {
   getUsersByRole(role: "user" | "service_provider" | "parts_provider" | "admin"): Promise<User[]>;
   searchUsers(search: string, role?: "user" | "service_provider" | "parts_provider" | "admin"): Promise<User[]>;
   getUsersCount(): Promise<number>;
+  
+  // (IMPORTANT) these user operations are mandatory for Replit Auth.
+  upsertUser(user: UpsertUser): Promise<User>;
 
   // Service Category methods
   getServiceCategories(activeOnly?: boolean): Promise<ServiceCategory[]>;
@@ -280,6 +284,22 @@ export class PostgresStorage implements IStorage {
     }).returning();
     console.log('User created successfully:', result[0]);
     return result[0];
+  }
+
+  // (IMPORTANT) these user operations are mandatory for Replit Auth.
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          ...userData,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return user;
   }
 
   async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {

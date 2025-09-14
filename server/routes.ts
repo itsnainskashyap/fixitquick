@@ -7,6 +7,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { storage } from "./storage";
 import { authMiddleware, requireRole, type AuthenticatedRequest } from "./middleware/auth";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
@@ -214,6 +215,9 @@ function validateBody(schema: z.ZodSchema) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Auth middleware - Setup Replit Auth
+  await setupAuth(app);
+
   // Security middleware - more permissive in development
   app.use(helmet({
     contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
@@ -226,6 +230,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     credentials: true,
   }));
   // Note: Apply rate limiting selectively to specific routes, not globally
+
+  // Auth routes
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
 
   // Health check
   app.get('/api/health', (req, res) => {
