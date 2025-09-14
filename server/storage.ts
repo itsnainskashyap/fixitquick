@@ -343,11 +343,6 @@ export class PostgresStorage implements IStorage {
     return result[0].count;
   }
 
-  async getUserByPhone(phone: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
-    return result[0];
-  }
-
   // User Session methods
   async createUserSession(session: InsertUserSession): Promise<UserSession> {
     const result = await db.insert(userSessions).values(session).returning();
