@@ -29,6 +29,12 @@ import {
   type InsertOtpChallenge,
   type UserSession,
   type InsertUserSession,
+  type PaymentMethod,
+  type InsertPaymentMethod,
+  type StripeCustomer,
+  type InsertStripeCustomer,
+  type PaymentIntent,
+  type InsertPaymentIntent,
   users,
   serviceCategories,
   services,
@@ -43,6 +49,9 @@ import {
   reviews,
   otpChallenges,
   userSessions,
+  paymentMethods,
+  stripeCustomers,
+  paymentIntents,
   appSettings,
   insertUserSchema,
   insertServiceCategorySchema,
@@ -57,6 +66,9 @@ import {
   insertServiceProviderSchema,
   insertOtpChallengeSchema,
   insertUserSessionSchema,
+  insertPaymentMethodSchema,
+  insertStripeCustomerSchema,
+  insertPaymentIntentSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -257,6 +269,30 @@ export interface IStorage {
   revokeUserSessionById(id: string): Promise<void>; // Keep old method for compatibility
   revokeAllUserSessions(userId: string): Promise<void>;
   cleanupExpiredSessions(): Promise<void>;
+
+  // Payment Method operations
+  createPaymentMethod(paymentMethod: InsertPaymentMethod): Promise<PaymentMethod>;
+  getPaymentMethod(id: string): Promise<PaymentMethod | undefined>;
+  getUserPaymentMethods(userId: string, activeOnly?: boolean): Promise<PaymentMethod[]>;
+  updatePaymentMethod(id: string, data: Partial<InsertPaymentMethod>): Promise<PaymentMethod | undefined>;
+  deletePaymentMethod(id: string): Promise<void>;
+  updateUserPaymentMethodDefaults(userId: string, isDefault: boolean): Promise<void>;
+
+  // Stripe Customer operations
+  createStripeCustomer(customer: InsertStripeCustomer): Promise<StripeCustomer>;
+  getStripeCustomer(userId: string): Promise<StripeCustomer | undefined>;
+  getStripeCustomerByStripeId(stripeCustomerId: string): Promise<StripeCustomer | undefined>;
+  updateStripeCustomer(userId: string, data: Partial<InsertStripeCustomer>): Promise<StripeCustomer | undefined>;
+
+  // Payment Intent operations
+  createPaymentIntent(paymentIntent: InsertPaymentIntent): Promise<PaymentIntent>;
+  getPaymentIntent(id: string): Promise<PaymentIntent | undefined>;
+  getPaymentIntentByStripeId(stripePaymentIntentId: string): Promise<PaymentIntent | undefined>;
+  updatePaymentIntent(stripePaymentIntentId: string, data: Partial<InsertPaymentIntent>): Promise<PaymentIntent | undefined>;
+  getUserPaymentIntents(userId: string, status?: string): Promise<PaymentIntent[]>;
+
+  // Order payment operations
+  updateOrderPaymentStatus(orderId: string, status: 'pending' | 'paid' | 'failed' | 'refunded'): Promise<Order | undefined>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -2085,6 +2121,145 @@ export class PostgresStorage implements IStorage {
     } catch (error) {
       console.error("❌ Error seeding data:", error);
     }
+  }
+
+  // ========================================
+  // PAYMENT METHOD OPERATIONS
+  // ========================================
+
+  async createPaymentMethod(paymentMethod: InsertPaymentMethod): Promise<PaymentMethod> {
+    const result = await db.insert(paymentMethods).values([paymentMethod]).returning();
+    return result[0];
+  }
+
+  async getPaymentMethod(id: string): Promise<PaymentMethod | undefined> {
+    const result = await db.select().from(paymentMethods)
+      .where(eq(paymentMethods.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async getUserPaymentMethods(userId: string, activeOnly: boolean = true): Promise<PaymentMethod[]> {
+    const conditions = [eq(paymentMethods.userId, userId)];
+    
+    if (activeOnly) {
+      conditions.push(eq(paymentMethods.isActive, true));
+    }
+
+    return await db.select().from(paymentMethods)
+      .where(and(...conditions))
+      .orderBy(desc(paymentMethods.isDefault), desc(paymentMethods.lastUsedAt));
+  }
+
+  async updatePaymentMethod(id: string, data: Partial<InsertPaymentMethod>): Promise<PaymentMethod | undefined> {
+    const result = await db.update(paymentMethods)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(paymentMethods.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deletePaymentMethod(id: string): Promise<void> {
+    await db.delete(paymentMethods).where(eq(paymentMethods.id, id));
+  }
+
+  async updateUserPaymentMethodDefaults(userId: string, isDefault: boolean): Promise<void> {
+    // Set all user's payment methods to not default
+    await db.update(paymentMethods)
+      .set({ isDefault, updatedAt: new Date() })
+      .where(eq(paymentMethods.userId, userId));
+  }
+
+  // ========================================
+  // STRIPE CUSTOMER OPERATIONS
+  // ========================================
+
+  async createStripeCustomer(customer: InsertStripeCustomer): Promise<StripeCustomer> {
+    const result = await db.insert(stripeCustomers).values([customer]).returning();
+    return result[0];
+  }
+
+  async getStripeCustomer(userId: string): Promise<StripeCustomer | undefined> {
+    const result = await db.select().from(stripeCustomers)
+      .where(eq(stripeCustomers.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async getStripeCustomerByStripeId(stripeCustomerId: string): Promise<StripeCustomer | undefined> {
+    const result = await db.select().from(stripeCustomers)
+      .where(eq(stripeCustomers.stripeCustomerId, stripeCustomerId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateStripeCustomer(userId: string, data: Partial<InsertStripeCustomer>): Promise<StripeCustomer | undefined> {
+    const result = await db.update(stripeCustomers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(stripeCustomers.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  // ========================================
+  // PAYMENT INTENT OPERATIONS
+  // ========================================
+
+  async createPaymentIntent(paymentIntent: InsertPaymentIntent): Promise<PaymentIntent> {
+    const result = await db.insert(paymentIntents).values([paymentIntent]).returning();
+    return result[0];
+  }
+
+  async getPaymentIntent(id: string): Promise<PaymentIntent | undefined> {
+    const result = await db.select().from(paymentIntents)
+      .where(eq(paymentIntents.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async getPaymentIntentByStripeId(stripePaymentIntentId: string): Promise<PaymentIntent | undefined> {
+    const result = await db.select().from(paymentIntents)
+      .where(eq(paymentIntents.stripePaymentIntentId, stripePaymentIntentId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updatePaymentIntent(stripePaymentIntentId: string, data: Partial<InsertPaymentIntent>): Promise<PaymentIntent | undefined> {
+    const result = await db.update(paymentIntents)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(paymentIntents.stripePaymentIntentId, stripePaymentIntentId))
+      .returning();
+    return result[0];
+  }
+
+  async getUserPaymentIntents(userId: string, status?: string): Promise<PaymentIntent[]> {
+    const conditions = [eq(paymentIntents.userId, userId)];
+    
+    if (status) {
+      conditions.push(eq(paymentIntents.status, status));
+    }
+
+    return await db.select().from(paymentIntents)
+      .where(and(...conditions))
+      .orderBy(desc(paymentIntents.createdAt));
+  }
+
+  // ========================================
+  // ORDER PAYMENT OPERATIONS
+  // ========================================
+
+  async updateOrderPaymentStatus(orderId: string, status: 'pending' | 'paid' | 'failed' | 'refunded'): Promise<Order | undefined> {
+    const result = await db.update(orders)
+      .set({ 
+        paymentStatus: status, 
+        updatedAt: new Date(),
+        // Update order status based on payment status
+        ...(status === 'paid' && { status: 'accepted' }),
+        ...(status === 'failed' && { status: 'cancelled' }),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return result[0];
   }
 
 }

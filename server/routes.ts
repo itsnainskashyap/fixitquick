@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import express from "express";
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -10,7 +11,7 @@ import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { openRouterService } from "./services/openrouter";
-import { paymentService } from "./services/payments";
+import { stripePaymentService } from "./services/stripe";
 import { notificationService } from "./services/notifications";
 import WebSocketManager from "./services/websocket";
 import {
@@ -53,6 +54,31 @@ const otpVerifyLimiter = rateLimit({
   },
 });
 
+// Payment-specific rate limiters for security
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 50, // 50 payment attempts per hour per IP
+  message: 'Too many payment attempts. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const paymentMethodLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 payment method operations per 15 minutes
+  message: 'Too many payment method operations. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const walletLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 wallet operations per 15 minutes
+  message: 'Too many wallet operations. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Validation schemas for API routes
 const loginSchema = z.object({
   uid: z.string().min(1, 'User ID is required'),
@@ -73,6 +99,20 @@ const searchSchema = z.object({
 
 const walletTopupSchema = z.object({
   amount: z.number().min(1, 'Amount must be greater than 0').max(50000, 'Amount cannot exceed ₹50,000'),
+});
+
+const paymentMethodSchema = z.object({
+  stripePaymentMethodId: z.string().min(1, 'Payment method ID is required'),
+  nickname: z.string().optional(),
+  setAsDefault: z.boolean().optional().default(false),
+});
+
+const createPaymentIntentSchema = z.object({
+  orderId: z.string().optional(),
+  amount: z.number().min(0.5, 'Amount must be at least ₹0.50'),
+  currency: z.string().default('inr'),
+  description: z.string().optional(),
+  metadata: z.record(z.string()).optional(),
 });
 
 const iconGenerationSchema = z.object({
@@ -2143,7 +2183,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Handle refunds if payment was made
       if (order.paymentStatus === 'paid') {
-        await paymentService.processRefund(orderId, parseFloat(order.totalAmount), 'Order cancelled');
+        if (stripePaymentService.isReady()) {
+          // Try to process Stripe refund
+          try {
+            const dbPaymentIntent = await storage.getUserPaymentIntents(order.userId).then(intents => 
+              intents.find(intent => intent.orderId === orderId && intent.status === 'succeeded')
+            );
+            
+            if (dbPaymentIntent) {
+              const refundIdempotencyKey = `refund_${orderId}_${Date.now()}`;
+              await stripePaymentService.createRefund({
+                paymentIntentId: dbPaymentIntent.stripePaymentIntentId,
+                reason: 'Order cancelled',
+                idempotencyKey: refundIdempotencyKey
+              });
+            }
+          } catch (error) {
+            console.error('Stripe refund failed:', error);
+          }
+        }
         await storage.updateOrder(orderId, { paymentStatus: 'refunded' });
       }
       
@@ -2180,7 +2238,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/wallet/topup', authMiddleware, validateBody(walletTopupSchema), async (req, res) => {
+  app.post('/api/v1/wallet/topup', walletLimiter, authMiddleware, validateBody(walletTopupSchema), async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -2194,21 +2252,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Amount must be between ₹1 and ₹50,000' });
       }
 
-      const paymentIntent = await paymentService.createPaymentIntent({
-        amount: amount * 100, // Convert to paise
-        currency: 'INR',
-        metadata: {
+      // Create payment intent for wallet topup
+      if (stripePaymentService.isReady()) {
+        const idempotencyKey = `wallet_topup_${userId}_${amount}_${Date.now()}`;
+        const { paymentIntent } = await stripePaymentService.createPaymentIntent({
           userId,
-          type: 'wallet_topup',
-          amount: amount.toString(),
-        },
-      });
-      
-      res.json({
-        razorpayOrderId: paymentIntent.id,
-        amount,
-        currency: 'INR',
-      });
+          amount,
+          currency: 'inr',
+          description: 'Wallet Top-up',
+          idempotencyKey,
+          metadata: {
+            type: 'wallet_topup',
+            amount: amount.toString(),
+          },
+        });
+
+        return res.json({
+          success: true,
+          clientSecret: paymentIntent.client_secret,
+          amount,
+          currency: 'INR',
+          stripePaymentIntentId: paymentIntent.id,
+        });
+      } else {
+        // Fallback for development
+        return res.json({
+          success: false,
+          message: 'Payment service not configured - set up Stripe API keys',
+          mockMode: true,
+        });
+      }
     } catch (error) {
       console.error('Error creating topup order:', error);
       res.status(500).json({ message: 'Failed to create topup order' });
@@ -2216,7 +2289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Confirm wallet topup (mock success for development)
-  app.post('/api/v1/wallet/confirm-topup', authMiddleware, async (req, res) => {
+  app.post('/api/v1/wallet/confirm-topup', walletLimiter, authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -2266,6 +2339,348 @@ export async function registerRoutes(app: Express): Promise<Server> {
       deprecated: true,
       migrateToEndpoint: '/api/v1/orders/:orderId/pay'
     });
+  });
+
+  // ========================================
+  // PAYMENT METHODS ENDPOINTS
+  // ========================================
+
+  // Get user's payment methods
+  app.get('/api/v1/payment-methods', paymentMethodLimiter, authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.json({
+          success: true,
+          paymentMethods: [],
+          message: 'Stripe not configured - demo mode'
+        });
+      }
+
+      const { paymentMethods } = await stripePaymentService.getUserPaymentMethods(userId);
+      
+      res.json({
+        success: true,
+        paymentMethods: paymentMethods.map(pm => ({
+          id: pm.id,
+          type: pm.type,
+          nickname: pm.nickname,
+          isDefault: pm.isDefault,
+          cardBrand: pm.cardBrand,
+          cardLast4: pm.cardLast4,
+          cardExpMonth: pm.cardExpMonth,
+          cardExpYear: pm.cardExpYear,
+          upiId: pm.upiId,
+          isActive: pm.isActive,
+          lastUsedAt: pm.lastUsedAt,
+          createdAt: pm.createdAt,
+        }))
+      });
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch payment methods' 
+      });
+    }
+  });
+
+  // Save a new payment method
+  app.post('/api/v1/payment-methods', paymentMethodLimiter, authMiddleware, validateBody(paymentMethodSchema), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Payment service not available - configure Stripe API keys' 
+        });
+      }
+
+      const { stripePaymentMethodId, nickname, setAsDefault } = req.body;
+
+      const paymentMethod = await stripePaymentService.savePaymentMethod({
+        userId,
+        stripePaymentMethodId,
+        nickname,
+        setAsDefault,
+      });
+
+      res.json({
+        success: true,
+        paymentMethod: {
+          id: paymentMethod.id,
+          type: paymentMethod.type,
+          nickname: paymentMethod.nickname,
+          isDefault: paymentMethod.isDefault,
+          cardBrand: paymentMethod.cardBrand,
+          cardLast4: paymentMethod.cardLast4,
+          cardExpMonth: paymentMethod.cardExpMonth,
+          cardExpYear: paymentMethod.cardExpYear,
+          upiId: paymentMethod.upiId,
+        },
+        message: 'Payment method saved successfully'
+      });
+    } catch (error) {
+      console.error('Error saving payment method:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to save payment method' 
+      });
+    }
+  });
+
+  // Delete a payment method
+  app.delete('/api/v1/payment-methods/:id', paymentMethodLimiter, authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Payment service not available' 
+        });
+      }
+
+      const { id } = req.params;
+      await stripePaymentService.deletePaymentMethod(userId, id);
+
+      res.json({
+        success: true,
+        message: 'Payment method deleted successfully'
+      });
+    } catch (error) {
+      console.error('Error deleting payment method:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to delete payment method' 
+      });
+    }
+  });
+
+  // ========================================
+  // PAYMENT INTENTS ENDPOINTS
+  // ========================================
+
+  // Create payment intent for order
+  app.post('/api/v1/payment-intents', paymentLimiter, authMiddleware, validateBody(createPaymentIntentSchema), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Payment service not available - configure Stripe API keys' 
+        });
+      }
+
+      const { orderId, amount, currency, description, metadata } = req.body;
+
+      // Validate order exists if provided
+      if (orderId) {
+        const order = await storage.getOrder(orderId);
+        if (!order || order.userId !== userId) {
+          return res.status(404).json({ 
+            success: false, 
+            message: 'Order not found or access denied' 
+          });
+        }
+      }
+
+      const idempotencyKey = orderId ? `intent_${orderId}_${userId}_${Date.now()}` : `intent_${userId}_${Date.now()}`;
+      const { paymentIntent, dbPaymentIntent } = await stripePaymentService.createPaymentIntent({
+        userId,
+        orderId,
+        amount,
+        currency,
+        description,
+        metadata,
+        idempotencyKey,
+      });
+
+      res.json({
+        success: true,
+        paymentIntent: {
+          id: dbPaymentIntent.id,
+          clientSecret: paymentIntent.client_secret,
+          amount: dbPaymentIntent.amount,
+          currency: dbPaymentIntent.currency,
+          status: paymentIntent.status,
+        },
+        message: 'Payment intent created successfully'
+      });
+    } catch (error) {
+      console.error('Error creating payment intent:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to create payment intent' 
+      });
+    }
+  });
+
+  // Confirm payment intent
+  app.post('/api/v1/payment-intents/:id/confirm', paymentLimiter, authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Payment service not available' 
+        });
+      }
+
+      const { id } = req.params;
+      const { paymentMethodId } = req.body;
+
+      // Verify the payment intent belongs to the user
+      const dbPaymentIntent = await storage.getPaymentIntentByStripeId(id);
+      if (!dbPaymentIntent || dbPaymentIntent.userId !== userId) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Payment intent not found or access denied' 
+        });
+      }
+
+      const paymentIntent = await stripePaymentService.confirmPaymentIntent(id, paymentMethodId);
+
+      res.json({
+        success: true,
+        paymentIntent: {
+          id: paymentIntent.id,
+          status: paymentIntent.status,
+          amount: paymentIntent.amount / 100, // Convert back from cents
+          currency: paymentIntent.currency,
+        },
+        message: 'Payment intent confirmed'
+      });
+    } catch (error) {
+      console.error('Error confirming payment intent:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to confirm payment intent' 
+      });
+    }
+  });
+
+  // ========================================
+  // PAYMENT PROCESSING ENDPOINTS
+  // ========================================
+
+  // Process payment for order using Stripe
+  app.post('/api/v1/orders/:orderId/pay-stripe', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Stripe payment not available - configure API keys' 
+        });
+      }
+
+      const { orderId } = req.params;
+      const { paymentMethodId } = req.body;
+
+      // Get and validate order
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+
+      if (order.userId !== userId) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      if (order.paymentStatus === 'paid') {
+        return res.status(400).json({ success: false, message: 'Order already paid' });
+      }
+
+      // Create payment intent for the order
+      const idempotencyKey = `order_payment_${orderId}_${userId}_${Date.now()}`;
+      const { paymentIntent } = await stripePaymentService.createPaymentIntent({
+        userId,
+        orderId,
+        amount: parseFloat(order.totalAmount),
+        description: `FixitQuick Order #${orderId.slice(-8)}`,
+        idempotencyKey,
+        metadata: {
+          orderId,
+          userId,
+          type: 'order_payment',
+        },
+      });
+
+      // If payment method is provided, confirm the payment intent
+      if (paymentMethodId) {
+        const confirmedIntent = await stripePaymentService.confirmPaymentIntent(
+          paymentIntent.id, 
+          paymentMethodId
+        );
+
+        if (confirmedIntent.status === 'succeeded') {
+          // Handle successful payment
+          const result = await stripePaymentService.handlePaymentSuccess(paymentIntent.id);
+          
+          res.json({
+            success: true,
+            order: result.order,
+            paymentIntent: {
+              id: confirmedIntent.id,
+              status: confirmedIntent.status,
+            },
+            message: 'Payment successful'
+          });
+        } else {
+          res.json({
+            success: false,
+            paymentIntent: {
+              id: confirmedIntent.id,
+              status: confirmedIntent.status,
+            },
+            message: 'Payment requires additional action'
+          });
+        }
+      } else {
+        // Return payment intent for client-side confirmation
+        res.json({
+          success: true,
+          paymentIntent: {
+            id: paymentIntent.id,
+            clientSecret: paymentIntent.client_secret,
+            amount: paymentIntent.amount / 100,
+            currency: paymentIntent.currency,
+          },
+          message: 'Payment intent created'
+        });
+      }
+
+    } catch (error) {
+      console.error('Error processing Stripe payment:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Payment processing failed' 
+      });
+    }
   });
 
   // SECURE: Pay for a specific order with wallet (server validates everything)
@@ -3318,30 +3733,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Payment webhook
-  app.post('/api/v1/webhooks/payment', async (req, res) => {
+  // Stripe webhook endpoint with proper signature verification
+  app.post('/api/v1/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
-      const signature = req.headers['x-razorpay-signature'] as string;
-      const isValid = paymentService.verifyWebhookSignature(
-        JSON.stringify(req.body),
-        signature ?? ''
-      );
+      if (!stripePaymentService.isReady()) {
+        console.warn('Stripe webhook received but service not configured');
+        return res.status(503).json({ message: 'Stripe service not configured' });
+      }
+
+      const signature = req.headers['stripe-signature'] as string;
+      if (!signature) {
+        console.error('Missing Stripe signature header');
+        return res.status(400).json({ message: 'Missing signature header' });
+      }
+
+      // Use raw body for signature verification (crucial for webhook security)
+      const rawBody = req.body.toString();
+      
+      // Verify webhook signature first (security critical)
+      const isValid = stripePaymentService.verifyWebhookSignature(rawBody, signature);
       
       if (!isValid) {
+        console.error('Invalid Stripe webhook signature - potential security issue');
         return res.status(400).json({ message: 'Invalid signature' });
       }
       
-      const { event, payload } = req.body;
-      
-      if (event === 'payment.captured') {
-        await paymentService.handlePaymentSuccess(payload.payment.entity);
+      // Parse the verified event
+      let event;
+      try {
+        event = JSON.parse(rawBody);
+      } catch (parseError) {
+        console.error('Failed to parse webhook body:', parseError);
+        return res.status(400).json({ message: 'Invalid JSON payload' });
       }
       
-      res.json({ status: 'ok' });
+      // Process webhook event
+      const result = await stripePaymentService.processWebhook(event);
+      
+      if (result.success) {
+        console.log(`✅ Webhook processed: ${event.type}`);
+        res.json({ received: true, message: result.message, eventType: event.type });
+      } else {
+        console.error(`❌ Webhook processing failed: ${result.message}`);
+        res.status(400).json({ received: false, message: result.message, eventType: event.type });
+      }
     } catch (error) {
-      console.error('Webhook error:', error);
+      console.error('Stripe webhook critical error:', error);
+      res.status(500).json({ message: 'Webhook processing failed', error: error.message });
+    }
+  });
+
+  // Additional webhook endpoint for payments (with proper implementation)
+  app.post('/api/v1/payments/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+      console.log('🔄 Payment webhook received, processing with Stripe webhook handler');
+      
+      if (!stripePaymentService.isReady()) {
+        return res.status(503).json({ message: 'Payment service not configured' });
+      }
+
+      const signature = req.headers['stripe-signature'] as string;
+      if (!signature) {
+        return res.status(400).json({ message: 'Missing signature header' });
+      }
+
+      const rawBody = req.body.toString();
+      const isValid = stripePaymentService.verifyWebhookSignature(rawBody, signature);
+      
+      if (!isValid) {
+        console.error('❌ Invalid webhook signature');
+        return res.status(400).json({ message: 'Invalid signature' });
+      }
+      
+      const event = JSON.parse(rawBody);
+      const result = await stripePaymentService.processWebhook(event);
+      
+      res.json({ 
+        received: true, 
+        message: result.message, 
+        eventType: event.type,
+        endpoint: '/api/v1/payments/webhook'
+      });
+    } catch (error) {
+      console.error('Payment webhook error:', error);
       res.status(500).json({ message: 'Webhook processing failed' });
     }
+  });
+
+  // Deprecated webhook endpoint
+  app.post('/api/v1/webhooks/payment', async (req, res) => {
+    console.warn('⚠️ Deprecated webhook endpoint called - use /api/v1/webhooks/stripe or /api/v1/payments/webhook');
+    res.status(410).json({ 
+      message: 'This endpoint is deprecated. Use /api/v1/webhooks/stripe or /api/v1/payments/webhook instead.',
+      deprecated: true,
+      migrateToEndpoints: ['/api/v1/webhooks/stripe', '/api/v1/payments/webhook'],
+      recommendedEndpoint: '/api/v1/webhooks/stripe'
+    });
   });
 
   // WebSocket setup with comprehensive real-time features

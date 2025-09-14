@@ -18,6 +18,7 @@ import PartDetail from "@/pages/PartDetail";
 import SearchResults from "@/pages/SearchResults";
 import Cart from "@/pages/Cart";
 import Checkout from "@/pages/Checkout";
+import PaymentMethods from "@/pages/PaymentMethods";
 import Orders from "@/pages/Orders";
 import OrderDetail from "@/pages/OrderDetail";
 import Wallet from "@/pages/Wallet";
@@ -137,6 +138,7 @@ function Router() {
       <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
       <Route path="/orders/:orderId" component={() => <ProtectedRoute component={OrderDetail} />} />
       <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
+      <Route path="/payment-methods" component={() => <ProtectedRoute component={PaymentMethods} />} />
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
       <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
       

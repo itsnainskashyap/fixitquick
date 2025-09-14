@@ -297,6 +297,120 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// User payment methods
+export const paymentMethods = pgTable("payment_methods", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  stripePaymentMethodId: varchar("stripe_payment_method_id").notNull(),
+  type: varchar("type", { enum: ["card", "upi", "netbanking", "wallet"] }).notNull(),
+  
+  // Card details (if type is card)
+  cardBrand: varchar("card_brand"), // visa, mastercard, amex, etc.
+  cardLast4: varchar("card_last4"),
+  cardExpMonth: integer("card_exp_month"),
+  cardExpYear: integer("card_exp_year"),
+  cardCountry: varchar("card_country"),
+  
+  // UPI details (if type is upi)
+  upiId: varchar("upi_id"),
+  
+  // Bank details (if type is netbanking)
+  bankName: varchar("bank_name"),
+  
+  // Common fields
+  nickname: varchar("nickname"), // "Personal Visa", "Work Card", etc.
+  isDefault: boolean("is_default").default(false),
+  isActive: boolean("is_active").default(true),
+  
+  // Security and metadata
+  fingerprint: varchar("fingerprint"), // Stripe fingerprint for duplicate detection
+  billingAddress: jsonb("billing_address").$type<{
+    name: string;
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    postal_code: string;
+    country: string;
+  }>(),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastUsedAt: timestamp("last_used_at"),
+}, (table) => ({
+  userIdIdx: index("pm_user_id_idx").on(table.userId),
+  stripeIdIdx: index("pm_stripe_id_idx").on(table.stripePaymentMethodId),
+  typeIdx: index("pm_type_idx").on(table.type),
+  defaultIdx: index("pm_default_idx").on(table.userId, table.isDefault),
+}));
+
+// Stripe customers table for storing Stripe customer data
+export const stripeCustomers = pgTable("stripe_customers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull().unique(),
+  stripeCustomerId: varchar("stripe_customer_id").notNull().unique(),
+  
+  // Customer details synced from Stripe
+  email: varchar("email"),
+  name: varchar("name"),
+  phone: varchar("phone"),
+  
+  // Default payment method
+  defaultPaymentMethodId: varchar("default_payment_method_id"),
+  
+  // Metadata
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("sc_user_id_idx").on(table.userId),
+  stripeIdIdx: index("sc_stripe_id_idx").on(table.stripeCustomerId),
+}));
+
+// Payment intents tracking
+export const paymentIntents = pgTable("payment_intents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id").notNull().unique(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  orderId: varchar("order_id").references(() => orders.id),
+  
+  // Payment details
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: varchar("currency").default("inr").notNull(),
+  status: varchar("status", { 
+    enum: ["requires_payment_method", "requires_confirmation", "requires_action", "processing", "requires_capture", "canceled", "succeeded"]
+  }).notNull(),
+  
+  // Payment method details
+  paymentMethodId: varchar("payment_method_id").references(() => paymentMethods.id),
+  paymentMethodType: varchar("payment_method_type"),
+  
+  // Transaction details
+  description: text("description"),
+  receiptEmail: varchar("receipt_email"),
+  
+  // Stripe specific data
+  clientSecret: varchar("client_secret"),
+  cancelReason: varchar("cancel_reason"),
+  
+  // Metadata
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  confirmedAt: timestamp("confirmed_at"),
+  canceledAt: timestamp("canceled_at"),
+}, (table) => ({
+  stripeIdIdx: index("pi_stripe_id_idx").on(table.stripePaymentIntentId),
+  userIdIdx: index("pi_user_id_idx").on(table.userId),
+  orderIdIdx: index("pi_order_id_idx").on(table.orderId),
+  statusIdx: index("pi_status_idx").on(table.status),
+}));
+
 // Create insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({ id: true, createdAt: true });
@@ -311,6 +425,9 @@ export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, c
 export const insertServiceProviderSchema = createInsertSchema(serviceProviders).omit({ id: true, createdAt: true });
 export const insertOtpChallengeSchema = createInsertSchema(otpChallenges).omit({ id: true, createdAt: true });
 export const insertUserSessionSchema = createInsertSchema(userSessions).omit({ id: true, createdAt: true });
+export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertStripeCustomerSchema = createInsertSchema(stripeCustomers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPaymentIntentSchema = createInsertSchema(paymentIntents).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Export types
 export type User = typeof users.$inferSelect;
@@ -341,3 +458,9 @@ export type OtpChallenge = typeof otpChallenges.$inferSelect;
 export type InsertOtpChallenge = z.infer<typeof insertOtpChallengeSchema>;
 export type UserSession = typeof userSessions.$inferSelect;
 export type InsertUserSession = z.infer<typeof insertUserSessionSchema>;
+export type PaymentMethod = typeof paymentMethods.$inferSelect;
+export type InsertPaymentMethod = z.infer<typeof insertPaymentMethodSchema>;
+export type StripeCustomer = typeof stripeCustomers.$inferSelect;
+export type InsertStripeCustomer = z.infer<typeof insertStripeCustomerSchema>;
+export type PaymentIntent = typeof paymentIntents.$inferSelect;
+export type InsertPaymentIntent = z.infer<typeof insertPaymentIntentSchema>;

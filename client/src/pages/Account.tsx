@@ -163,9 +163,9 @@ export default function Account() {
     {
       id: 'payments',
       title: 'Payment Methods',
-      description: 'Manage your payment options',
+      description: 'Manage your payment options and saved cards',
       icon: CreditCard,
-      action: () => setLocation('/account/payments'),
+      action: () => setLocation('/payment-methods'),
     },
     {
       id: 'notifications',
