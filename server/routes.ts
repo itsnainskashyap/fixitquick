@@ -2587,7 +2587,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (stripePaymentService.isReady()) {
           // Try to process Stripe refund
           try {
-            const dbPaymentIntent = await storage.getUserPaymentIntents(order.userId).then(intents => 
+            const dbPaymentIntent = await storage.getUserPaymentIntents(order.userId || '').then(intents => 
               intents.find(intent => intent.orderId === orderId && intent.status === 'succeeded')
             );
             
@@ -2847,7 +2847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Error saving payment method:', error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || 'Failed to save payment method' 
+        message: error instanceof Error ? error.message : 'Failed to save payment method' 
       });
     }
   });
@@ -2878,7 +2878,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Error deleting payment method:', error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || 'Failed to delete payment method' 
+        message: error instanceof Error ? error.message : 'Failed to delete payment method' 
       });
     }
   });
@@ -2941,7 +2941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Error creating payment intent:', error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || 'Failed to create payment intent' 
+        message: error instanceof Error ? error.message : 'Failed to create payment intent' 
       });
     }
   });
@@ -2989,7 +2989,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Error confirming payment intent:', error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || 'Failed to confirm payment intent' 
+        message: error instanceof Error ? error.message : 'Failed to confirm payment intent' 
       });
     }
   });
@@ -3093,7 +3093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Error processing Stripe payment:', error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || 'Payment processing failed' 
+        message: error instanceof Error ? error.message : 'Payment processing failed' 
       });
     }
   });
@@ -4076,7 +4076,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Process refund
-      await paymentService.processRefund(orderId, refundAmount, finalReason);
+      // Process refund through Stripe if available
+      if (stripePaymentService.isReady()) {
+        try {
+          const dbPaymentIntent = await storage.getUserPaymentIntents(order.userId || '').then(intents => 
+            intents.find(intent => intent.orderId === orderId && intent.status === 'succeeded')
+          );
+          
+          if (dbPaymentIntent) {
+            const refundIdempotencyKey = `admin_refund_${orderId}_${Date.now()}`;
+            await stripePaymentService.createRefund({
+              paymentIntentId: dbPaymentIntent.stripePaymentIntentId,
+              amount: Math.round(refundAmount * 100), // Convert to cents
+              reason: finalReason,
+              idempotencyKey: refundIdempotencyKey
+            });
+          }
+        } catch (error) {
+          console.error('Stripe refund failed:', error);
+          // Continue with wallet refund even if Stripe refund fails
+        }
+      }
       
       // Update order status
       await storage.updateOrder(orderId, {
@@ -4217,7 +4237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       console.error('Stripe webhook critical error:', error);
-      res.status(500).json({ message: 'Webhook processing failed', error: error.message });
+      res.status(500).json({ message: 'Webhook processing failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 

@@ -88,55 +88,141 @@ export const userSessions = pgTable("user_sessions", {
   sessionIdIdx: index("session_session_id_idx").on(table.sessionId), // SECURITY FIX: Index for sessionId lookups
 }));
 
-// Service categories
+// Service categories - Enhanced for infinite hierarchy
 export const serviceCategories = pgTable("service_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  parentId: varchar("parent_id"), // nullable for backward compatibility
   name: varchar("name").notNull(),
+  slug: varchar("slug"), // nullable initially, will be backfilled
   icon: text("icon"),
   description: text("description"),
+  level: integer("level").default(0), // 0=category, 1=sub-category, 2=service-type
+  sortOrder: integer("sort_order").default(0),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  parentIdx: index("sc_parent_idx").on(table.parentId),
+  levelIdx: index("sc_level_idx").on(table.level),
+  slugIdx: index("sc_slug_idx").on(table.slug),
+}));
 
-// Sub-services within categories
+// Enhanced services with workflow steps and marketplace features
 export const services = pgTable("services", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   categoryId: varchar("category_id").references(() => serviceCategories.id),
   name: varchar("name").notNull(),
+  slug: varchar("slug"), // nullable initially, will be backfilled
   description: text("description"),
   basePrice: decimal("base_price", { precision: 10, scale: 2 }).notNull(),
   estimatedDuration: integer("estimated_duration"), // in minutes
   icon: text("icon"),
+  images: jsonb("images").$type<string[]>(),
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0.00"),
   totalBookings: integer("total_bookings").default(0),
   isActive: boolean("is_active").default(true),
+  
+  // Enhanced marketplace features - all optional initially
+  workflowSteps: jsonb("workflow_steps").$type<{
+    step: string;
+    description: string;
+    estimatedMinutes: number;
+  }[]>(),
   requirements: jsonb("requirements").$type<string[]>(),
+  skillsRequired: jsonb("skills_required").$type<string[]>(),
+  toolsRequired: jsonb("tools_required").$type<string[]>(),
+  
+  // Booking configuration - optional initially
+  allowInstantBooking: boolean("allow_instant_booking").default(true),
+  allowScheduledBooking: boolean("allow_scheduled_booking").default(true),
+  advanceBookingDays: integer("advance_booking_days").default(7),
+  
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  categoryIdx: index("services_category_idx").on(table.categoryId),
+  slugIdx: index("services_slug_idx").on(table.slug),
+  activeIdx: index("services_active_idx").on(table.isActive),
+}));
 
-// Service providers and their offered services
+// Enhanced service providers with marketplace features
 export const serviceProviders = pgTable("service_providers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id),
+  
+  // Legacy fields for backward compatibility (deprecated but kept)
   categoryId: varchar("category_id").references(() => serviceCategories.id),
+  
+  // New optional fields
+  businessName: varchar("business_name"),
+  businessType: varchar("business_type", { enum: ["individual", "company"] }).default("individual"),
+  
+  // Skills and services - optional initially
+  skills: jsonb("skills").$type<string[]>(),
+  serviceIds: jsonb("service_ids").$type<string[]>(), // Array of service IDs they offer
+  experienceYears: integer("experience_years").default(0),
+  
+  // Verification and ratings
   isVerified: boolean("is_verified").default(false),
+  verificationLevel: varchar("verification_level", { 
+    enum: ["none", "basic", "verified", "premium"] 
+  }).default("none"),
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0.00"),
   totalCompletedOrders: integer("total_completed_orders").default(0),
+  totalRatings: integer("total_ratings").default(0),
+  
+  // Availability and location - legacy field enhanced
   availability: jsonb("availability").$type<{
     [key: string]: { start: string; end: string; available: boolean }[];
   }>(),
+  
+  // New location features - optional initially
+  currentLocation: jsonb("current_location").$type<{
+    latitude: number;
+    longitude: number;
+    address: string;
+    lastUpdated: string;
+  }>(),
+  serviceRadius: integer("service_radius").default(25), // km radius
+  serviceAreas: jsonb("service_areas").$type<{
+    name: string;
+    coordinates: { lat: number; lng: number }[];
+    cities: string[];
+  }[]>(),
+  
+  // Legacy field
   serviceArea: jsonb("service_area").$type<{
     cities: string[];
     maxDistance: number;
   }>(),
-  documents: jsonb("documents").$type<{
-    aadhar: string;
-    photo: string;
-    certificates?: string[];
-  }>(),
+  
+  // Status and activity
   isOnline: boolean("is_online").default(false),
+  isAvailable: boolean("is_available").default(true),
+  lastActiveAt: timestamp("last_active_at"),
+  
+  // Documents and compliance - enhanced
+  documents: jsonb("documents").$type<{
+    aadhar?: string;
+    photo?: string;
+    certificates?: string[];
+    licenses?: string[];
+    insurance?: string;
+  }>(),
+  
+  // Performance metrics - new optional fields
+  responseTime: integer("avg_response_time").default(0), // seconds
+  completionRate: decimal("completion_rate", { precision: 5, scale: 2 }).default("0.00"),
+  onTimeRate: decimal("on_time_rate", { precision: 5, scale: 2 }).default("0.00"),
+  
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdx: index("sp_user_idx").on(table.userId),
+  categoryIdx: index("sp_category_idx").on(table.categoryId), // legacy index
+  verifiedIdx: index("sp_verified_idx").on(table.isVerified),
+  onlineIdx: index("sp_online_idx").on(table.isOnline),
+  locationIdx: index("sp_location_idx").on(table.serviceRadius),
+  ratingIdx: index("sp_rating_idx").on(table.rating),
+}));
 
 // Parts categories
 export const partsCategories = pgTable("parts_categories", {
@@ -562,9 +648,214 @@ export const paymentIntents = pgTable("payment_intents", {
 }));
 
 // Create insert schemas
+// Enhanced Service Bookings - Replaces and extends orders for services
+export const serviceBookings = pgTable("service_bookings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  serviceId: varchar("service_id").references(() => services.id).notNull(),
+  
+  // Booking type and scheduling
+  bookingType: varchar("booking_type", { enum: ["instant", "scheduled"] }).notNull(),
+  requestedAt: timestamp("requested_at").defaultNow(),
+  scheduledAt: timestamp("scheduled_at"),
+  
+  // Location details
+  serviceLocation: jsonb("service_location").$type<{
+    type: "current" | "alternate";
+    address: string;
+    latitude: number;
+    longitude: number;
+    instructions?: string;
+    landmarkDetails?: string;
+  }>().notNull(),
+  
+  // Service details
+  serviceDetails: jsonb("service_details").$type<{
+    basePrice: number;
+    estimatedDuration: number;
+    workflowSteps: string[];
+    specialRequirements?: string[];
+  }>(),
+  
+  // Customer inputs
+  notes: text("notes"),
+  attachments: jsonb("attachments").$type<string[]>(),
+  urgency: varchar("urgency", { enum: ["low", "normal", "high", "urgent"] }).default("normal"),
+  
+  // Status and workflow
+  status: varchar("status", { 
+    enum: ["pending", "provider_search", "provider_assigned", "provider_on_way", 
+           "work_in_progress", "work_completed", "payment_pending", "completed", 
+           "cancelled", "refunded"] 
+  }).default("pending"),
+  
+  // Provider assignment
+  assignedProviderId: varchar("assigned_provider_id").references(() => users.id),
+  assignedAt: timestamp("assigned_at"),
+  assignmentMethod: varchar("assignment_method", { enum: ["auto", "manual", "customer_choice"] }),
+  
+  // Pricing and payment
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  paymentMethod: varchar("payment_method", { enum: ["online", "cod", "wallet"] }),
+  paymentStatus: varchar("payment_status", { enum: ["pending", "paid", "failed", "refunded"] }).default("pending"),
+  
+  // Completion and feedback
+  completedAt: timestamp("completed_at"),
+  customerRating: integer("customer_rating"),
+  customerReview: text("customer_review"),
+  providerRating: integer("provider_rating"),
+  providerReview: text("provider_review"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdx: index("sb_user_idx").on(table.userId),
+  serviceIdx: index("sb_service_idx").on(table.serviceId),
+  providerIdx: index("sb_provider_idx").on(table.assignedProviderId),
+  statusIdx: index("sb_status_idx").on(table.status),
+  typeIdx: index("sb_type_idx").on(table.bookingType),
+  scheduledIdx: index("sb_scheduled_idx").on(table.scheduledAt),
+}));
+
+// Provider Job Requests - Race-to-accept system
+export const providerJobRequests = pgTable("provider_job_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  bookingId: varchar("booking_id").references(() => serviceBookings.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Request details
+  sentAt: timestamp("sent_at").defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  
+  // Provider response
+  status: varchar("status", { 
+    enum: ["sent", "viewed", "accepted", "declined", "expired", "cancelled"] 
+  }).default("sent"),
+  respondedAt: timestamp("responded_at"),
+  responseTime: integer("response_time"), // seconds
+  
+  // Location and distance
+  distanceKm: decimal("distance_km", { precision: 6, scale: 2 }),
+  estimatedTravelTime: integer("estimated_travel_time"), // minutes
+  
+  // Provider specifics
+  quotedPrice: decimal("quoted_price", { precision: 10, scale: 2 }),
+  estimatedArrival: timestamp("estimated_arrival"),
+  providerNotes: text("provider_notes"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  bookingIdx: index("pjr_booking_idx").on(table.bookingId),
+  providerIdx: index("pjr_provider_idx").on(table.providerId),
+  statusIdx: index("pjr_status_idx").on(table.status),
+  expiresIdx: index("pjr_expires_idx").on(table.expiresAt),
+}));
+
+// Service Workflow Tracking - Real-time status updates
+export const serviceWorkflow = pgTable("service_workflow", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  bookingId: varchar("booking_id").references(() => serviceBookings.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Workflow status
+  currentStep: varchar("current_step", {
+    enum: ["assigned", "on_the_way", "arrived", "work_started", "work_in_progress", 
+           "work_completed", "payment_collected", "completed"]
+  }).notNull(),
+  
+  // Location tracking
+  providerLocation: jsonb("provider_location").$type<{
+    latitude: number;
+    longitude: number;
+    address?: string;
+    lastUpdated: string;
+  }>(),
+  
+  // Time tracking
+  startedAt: timestamp("started_at").defaultNow(),
+  arrivedAt: timestamp("arrived_at"),
+  workStartedAt: timestamp("work_started_at"),
+  workCompletedAt: timestamp("work_completed_at"),
+  totalDuration: integer("total_duration"), // minutes
+  
+  // Work details
+  workPhotos: jsonb("work_photos").$type<{
+    before?: string[];
+    during?: string[];
+    after?: string[];
+  }>(),
+  workNotes: text("work_notes"),
+  materialsUsed: jsonb("materials_used").$type<{
+    item: string;
+    quantity: number;
+    cost?: number;
+  }[]>(),
+  
+  // Issues and delays
+  issues: jsonb("issues").$type<{
+    type: string;
+    description: string;
+    resolvedAt?: string;
+  }[]>(),
+  delays: jsonb("delays").$type<{
+    reason: string;
+    minutes: number;
+    timestamp: string;
+  }[]>(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  bookingIdx: index("sw_booking_idx").on(table.bookingId),
+  providerIdx: index("sw_provider_idx").on(table.providerId),
+  stepIdx: index("sw_step_idx").on(table.currentStep),
+  activeIdx: index("sw_active_idx").on(table.bookingId, table.currentStep),
+}));
+
+// Provider Performance Metrics - Real-time analytics
+export const providerMetrics = pgTable("provider_metrics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Time period
+  date: varchar("date").notNull(), // YYYY-MM-DD format
+  
+  // Job metrics
+  jobsReceived: integer("jobs_received").default(0),
+  jobsAccepted: integer("jobs_accepted").default(0),
+  jobsCompleted: integer("jobs_completed").default(0),
+  jobsCancelled: integer("jobs_cancelled").default(0),
+  
+  // Performance metrics
+  avgResponseTime: integer("avg_response_time").default(0), // seconds
+  avgTravelTime: integer("avg_travel_time").default(0), // minutes
+  avgJobDuration: integer("avg_job_duration").default(0), // minutes
+  onTimePercentage: decimal("on_time_percentage", { precision: 5, scale: 2 }).default("0.00"),
+  
+  // Financial metrics
+  totalEarnings: decimal("total_earnings", { precision: 10, scale: 2 }).default("0.00"),
+  avgJobValue: decimal("avg_job_value", { precision: 10, scale: 2 }).default("0.00"),
+  
+  // Quality metrics
+  avgRating: decimal("avg_rating", { precision: 3, scale: 2 }).default("0.00"),
+  totalRatings: integer("total_ratings").default(0),
+  customersServed: integer("customers_served").default(0),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("pm_provider_idx").on(table.providerId),
+  dateIdx: index("pm_date_idx").on(table.date),
+  providerDateIdx: index("pm_provider_date_idx").on(table.providerId, table.date),
+}));
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({ id: true, createdAt: true });
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
+export const insertServiceBookingSchema = createInsertSchema(serviceBookings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProviderJobRequestSchema = createInsertSchema(providerJobRequests).omit({ id: true, createdAt: true });
+export const insertServiceWorkflowSchema = createInsertSchema(serviceWorkflow).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProviderMetricsSchema = createInsertSchema(providerMetrics).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
 export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
