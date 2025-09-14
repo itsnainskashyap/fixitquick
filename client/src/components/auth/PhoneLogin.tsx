@@ -97,11 +97,21 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
         onSuccess(data.challengeId, fullPhoneNumber);
       } else {
         const errorMessage = data.message || 'Failed to send OTP';
-        toast({
-          title: "Failed to Send OTP",
-          description: errorMessage,
-          variant: "destructive",
-        });
+        
+        // Check if this is a rate limiting issue
+        if (errorMessage.includes('Too many OTP requests') || errorMessage.includes('Please wait until')) {
+          toast({
+            title: "Rate Limit Reached",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Failed to Send OTP",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        }
         onError?.(errorMessage);
       }
     },
@@ -109,19 +119,34 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
       console.error('🚨 OTP Request Error:', error);
       let errorMessage = 'Something went wrong. Please try again.';
       
-      if (error.message.includes('429')) {
-        errorMessage = 'Too many requests. Please wait before trying again.';
-      } else if (error.message.includes('400')) {
+      // Parse the actual error response for rate limiting
+      const errorText = error.message || '';
+      
+      if (errorText.includes('Too many OTP requests') || errorText.includes('429')) {
+        // Extract rate limiting message from response
+        if (errorText.includes('Please wait until')) {
+          const match = errorText.match(/Please wait until ([^"]+)/);
+          if (match) {
+            const waitTime = match[1];
+            errorMessage = `Too many OTP requests. Please wait until ${waitTime} before requesting again.`;
+          } else {
+            errorMessage = 'Too many OTP requests. Please wait before trying again.';
+          }
+        } else {
+          errorMessage = 'Too many requests. Please wait before trying again.';
+        }
+      } else if (errorText.includes('400') && !errorText.includes('Too many')) {
+        // Only show phone number error for actual validation issues
         errorMessage = 'Please enter a valid phone number.';
-      } else if (error.message.includes('500')) {
+      } else if (errorText.includes('500')) {
         errorMessage = 'Something went wrong. Please try again later.';
-      } else if (error.message.toLowerCase().includes('network')) {
+      } else if (errorText.toLowerCase().includes('network')) {
         errorMessage = 'Connection error. Please try again.';
       }
 
       toast({
-        title: "Error",
-        description: `${errorMessage} - Debug: ${error.message}`,
+        title: "Error", 
+        description: errorMessage,
         variant: "destructive",
       });
       
