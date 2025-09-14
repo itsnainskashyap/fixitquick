@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { useNotifications, useLiveMetrics, useOrderTracking, useOrderChat } from '@/hooks/useSocket';
+import { RealTimeChat } from '@/components/RealTimeChat';
 import { 
   DollarSign, 
   Star, 
@@ -974,13 +975,16 @@ export default function ServiceProvider() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="pending" data-testid="pending-tab" disabled={!isProviderVerified()}>
               Pending ({isProviderVerified() ? (pendingOrders?.length || 0) : '🔒'})
             </TabsTrigger>
             <TabsTrigger value="active" data-testid="active-tab" disabled={!isProviderVerified()}>
               Active ({isProviderVerified() ? (activeOrders?.length || 0) : '🔒'})
+            </TabsTrigger>
+            <TabsTrigger value="messages" data-testid="messages-tab" disabled={!isProviderVerified()}>
+              Messages {!isProviderVerified() && '🔒'}
             </TabsTrigger>
             <TabsTrigger value="earnings" data-testid="earnings-tab" disabled={!isProviderVerified()}>Earnings {!isProviderVerified() && '🔒'}</TabsTrigger>
           </TabsList>
@@ -1424,6 +1428,186 @@ export default function ServiceProvider() {
                 <p className="text-sm text-muted-foreground">
                   Accepted orders will appear here
                 </p>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Messages Tab */}
+          <TabsContent value="messages" className="mt-6">
+            {!isProviderVerified() ? (
+              <Card className="border-red-200 bg-red-50">
+                <CardContent className="p-8 text-center">
+                  <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
+                  <h3 className="font-semibold text-red-800 mb-2">Verification Required</h3>
+                  <p className="text-red-600 mb-4">
+                    You must complete verification before you can access customer messaging.
+                  </p>
+                  <Button 
+                    onClick={() => setLocation('/provider/pending')}
+                    data-testid="complete-verification"
+                  >
+                    Complete Verification
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
+                {/* Chat Conversations List */}
+                <div className="lg:col-span-1">
+                  <Card className="h-full">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2">
+                        <MessageCircle className="w-5 h-5" />
+                        Active Conversations
+                        {chatUnreadCount > 0 && (
+                          <Badge className="bg-red-500 text-white">{chatUnreadCount}</Badge>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0 h-[calc(100%-80px)]">
+                      <div className="h-full overflow-y-auto space-y-2 px-4">
+                        {activeOrders && activeOrders.length > 0 ? (
+                          activeOrders.map((order: ProviderOrder) => (
+                            <div
+                              key={order.id}
+                              className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-muted/50 ${
+                                activeChatOrderId === order.id 
+                                  ? 'bg-primary/10 border-primary' 
+                                  : 'bg-background'
+                              }`}
+                              onClick={() => setActiveChatOrderId(order.id)}
+                              data-testid={`chat-conversation-${order.id}`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                                  <User className="w-5 h-5 text-primary" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm text-foreground truncate">
+                                    {order.customerName}
+                                  </h4>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    Order #{order.id.slice(-8).toUpperCase()}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs ${
+                                        order.status === 'in_progress'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : order.status === 'accepted'
+                                          ? 'bg-green-100 text-green-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                      }`}
+                                    >
+                                      {order.status}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      ₹{order.totalAmount}
+                                    </span>
+                                  </div>
+                                </div>
+                                {chatUnreadCount > 0 && activeChatOrderId !== order.id && (
+                                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-12">
+                            <MessageCircle className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                            <p className="text-sm text-muted-foreground">
+                              No active orders to chat with
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Chat Interface */}
+                <div className="lg:col-span-2">
+                  <Card className="h-full">
+                    {activeChatOrderId ? (
+                      <div className="h-full flex flex-col">
+                        {/* Chat Header */}
+                        <CardHeader className="pb-3 border-b">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+                                <User className="w-4 h-4 text-primary" />
+                              </div>
+                              <div>
+                                <CardTitle className="text-base">
+                                  {activeOrders?.find(o => o.id === activeChatOrderId)?.customerName || 'Customer'}
+                                </CardTitle>
+                                <p className="text-xs text-muted-foreground">
+                                  Order #{activeChatOrderId.slice(-8).toUpperCase()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const order = activeOrders?.find(o => o.id === activeChatOrderId);
+                                  if (order?.customerPhone) {
+                                    window.open(`tel:${order.customerPhone}`);
+                                  }
+                                }}
+                                data-testid="call-customer"
+                              >
+                                <Phone className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setActiveChatOrderId(null)}
+                                data-testid="close-chat"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </CardHeader>
+
+                        {/* RealTimeChat Component */}
+                        <div className="flex-1 min-h-0">
+                          <RealTimeChat
+                            orderId={activeChatOrderId}
+                            variant="inline"
+                            showHeader={false}
+                            maxHeight="calc(100% - 20px)"
+                            allowFileUpload={true}
+                            allowVoiceMessages={true}
+                            allowLocationSharing={true}
+                            showQuickReplies={true}
+                            quickReplies={[
+                              "I'm on my way",
+                              "Please send me your location",
+                              "I'll be there in 10 minutes",
+                              "Work has been completed",
+                              "Please check and confirm",
+                              "Running a bit late, will be there soon"
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <CardContent className="h-full flex items-center justify-center">
+                        <div className="text-center">
+                          <MessageCircle className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                          <h3 className="font-medium text-foreground mb-2">Select a Conversation</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Choose an active order from the left to start chatting with the customer
+                          </p>
+                        </div>
+                      </CardContent>
+                    )}
+                  </Card>
+                </div>
               </div>
             )}
           </TabsContent>

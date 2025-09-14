@@ -5870,6 +5870,298 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Chat Upload Endpoints
+  app.post('/api/v1/upload/chat', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    const upload = multer({
+      storage: multer.memoryStorage(),
+      fileFilter: (req, file, callback) => {
+        const allowedMimeTypes = [
+          'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+          'application/pdf', 'text/plain', 'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Invalid file type: ${file.mimetype}`));
+        }
+      },
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+        files: 1,
+      },
+    }).single('file');
+
+    upload(req, res, async (uploadError) => {
+      if (uploadError) {
+        return res.status(400).json({
+          success: false,
+          message: uploadError.message || 'File upload failed',
+          error: 'UPLOAD_ERROR'
+        });
+      }
+
+      try {
+        const userId = req.user?.id;
+        const { orderId } = req.body;
+
+        if (!userId || !orderId) {
+          return res.status(400).json({
+            success: false,
+            message: 'User ID and Order ID are required'
+          });
+        }
+
+        if (!req.file) {
+          return res.status(400).json({
+            success: false,
+            message: 'No file uploaded'
+          });
+        }
+
+        // Verify user has access to this order's chat
+        const order = await storage.getOrder(orderId);
+        if (!order) {
+          return res.status(404).json({
+            success: false,
+            message: 'Order not found'
+          });
+        }
+
+        if (order.userId !== userId && order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Access denied to this order'
+          });
+        }
+
+        // Upload file to object storage if available
+        let fileUrl = '';
+        let fileName = req.file.originalname;
+        
+        if (objectStorageService.isAvailable()) {
+          try {
+            const uploadResult = await objectStorageService.uploadFile(
+              req.file,
+              `chat/${orderId}`,
+              false, // private file
+              `chat-${Date.now()}-${fileName}`
+            );
+            fileUrl = uploadResult.url;
+            fileName = uploadResult.fileName;
+          } catch (error) {
+            console.error('Object storage upload failed:', error);
+            return res.status(500).json({
+              success: false,
+              message: 'File upload failed'
+            });
+          }
+        } else {
+          // Fallback: create simple URL for development
+          fileUrl = `/api/v1/files/chat/${orderId}/${fileName}`;
+        }
+
+        res.json({
+          success: true,
+          url: fileUrl,
+          originalName: fileName,
+          size: req.file.size,
+          mimeType: req.file.mimetype
+        });
+      } catch (error) {
+        console.error('Chat file upload error:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Internal server error'
+        });
+      }
+    });
+  });
+
+  // Voice Message Upload Endpoint
+  app.post('/api/v1/upload/voice', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    const upload = multer({
+      storage: multer.memoryStorage(),
+      fileFilter: (req, file, callback) => {
+        const allowedMimeTypes = [
+          'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/webm'
+        ];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Invalid audio file type: ${file.mimetype}`));
+        }
+      },
+      limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit for voice messages
+        files: 1,
+      },
+    }).single('file');
+
+    upload(req, res, async (uploadError) => {
+      if (uploadError) {
+        return res.status(400).json({
+          success: false,
+          message: uploadError.message || 'Voice upload failed',
+          error: 'UPLOAD_ERROR'
+        });
+      }
+
+      try {
+        const userId = req.user?.id;
+        const { orderId, duration } = req.body;
+
+        if (!userId || !orderId) {
+          return res.status(400).json({
+            success: false,
+            message: 'User ID and Order ID are required'
+          });
+        }
+
+        if (!req.file) {
+          return res.status(400).json({
+            success: false,
+            message: 'No voice file uploaded'
+          });
+        }
+
+        // Verify user has access to this order's chat
+        const order = await storage.getOrder(orderId);
+        if (!order) {
+          return res.status(404).json({
+            success: false,
+            message: 'Order not found'
+          });
+        }
+
+        if (order.userId !== userId && order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Access denied to this order'
+          });
+        }
+
+        // Create voice file URL
+        const fileName = `voice-${Date.now()}.wav`;
+        let fileUrl = '';
+        
+        if (objectStorageService.isAvailable()) {
+          try {
+            const uploadResult = await objectStorageService.uploadFile(
+              req.file,
+              `chat/${orderId}/voice`,
+              false, // private file
+              fileName
+            );
+            fileUrl = uploadResult.url;
+          } catch (error) {
+            console.error('Voice file upload failed:', error);
+            return res.status(500).json({
+              success: false,
+              message: 'Voice upload failed'
+            });
+          }
+        } else {
+          // Fallback: create simple URL for development
+          fileUrl = `/api/v1/files/voice/${orderId}/${fileName}`;
+        }
+
+        res.json({
+          success: true,
+          url: fileUrl,
+          duration: parseInt(duration) || 0,
+          size: req.file.size
+        });
+      } catch (error) {
+        console.error('Voice message upload error:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Internal server error'
+        });
+      }
+    });
+  });
+
+  // Chat Participants Endpoint
+  app.get('/api/v1/chat/:orderId/participants', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      // Verify user has access to this order
+      if (order.userId !== userId && order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const participants = [];
+      
+      // Get customer info
+      if (order.userId) {
+        const customer = await storage.getUser(order.userId);
+        if (customer) {
+          participants.push({
+            id: customer.id,
+            firstName: customer.firstName || 'Customer',
+            lastName: customer.lastName || '',
+            profileImage: customer.profileImageUrl,
+            role: 'user',
+            isOnline: false, // Could be enhanced with real-time status
+            lastSeen: customer.lastActiveAt
+          });
+        }
+      }
+
+      // Get service provider info
+      if (order.serviceProviderId) {
+        const provider = await storage.getUser(order.serviceProviderId);
+        if (provider) {
+          participants.push({
+            id: provider.id,
+            firstName: provider.firstName || 'Provider',
+            lastName: provider.lastName || '',
+            profileImage: provider.profileImageUrl,
+            role: 'service_provider',
+            isOnline: false, // Could be enhanced with real-time status
+            lastSeen: provider.lastActiveAt
+          });
+        }
+      }
+
+      // Get parts provider info if applicable
+      if (order.partsProviderId) {
+        const partsProvider = await storage.getUser(order.partsProviderId);
+        if (partsProvider) {
+          participants.push({
+            id: partsProvider.id,
+            firstName: partsProvider.firstName || 'Parts Provider',
+            lastName: partsProvider.lastName || '',
+            profileImage: partsProvider.profileImageUrl,
+            role: 'parts_provider',
+            isOnline: false, // Could be enhanced with real-time status
+            lastSeen: partsProvider.lastActiveAt
+          });
+        }
+      }
+
+      // Filter out current user from participants list
+      const otherParticipants = participants.filter(p => p.id !== userId);
+
+      res.json(otherParticipants);
+    } catch (error) {
+      console.error('Error fetching chat participants:', error);
+      res.status(500).json({ message: 'Failed to fetch chat participants' });
+    }
+  });
+
   // WebSocket setup with comprehensive real-time features
   const httpServer = createServer(app);
   const wsManager = new WebSocketManager(httpServer);
