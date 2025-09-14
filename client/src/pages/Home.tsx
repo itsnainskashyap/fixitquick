@@ -114,9 +114,13 @@ export default function Home() {
     return 'Good evening';
   };
 
+  // Auth is handled by the ProtectedRoute wrapper in App.tsx
   if (!user) {
-    setLocation('/login');
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="loading-spinner" />
+      </div>
+    );
   }
 
   return (
