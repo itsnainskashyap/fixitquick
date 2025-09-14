@@ -227,6 +227,72 @@ const locationUpdateSchema = z.object({
   }),
 });
 
+// Admin validation schemas
+const adminUserUpdateSchema = z.object({
+  firstName: z.string()
+    .min(1, 'First name is required')
+    .max(50, 'First name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s'-]+$/, 'First name can only contain letters, spaces, apostrophes, and hyphens')
+    .optional(),
+  lastName: z.string()
+    .max(50, 'Last name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s'-]*$/, 'Last name can only contain letters, spaces, apostrophes, and hyphens')
+    .optional(),
+  email: z.string()
+    .email('Valid email address is required')
+    .optional(),
+  phone: z.string()
+    .regex(/^\+[1-9]\d{7,14}$/, 'Phone number must be in international format')
+    .optional(),
+  isActive: z.boolean().optional(),
+  walletBalance: z.string()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Invalid wallet balance format')
+    .optional(),
+  fixiPoints: z.number().min(0, 'FixiPoints cannot be negative').optional(),
+  profileImageUrl: z.string().url('Invalid profile image URL').optional(),
+  location: z.object({
+    address: z.string().min(1, 'Address is required'),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    city: z.string().min(1, 'City is required'),
+    pincode: z.string().optional(),
+  }).optional(),
+}).strict().refine(
+  (data) => Object.keys(data).length > 0,
+  { message: 'At least one field must be provided for update' }
+);
+
+const adminRoleUpdateSchema = z.object({
+  role: z.enum(['user', 'service_provider', 'parts_provider', 'admin'], {
+    required_error: 'Role is required',
+    invalid_type_error: 'Invalid role specified',
+  }),
+}).strict();
+
+const adminVerificationSchema = z.object({
+  status: z.enum(['approved', 'rejected'], {
+    required_error: 'Verification status is required',
+    invalid_type_error: 'Status must be either approved or rejected',
+  }),
+  notes: z.string()
+    .max(500, 'Notes cannot exceed 500 characters')
+    .optional()
+    .transform((val) => val?.trim() || undefined),
+}).strict();
+
+const adminRefundSchema = z.object({
+  amount: z.number()
+    .min(1, 'Refund amount must be greater than ₹0')
+    .max(100000, 'Refund amount cannot exceed ₹1,00,000')
+    .multipleOf(0.01, 'Amount must be in valid currency format')
+    .optional(),
+  reason: z.string()
+    .min(5, 'Refund reason must be at least 5 characters')
+    .max(200, 'Refund reason cannot exceed 200 characters')
+    .optional()
+    .transform((val) => val?.trim() || 'Admin processed refund'),
+}).strict();
+
 // Validation middleware factory
 function validateBody(schema: z.ZodSchema) {
   return (req: any, res: any, next: any) => {
@@ -292,6 +358,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+
+  // Development authentication bypass - ONLY FOR DEVELOPMENT
+  // Multiple safeguards to prevent accidental production exposure
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const allowDevAuth = process.env.ALLOW_DEV_AUTH === 'true';
+  const isDevAuthEnabled = isDevelopment && allowDevAuth;
+  
+  // CRITICAL: Fail-safe checks to prevent production exposure
+  if (process.env.NODE_ENV === 'production' && allowDevAuth) {
+    console.error('🚨 CRITICAL SECURITY ERROR: ALLOW_DEV_AUTH is enabled in production!');
+    console.error('🚨 This creates a massive security vulnerability!');
+    console.error('🚨 Immediately set ALLOW_DEV_AUTH=false in production!');
+    throw new Error('Development authentication bypass detected in production environment');
+  }
+  
+  if (isDevAuthEnabled) {
+    // Loud warning banners when dev auth is enabled
+    console.log('\n'.repeat(3));
+    console.log('🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨');
+    console.log('🚨                 DEVELOPMENT AUTH BYPASS ENABLED               🚨');
+    console.log('🚨                    MAJOR SECURITY VULNERABILITY!              🚨');
+    console.log('🚨                                                               🚨');
+    console.log('🚨  NEVER enable this in production environments!               🚨');
+    console.log('🚨  To disable: set ALLOW_DEV_AUTH=false                        🚨');
+    console.log('🚨                                                               🚨');
+    console.log('🚨  Dev endpoints enabled:                                       🚨');
+    console.log('🚨  - POST /api/dev/login/:userId                               🚨');
+    console.log('🚨  - GET /api/dev/auth/user/:userId                            🚨');
+    console.log('🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨');
+    console.log('\n'.repeat(2));
+    app.post('/api/dev/login/:userId', async (req, res) => {
+      try {
+        // Additional runtime safety check
+        if (process.env.NODE_ENV !== 'development' || process.env.ALLOW_DEV_AUTH !== 'true') {
+          console.warn('🚨 Blocked unauthorized dev auth attempt:', {
+            NODE_ENV: process.env.NODE_ENV,
+            ALLOW_DEV_AUTH: process.env.ALLOW_DEV_AUTH,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+          });
+          return res.status(403).json({ 
+            message: 'Development authentication not enabled',
+            error: 'SECURITY_VIOLATION'
+          });
+        }
+        
+        const { userId } = req.params;
+        
+        // Validate userId parameter
+        if (!userId || typeof userId !== 'string' || userId.length === 0) {
+          return res.status(400).json({ message: 'Invalid user ID provided' });
+        }
+        
+        console.log('🔧 Dev login attempt for userId:', userId, 'from IP:', req.ip);
+        
+        const user = await storage.getUser(userId);
+        
+        if (!user) {
+          return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Create a mock JWT token for development
+        const mockToken = `dev-token-${userId}-${Date.now()}`;
+        
+        res.json({ 
+          success: true, 
+          user: {
+            ...user,
+            displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
+          },
+          token: mockToken,
+          message: 'Development login successful',
+          warning: 'DEV_AUTH_BYPASS_ACTIVE'
+        });
+      } catch (error) {
+        console.error('Dev login error:', error);
+        res.status(500).json({ message: 'Development login failed' });
+      }
+    });
+
+    // Development auth/user endpoint that bypasses Replit auth
+    app.get('/api/dev/auth/user/:userId', async (req, res) => {
+      try {
+        // Additional runtime safety check
+        if (process.env.NODE_ENV !== 'development' || process.env.ALLOW_DEV_AUTH !== 'true') {
+          console.warn('🚨 Blocked unauthorized dev auth user fetch:', {
+            NODE_ENV: process.env.NODE_ENV,
+            ALLOW_DEV_AUTH: process.env.ALLOW_DEV_AUTH,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+          });
+          return res.status(403).json({ 
+            message: 'Development authentication not enabled',
+            error: 'SECURITY_VIOLATION'
+          });
+        }
+        
+        const { userId } = req.params;
+        
+        // Validate userId parameter
+        if (!userId || typeof userId !== 'string' || userId.length === 0) {
+          return res.status(400).json({ message: 'Invalid user ID provided' });
+        }
+        
+        console.log('🔧 Dev user fetch for userId:', userId, 'from IP:', req.ip);
+        
+        const user = await storage.getUser(userId);
+        
+        if (user) {
+          const userWithDisplayName = {
+            ...user,
+            displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
+          };
+          res.json(userWithDisplayName);
+        } else {
+          res.json(null);
+        }
+      } catch (error) {
+        console.error("Error fetching dev user:", error);
+        res.status(500).json({ message: "Failed to fetch user" });
+      }
+    });
+
+    console.log('🔧 Development authentication bypass ENABLED');
+    console.log('🔧 Available endpoints:');
+    console.log('🔧   POST /api/dev/login/:userId - Simulate user login');
+    console.log('🔧   GET /api/dev/auth/user/:userId - Get user data directly');
+    console.log('🔧 To disable dev auth: set ALLOW_DEV_AUTH=false');
+    console.log('\n');
+  } else if (isDevelopment && !allowDevAuth) {
+    console.log('🔒 Development authentication bypass DISABLED (ALLOW_DEV_AUTH not set)');
+    console.log('🔒 To enable dev auth in development: set ALLOW_DEV_AUTH=true');
+  }
 
   // Cart routes
   app.get('/api/v1/cart', authMiddleware, async (req, res) => {
@@ -2637,7 +2836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin routes
-  app.get('/api/v1/admin/stats', adminSessionMiddleware, async (req, res) => {
+  app.get('/api/v1/admin/stats', authMiddleware, adminSessionMiddleware, async (req, res) => {
     try {
       const [totalUsers, allOrders, serviceProviders, partsProviders] = await Promise.all([
         storage.getUsersCount(),
@@ -2666,7 +2865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/admin/users', adminSessionMiddleware, async (req, res) => {
+  app.get('/api/v1/admin/users', authMiddleware, adminSessionMiddleware, async (req, res) => {
     try {
       const { search, role } = req.query;
       
@@ -2832,39 +3031,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enhanced admin user management
-  app.put('/api/v1/admin/users/:userId', adminSessionMiddleware, async (req, res) => {
+  app.put('/api/v1/admin/users/:userId', adminSessionMiddleware, validateBody(adminUserUpdateSchema), async (req, res) => {
     try {
       const { userId } = req.params;
       const updates = req.body;
+      
+      // Validate userId parameter
+      if (!userId || typeof userId !== 'string' || userId.length === 0) {
+        return res.status(400).json({ message: 'Invalid user ID provided' });
+      }
+      
+      console.log('🔧 Admin user update:', { userId, updates, adminId: req.user?.id });
       
       const updatedUser = await storage.updateUser(userId, updates);
       if (!updatedUser) {
         return res.status(404).json({ message: 'User not found' });
       }
       
-      res.json(updatedUser);
+      res.json({
+        success: true,
+        user: updatedUser,
+        message: 'User updated successfully'
+      });
     } catch (error) {
       console.error('Error updating user:', error);
       res.status(500).json({ message: 'Failed to update user' });
     }
   });
 
-  app.put('/api/v1/admin/users/:userId/role', adminSessionMiddleware, async (req, res) => {
+  app.put('/api/v1/admin/users/:userId/role', adminSessionMiddleware, validateBody(adminRoleUpdateSchema), async (req, res) => {
     try {
       const { userId } = req.params;
       const { role } = req.body;
       
-      const validRoles = ['user', 'service_provider', 'parts_provider', 'admin'];
-      if (!validRoles.includes(role)) {
-        return res.status(400).json({ message: 'Invalid role' });
+      // Validate userId parameter
+      if (!userId || typeof userId !== 'string' || userId.length === 0) {
+        return res.status(400).json({ message: 'Invalid user ID provided' });
       }
+      
+      // Additional security check: prevent self-demotion from admin
+      const currentUserId = req.user?.id;
+      if (currentUserId === userId && role !== 'admin') {
+        return res.status(403).json({ 
+          message: 'Cannot demote yourself from admin role',
+          error: 'SELF_DEMOTION_PREVENTED'
+        });
+      }
+      
+      console.log('🔧 Admin role update:', { userId, role, adminId: currentUserId });
       
       const updatedUser = await storage.updateUserRole(userId, role);
       if (!updatedUser) {
         return res.status(404).json({ message: 'User not found' });
       }
       
-      res.json(updatedUser);
+      res.json({
+        success: true,
+        user: updatedUser,
+        message: `User role updated to ${role} successfully`
+      });
     } catch (error) {
       console.error('Error updating user role:', error);
       res.status(500).json({ message: 'Failed to update user role' });
@@ -2899,14 +3124,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/admin/verifications/:verificationId', adminSessionMiddleware, async (req, res) => {
+  app.post('/api/v1/admin/verifications/:verificationId', adminSessionMiddleware, validateBody(adminVerificationSchema), async (req, res) => {
     try {
       const { verificationId } = req.params;
       const { status, notes } = req.body;
       
-      if (!['approved', 'rejected'].includes(status)) {
-        return res.status(400).json({ message: 'Invalid verification status' });
+      // Validate verificationId parameter
+      if (!verificationId || typeof verificationId !== 'string' || verificationId.length === 0) {
+        return res.status(400).json({ message: 'Invalid verification ID provided' });
       }
+      
+      console.log('🔧 Admin verification process:', { 
+        verificationId, 
+        status, 
+        hasNotes: !!notes,
+        adminId: req.user?.id 
+      });
       
       // Find the service provider by verification ID (using provider ID)
       const provider = await storage.getServiceProvider(verificationId);
@@ -2919,18 +3152,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isVerified: status === 'approved',
       });
       
-      // Create notification for the provider
+      // Create notification for the provider with enhanced messaging
+      const notificationTitle = `Application ${status === 'approved' ? 'Approved' : 'Rejected'}`;
+      const notificationBody = status === 'approved' 
+        ? 'Congratulations! Your service provider application has been approved. You can now start accepting service requests.'
+        : `Your service provider application was not approved at this time.${notes ? ` Reason: ${notes}` : ' Please contact support for more information.'}`;
+        
       await storage.createNotification({
         userId: provider.userId ?? '',
-        title: `Verification ${status}`,
-        body: status === 'approved' 
-          ? 'Your service provider application has been approved!'
-          : `Your service provider application was rejected. ${notes || ''}`,
+        title: notificationTitle,
+        body: notificationBody,
         type: 'system',
         isRead: false,
       });
       
-      res.json({ success: true, provider: updatedProvider });
+      res.json({ 
+        success: true, 
+        provider: updatedProvider,
+        message: `Verification ${status} successfully`
+      });
     } catch (error) {
       console.error('Error processing verification:', error);
       res.status(500).json({ message: 'Failed to process verification' });
@@ -2938,10 +3178,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin refund management
-  app.post('/api/v1/admin/refund/:orderId', adminSessionMiddleware, async (req, res) => {
+  app.post('/api/v1/admin/refund/:orderId', adminSessionMiddleware, validateBody(adminRefundSchema), async (req, res) => {
     try {
       const { orderId } = req.params;
       const { amount, reason } = req.body;
+      
+      // Validate orderId parameter
+      if (!orderId || typeof orderId !== 'string' || orderId.length === 0) {
+        return res.status(400).json({ message: 'Invalid order ID provided' });
+      }
       
       const order = await storage.getOrder(orderId);
       if (!order) {
@@ -2949,11 +3194,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       if (order.paymentStatus !== 'paid') {
-        return res.status(400).json({ message: 'Order not paid, cannot refund' });
+        return res.status(400).json({ 
+          message: 'Order not paid, cannot refund',
+          currentStatus: order.paymentStatus
+        });
       }
       
+      // Calculate refund amount (use provided amount or full order amount)
+      const orderAmount = parseFloat(order.totalAmount);
+      const refundAmount = amount || orderAmount;
+      
+      // Validate refund amount doesn't exceed order total
+      if (refundAmount > orderAmount) {
+        return res.status(400).json({ 
+          message: `Refund amount ₹${refundAmount} cannot exceed order total ₹${orderAmount}`,
+          maxRefundAmount: orderAmount
+        });
+      }
+      
+      const finalReason = reason || 'Admin processed refund';
+      
+      console.log('🔧 Admin refund process:', { 
+        orderId, 
+        refundAmount, 
+        orderAmount,
+        reason: finalReason,
+        adminId: req.user?.id 
+      });
+      
       // Process refund
-      await paymentService.processRefund(orderId, amount || parseFloat(order.totalAmount), reason || 'Admin processed refund');
+      await paymentService.processRefund(orderId, refundAmount, finalReason);
       
       // Update order status
       await storage.updateOrder(orderId, {
@@ -2965,15 +3235,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.createWalletTransaction({
         userId: order.userId,
         type: 'credit',
-        amount: amount || parseFloat(order.totalAmount),
-        description: `Refund: ${reason || 'Admin processed refund'}`,
+        amount: refundAmount,
+        description: `Refund: ${finalReason}`,
         category: 'refund',
         orderId,
         status: 'completed',
       });
       
       // Update wallet balance
-      await storage.updateWalletBalance(order.userId ?? '', amount || parseFloat(order.totalAmount), 'credit');
+      await storage.updateWalletBalance(order.userId ?? '', refundAmount, 'credit');
+      
+      // Create notification for the user
+      await storage.createNotification({
+        userId: order.userId ?? '',
+        title: 'Refund Processed',
+        body: `Your refund of ₹${refundAmount} has been processed and added to your wallet. Reason: ${finalReason}`,
+        type: 'system',
+        isRead: false,
+      });
       
       res.json({ success: true, message: 'Refund processed successfully' });
     } catch (error) {

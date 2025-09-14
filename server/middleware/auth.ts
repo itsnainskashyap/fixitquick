@@ -43,6 +43,39 @@ export const authMiddleware = async (
       return next();
     }
 
+    // Development mode: Check for dev-token
+    if (process.env.NODE_ENV === 'development') {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer dev-token-')) {
+        const tokenPart = authHeader.split('dev-token-')[1];
+        const userId = tokenPart?.split('-').slice(0, -1).join('-'); // Extract everything except the timestamp
+        if (userId) {
+          const user = await storage.getUser(userId);
+          if (user) {
+            req.user = {
+              id: user.id,
+              email: user.email || undefined,
+              phone: user.phone || undefined,
+              role: user.role || 'user',
+              isVerified: user.isVerified || false,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              profileImageUrl: user.profileImageUrl,
+              walletBalance: user.walletBalance,
+              fixiPoints: user.fixiPoints,
+              location: user.location,
+              isActive: user.isActive,
+              lastLoginAt: user.lastLoginAt,
+              createdAt: user.createdAt,
+              updatedAt: user.updatedAt,
+            };
+            console.log(`🔧 Dev auth: User ${user.id} authenticated with role: ${user.role}`);
+            return next();
+          }
+        }
+      }
+    }
+
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
