@@ -380,6 +380,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       if (!verifyResult.success) {
+        console.log('🚨 OTP Verification failed:', {
+          message: verifyResult.message,
+          remainingAttempts: verifyResult.remainingAttempts,
+          isExpired: verifyResult.isExpired,
+          isLocked: verifyResult.isLocked
+        });
         return res.status(400).json({
           success: false,
           message: verifyResult.message,

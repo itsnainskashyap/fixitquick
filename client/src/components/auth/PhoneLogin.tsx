@@ -106,6 +106,7 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
       }
     },
     onError: (error: any) => {
+      console.error('🚨 OTP Request Error:', error);
       let errorMessage = 'Something went wrong. Please try again.';
       
       if (error.message.includes('429')) {
@@ -120,7 +121,7 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
 
       toast({
         title: "Error",
-        description: errorMessage,
+        description: `${errorMessage} - Debug: ${error.message}`,
         variant: "destructive",
       });
       
