@@ -1,5 +1,6 @@
 // OpenRouter API Service for DeepSeek integration
 import fetch from 'node-fetch';
+import memoize from 'memoizee';
 
 interface OpenRouterMessage {
   role: 'system' | 'user' | 'assistant';
@@ -38,6 +39,8 @@ export class OpenRouterService {
   private model = 'deepseek/deepseek-chat-v3.1:free';
   private siteUrl: string;
   private siteName: string;
+  private cache = new Map<string, { data: any; timestamp: number }>();
+  private readonly cacheTimeout = 3 * 60 * 1000; // 3 minutes cache
 
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
@@ -274,6 +277,56 @@ export class OpenRouterService {
     }
   }
 
+  // Enhanced search suggestions with caching
+  async generateSearchSuggestions(
+    query: string,
+    limit: number = 5,
+    userContext?: {
+      recentSearches?: string[];
+      location?: string;
+      preferences?: string[];
+    }
+  ): Promise<{
+    suggestions: string[];
+    cached: boolean;
+    timestamp: number;
+  }> {
+    const cacheKey = `suggestions:${query}:${limit}:${JSON.stringify(userContext) || 'no-context'}`;
+    
+    // Check cache first
+    const cached = this.getFromCache(cacheKey);
+    if (cached) {
+      return {
+        suggestions: cached.data,
+        cached: true,
+        timestamp: cached.timestamp
+      };
+    }
+
+    try {
+      const suggestions = await this.generateSmartSuggestions(query, userContext);
+      const limitedSuggestions = suggestions.slice(0, limit);
+      
+      // Cache the results
+      this.setCache(cacheKey, limitedSuggestions);
+      
+      return {
+        suggestions: limitedSuggestions,
+        cached: false,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('Error generating search suggestions:', error);
+      // Return static fallbacks
+      const fallbackSuggestions = this.getStaticFallbackSuggestions(query, limit);
+      return {
+        suggestions: fallbackSuggestions,
+        cached: false,
+        timestamp: Date.now()
+      };
+    }
+  }
+
   async generateSmartSuggestions(
     query: string,
     userContext?: {
@@ -315,13 +368,7 @@ export class OpenRouterService {
       return Array.isArray(parsed) ? parsed : parsed.suggestions || [];
     } catch (error) {
       console.error('Error generating smart suggestions:', error);
-      return [
-        `${query} near me`,
-        `${query} cost`,
-        `${query} emergency`,
-        `best ${query} service`,
-        `${query} same day`
-      ];
+      return this.getStaticFallbackSuggestions(query, 5);
     }
   }
 
@@ -381,6 +428,217 @@ export class OpenRouterService {
         seasonalTrends: ['Increased AC servicing in summer months']
       };
     }
+  }
+
+  // Cache management methods
+  private getFromCache(key: string): { data: any; timestamp: number } | null {
+    const cached = this.cache.get(key);
+    if (!cached) return null;
+    
+    // Check if cache is still valid
+    if (Date.now() - cached.timestamp > this.cacheTimeout) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return cached;
+  }
+
+  private setCache(key: string, data: any): void {
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now()
+    });
+    
+    // Clean up expired entries periodically
+    if (this.cache.size > 100) {
+      this.cleanupExpiredCache();
+    }
+  }
+
+  private cleanupExpiredCache(): void {
+    const now = Date.now();
+    const entries = Array.from(this.cache.entries());
+    for (const [key, value] of entries) {
+      if (now - value.timestamp > this.cacheTimeout) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  // Static fallback suggestions for when AI fails
+  private getStaticFallbackSuggestions(query: string, limit: number = 5): string[] {
+    const lowercaseQuery = query.toLowerCase();
+    const fallbacks: string[] = [];
+    
+    // Category-specific fallbacks
+    if (lowercaseQuery.includes('electric') || lowercaseQuery.includes('power') || lowercaseQuery.includes('light')) {
+      fallbacks.push(
+        'electrical wiring repair',
+        'ceiling fan installation',
+        'switch and outlet repair',
+        'electrical safety inspection',
+        'emergency electrical service'
+      );
+    } else if (lowercaseQuery.includes('plumb') || lowercaseQuery.includes('water') || lowercaseQuery.includes('leak')) {
+      fallbacks.push(
+        'plumbing leak repair',
+        'water heater installation',
+        'drain cleaning service',
+        'toilet and faucet repair',
+        'emergency plumbing service'
+      );
+    } else if (lowercaseQuery.includes('clean') || lowercaseQuery.includes('dust') || lowercaseQuery.includes('maid')) {
+      fallbacks.push(
+        'deep cleaning service',
+        'regular house cleaning',
+        'carpet cleaning service',
+        'bathroom and kitchen cleaning',
+        'office cleaning service'
+      );
+    } else if (lowercaseQuery.includes('repair') || lowercaseQuery.includes('fix')) {
+      fallbacks.push(
+        `${query} service near me`,
+        `professional ${query}`,
+        `${query} cost estimation`,
+        `same day ${query}`,
+        `emergency ${query}`
+      );
+    } else {
+      // Generic fallbacks
+      fallbacks.push(
+        `${query} near me`,
+        `${query} service cost`,
+        `professional ${query}`,
+        `${query} emergency service`,
+        `best ${query} providers`
+      );
+    }
+    
+    return fallbacks.slice(0, limit);
+  }
+
+  // Enhanced typeahead suggestions specifically for search bars
+  async generateTypeaheadSuggestions(
+    partialQuery: string,
+    maxSuggestions: number = 8
+  ): Promise<{
+    suggestions: Array<{
+      text: string;
+      category?: string;
+      confidence: number;
+    }>;
+    cached: boolean;
+  }> {
+    if (!partialQuery || partialQuery.length < 2) {
+      return {
+        suggestions: this.getPopularSearchSuggestions().slice(0, maxSuggestions),
+        cached: false
+      };
+    }
+
+    const cacheKey = `typeahead:${partialQuery}:${maxSuggestions}`;
+    const cached = this.getFromCache(cacheKey);
+    
+    if (cached) {
+      return {
+        suggestions: cached.data,
+        cached: true
+      };
+    }
+
+    try {
+      // Generate AI-powered suggestions
+      const smartSuggestions = await this.generateSmartSuggestions(partialQuery);
+      
+      const suggestions = smartSuggestions.map((text, index) => ({
+        text,
+        confidence: Math.max(0.9 - (index * 0.1), 0.3),
+        category: this.detectCategory(text)
+      })).slice(0, maxSuggestions);
+
+      this.setCache(cacheKey, suggestions);
+      
+      return {
+        suggestions,
+        cached: false
+      };
+    } catch (error) {
+      console.error('Error generating typeahead suggestions:', error);
+      
+      // Return static fallbacks with categories
+      const fallbackTexts = this.getStaticFallbackSuggestions(partialQuery, maxSuggestions);
+      const suggestions = fallbackTexts.map((text, index) => ({
+        text,
+        confidence: 0.5 - (index * 0.05),
+        category: this.detectCategory(text)
+      }));
+      
+      return {
+        suggestions,
+        cached: false
+      };
+    }
+  }
+
+  private getPopularSearchSuggestions(): Array<{
+    text: string;
+    category?: string;
+    confidence: number;
+  }> {
+    return [
+      { text: 'electrical repair service', category: 'electrician', confidence: 0.9 },
+      { text: 'plumbing leak repair', category: 'plumber', confidence: 0.85 },
+      { text: 'house cleaning service', category: 'cleaner', confidence: 0.8 },
+      { text: 'ceiling fan installation', category: 'electrician', confidence: 0.75 },
+      { text: 'water heater repair', category: 'plumber', confidence: 0.7 },
+      { text: 'deep cleaning service', category: 'cleaner', confidence: 0.65 },
+      { text: 'pest control service', category: 'pest_control', confidence: 0.6 },
+      { text: 'carpentry work', category: 'carpentry', confidence: 0.55 }
+    ];
+  }
+
+  private detectCategory(text: string): string | undefined {
+    const lowercaseText = text.toLowerCase();
+    
+    if (lowercaseText.includes('electric') || lowercaseText.includes('power') || lowercaseText.includes('light') || lowercaseText.includes('fan') || lowercaseText.includes('wiring')) {
+      return 'electrician';
+    } else if (lowercaseText.includes('plumb') || lowercaseText.includes('water') || lowercaseText.includes('leak') || lowercaseText.includes('drain') || lowercaseText.includes('toilet')) {
+      return 'plumber';
+    } else if (lowercaseText.includes('clean') || lowercaseText.includes('dust') || lowercaseText.includes('maid') || lowercaseText.includes('housekeep')) {
+      return 'cleaner';
+    } else if (lowercaseText.includes('laundry') || lowercaseText.includes('wash') || lowercaseText.includes('iron') || lowercaseText.includes('dry clean')) {
+      return 'laundry';
+    } else if (lowercaseText.includes('wood') || lowercaseText.includes('carpenter') || lowercaseText.includes('furniture') || lowercaseText.includes('door') || lowercaseText.includes('window')) {
+      return 'carpentry';
+    } else if (lowercaseText.includes('pest') || lowercaseText.includes('insect') || lowercaseText.includes('cockroach') || lowercaseText.includes('termite')) {
+      return 'pest_control';
+    }
+    
+    return undefined;
+  }
+
+  // Cache statistics for monitoring
+  getCacheStats(): {
+    size: number;
+    hitRate: number;
+    maxAge: number;
+  } {
+    const now = Date.now();
+    let oldestEntry = now;
+    
+    const values = Array.from(this.cache.values());
+    for (const entry of values) {
+      if (entry.timestamp < oldestEntry) {
+        oldestEntry = entry.timestamp;
+      }
+    }
+    
+    return {
+      size: this.cache.size,
+      hitRate: 0, // Would need to track hits/misses to calculate
+      maxAge: now - oldestEntry
+    };
   }
 }
 

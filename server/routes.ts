@@ -9,6 +9,7 @@ import { storage } from "./storage";
 import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type AuthenticatedRequest } from "./middleware/auth";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
+import { openRouterService } from "./services/openrouter";
 import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
 import WebSocketManager from "./services/websocket";
@@ -127,6 +128,22 @@ const searchAnalyticsSchema = z.object({
   category: z.string().optional(),
   clicked: z.boolean().optional(),
   duration: z.number().optional(),
+});
+
+// Enhanced AI validation schemas
+const typeaheadSchema = z.object({
+  query: z.string().min(0, 'Query can be empty for initial suggestions').max(100, 'Query too long'),
+  limit: z.number().min(1).max(20).optional(),
+});
+
+const searchSuggestionsSchema = z.object({
+  query: z.string().min(1, 'Search query is required').max(100, 'Query too long'),
+  limit: z.number().min(1).max(10).optional(),
+  userContext: z.object({
+    recentSearches: z.array(z.string()).optional(),
+    location: z.string().optional(),
+    preferences: z.array(z.string()).optional(),
+  }).optional(),
 });
 
 // Authentication validation schemas
@@ -1178,6 +1195,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error getting search history:', error);
       res.status(500).json({ message: 'Failed to get search history' });
+    }
+  });
+
+  // Enhanced typeahead suggestions with AI and caching
+  app.get('/api/v1/ai/typeahead', async (req, res) => {
+    try {
+      const query = req.query.query as string || '';
+      const limit = parseInt(req.query.limit as string) || 8;
+
+      // Validate parameters
+      const validation = typeaheadSchema.safeParse({ query, limit });
+      if (!validation.success) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid parameters',
+          errors: validation.error.errors
+        });
+      }
+
+      console.log(`🔍 Typeahead request: "${query}" (limit: ${limit})`);
+
+      const result = await openRouterService.generateTypeaheadSuggestions(query, limit);
+
+      res.json({
+        success: true,
+        query,
+        suggestions: result.suggestions,
+        cached: result.cached,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error in typeahead endpoint:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Typeahead service temporarily unavailable'
+      });
+    }
+  });
+
+  // Enhanced search suggestions with contextual AI (replaces the simpler version)
+  app.post('/api/v1/ai/enhanced-search-suggestions', validateBody(searchSuggestionsSchema), async (req, res) => {
+    try {
+      const { query, limit = 5, userContext } = req.body;
+
+      console.log(`🎯 Enhanced search suggestions request: "${query}" with context:`, userContext);
+
+      const result = await openRouterService.generateSearchSuggestions(query, limit, userContext);
+
+      res.json({
+        success: true,
+        query,
+        suggestions: result.suggestions,
+        cached: result.cached,
+        timestamp: result.timestamp,
+      });
+    } catch (error) {
+      console.error('Error in enhanced search suggestions endpoint:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Enhanced search suggestions temporarily unavailable'
+      });
+    }
+  });
+
+  // AI cache statistics for monitoring
+  app.get('/api/v1/ai/cache-stats', requireRole(['admin']), async (req, res) => {
+    try {
+      const stats = openRouterService.getCacheStats();
+
+      res.json({
+        success: true,
+        cache: {
+          ...stats,
+          cacheTimeout: '3 minutes',
+          provider: 'OpenRouter + DeepSeek',
+          model: 'deepseek/deepseek-chat-v3.1:free'
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error getting cache stats:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get cache statistics'
+      });
     }
   });
 
