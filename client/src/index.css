@@ -111,9 +111,6 @@
     @apply text-primary;
   }
   
-  .purple-glow {
-    box-shadow: 0 0 20px hsl(262, 83%, 58%, 0.3);
-  }
   
   .fade-in {
     animation: fadeIn 0.3s ease-in-out;

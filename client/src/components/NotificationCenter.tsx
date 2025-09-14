@@ -163,14 +163,11 @@ export function NotificationCenter({ className = '', compact = false }: Notifica
             )}
             {unreadCount > 0 && (
               <Badge 
-                className="absolute -top-1 -right-1 px-1 min-w-[18px] h-4 text-xs bg-red-500 border-0"
+                className="absolute -top-1 -right-1 px-1 min-w-[18px] h-4 text-xs bg-primary text-primary-foreground border-0"
                 data-testid="notification-badge"
               >
                 {unreadCount > 99 ? '99+' : unreadCount}
               </Badge>
-            )}
-            {!isConnected && (
-              <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
             )}
           </Button>
         </PopoverTrigger>

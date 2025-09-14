@@ -275,9 +275,9 @@ export function useNotifications() {
 
   // Load notifications from API
   const { data: notificationHistory } = useQuery({
-    queryKey: ['/api/v1/notifications', user?.uid],
+    queryKey: ['/api/v1/notifications', user?.id],
     queryFn: () => fetch('/api/v1/notifications').then(res => res.json()),
-    enabled: !!user?.uid,
+    enabled: !!user?.id,
   });
 
   useEffect(() => {

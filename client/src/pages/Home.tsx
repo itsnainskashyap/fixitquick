@@ -142,7 +142,7 @@ export default function Home() {
           className="mb-6"
         >
           <h1 className="text-2xl font-bold text-foreground mb-2">
-            {getUserGreeting()}, {user.displayName?.split(' ')[0] || 'there'}! 👋
+            {getUserGreeting()}, {user.firstName || 'there'}! 👋
           </h1>
           <p className="text-muted-foreground">What can we fix for you today?</p>
         </motion.div>

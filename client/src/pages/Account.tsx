@@ -224,11 +224,11 @@ export default function Account() {
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
                 <Avatar className="w-20 h-20 border-4 border-background shadow-lg">
-                  <AvatarImage src={user.photoURL || user.profileImageUrl || ''} alt={user.displayName || ''} />
+                  <AvatarImage src={user.profileImageUrl || ''} alt={`${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'} />
                   <AvatarFallback className="text-lg font-semibold">
                     {user.firstName && user.lastName 
                       ? `${user.firstName[0]}${user.lastName[0]}` 
-                      : user.displayName?.split(' ').map(n => n[0]).join('') || 'U'}
+                      : user.firstName?.[0] || 'U'}
                   </AvatarFallback>
                 </Avatar>
                 
@@ -236,7 +236,7 @@ export default function Account() {
                   <h1 className="text-2xl font-bold text-foreground mb-1">
                     {user.firstName && user.lastName 
                       ? `${user.firstName} ${user.lastName}` 
-                      : user.displayName || 'User'}
+                      : user.firstName || 'User'}
                   </h1>
                   
                   {/* Prominent Phone Display */}
@@ -260,7 +260,7 @@ export default function Account() {
                     <div className="flex items-center space-x-2 mt-1">
                       <MapPin className="w-4 h-4 text-muted-foreground" />
                       <span className="text-sm text-muted-foreground">
-                        {user.location.city}{user.location.area ? `, ${user.location.area}` : ''}
+                        {user.location.city}
                       </span>
                     </div>
                   )}
