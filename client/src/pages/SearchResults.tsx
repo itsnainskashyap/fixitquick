@@ -145,7 +145,8 @@ export default function SearchResults() {
     refetch
   } = useInfiniteQuery({
     queryKey: ['ai-search', searchQuery, searchFilters],
-    queryFn: async ({ pageParam = 0 }) => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam = 0 }: { pageParam: number }) => {
       if (!searchQuery.trim()) return { results: { services: [], parts: [], totalResults: 0 }, hasMore: false };
 
       const response = await fetch('/api/v1/ai/search', {
@@ -177,7 +178,7 @@ export default function SearchResults() {
         hasMore: data.results.totalResults > (pageParam + 1) * 20
       };
     },
-    getNextPageParam: (lastPage, allPages) => {
+    getNextPageParam: (lastPage: any, allPages: any[]) => {
       return lastPage.hasMore ? allPages.length : undefined;
     },
     enabled: !!searchQuery.trim()
@@ -214,12 +215,7 @@ export default function SearchResults() {
     }
   });
 
-  // Initialize search from URL params
-  useEffect(() => {
-    if (params?.query) {
-      setSearchQuery(decodeURIComponent(params.query));
-    }
-  }, [params?.query]);
+  // URL params are now handled by the initial state and the useEffect for location changes
 
   // Set up AI insights when search results change
   useEffect(() => {
@@ -737,7 +733,7 @@ export default function SearchResults() {
                 <p className="text-muted-foreground mb-4">
                   We couldn't find anything matching "{searchQuery}". Try adjusting your search or filters.
                 </p>
-                {aiInsights?.suggestions.length > 0 && (
+                {aiInsights?.suggestions && aiInsights.suggestions.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Try these suggestions:</p>
                     <div className="flex flex-wrap gap-2 justify-center">
