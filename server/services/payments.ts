@@ -1,5 +1,9 @@
 // Mock Payment Service - stub for development without API keys
-console.log('Using Payment service stub - no real payment gateway connection');
+if (process.env.NODE_ENV === 'production') {
+  console.warn('🚨 PRODUCTION WARNING: Using Payment service stub instead of real payment gateway. Configure RAZORPAY/STRIPE credentials for production!');
+} else {
+  console.log('🔧 Development mode: Using Payment service stub - no real payment gateway connection');
+}
 
 interface PaymentIntent {
   amount: number;
@@ -18,7 +22,11 @@ interface PaymentWebhook {
 
 class PaymentService {
   constructor() {
-    console.log('Mock Payment Service initialized');
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('🚨 Mock Payment Service initialized in PRODUCTION - payments will not work!');
+    } else {
+      console.log('🔧 Mock Payment Service initialized for development');
+    }
   }
 
   async createPaymentIntent(paymentData: PaymentIntent) {

@@ -356,8 +356,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - Setup Replit Auth
   await setupAuth(app);
   
-  // Initialize seed data for demo
-  await storage.seedData();
+  // Initialize essential data for production (categories and settings only)
+  if (process.env.NODE_ENV !== 'production') {
+    console.log("🌱 Development mode: Initializing seed data...");
+    await storage.seedData();
+  } else {
+    console.log("🚀 Production mode: Initializing essential categories only...");
+    try {
+      await storage.seedData(); // Creates only categories and essential settings
+    } catch (error) {
+      console.error("❌ Failed to initialize production categories:", error);
+    }
+  }
 
   // Security middleware - more permissive in development
   app.use(helmet({

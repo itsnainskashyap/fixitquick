@@ -1,5 +1,9 @@
 // Mock Firebase Admin SDK - stub for development without API keys
-console.log('Using Firebase stub - no real Firebase connection');
+if (process.env.NODE_ENV === 'production') {
+  console.warn('🚨 PRODUCTION WARNING: Using Firebase stub instead of real Firebase connection. Configure FIREBASE_SERVICE_ACCOUNT for production!');
+} else {
+  console.log('🔧 Development mode: Using Firebase stub - no real Firebase connection');
+}
 
 interface MockDocSnapshot {
   exists: boolean;

@@ -17,8 +17,10 @@ import { Sparkles, TrendingUp, Clock, Star } from 'lucide-react';
 interface ServiceCategory {
   id: string;
   name: string;
+  description: string;
   icon: string;
-  startingPrice: number;
+  isActive: boolean;
+  createdAt: string;
 }
 
 interface SuggestedService {
@@ -40,20 +42,18 @@ interface RecentOrder {
   icon: string;
 }
 
-const serviceCategories: ServiceCategory[] = [
-  { id: '1', name: 'Electrician', icon: '⚡', startingPrice: 60 },
-  { id: '2', name: 'Plumber', icon: '🔧', startingPrice: 80 },
-  { id: '3', name: 'Cleaner', icon: '🧽', startingPrice: 150 },
-  { id: '4', name: 'Laundry', icon: '👔', startingPrice: 40 },
-  { id: '5', name: 'Carpentry', icon: '🔨', startingPrice: 120 },
-  { id: '6', name: 'Pest Control', icon: '🐛', startingPrice: 300 },
-];
+// Fetch service categories dynamically from backend
 
 export default function Home() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
+
+  // Fetch service categories from backend
+  const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
+    queryKey: ['/api/v1/services/categories'],
+  });
 
   // Fetch suggested services
   const { data: suggestedServices = [], isLoading: loadingSuggestions } = useQuery<SuggestedService[]>({
@@ -200,25 +200,44 @@ export default function Home() {
             </Button>
           </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            {serviceCategories.map((category, index) => (
-              <motion.div
-                key={category.id}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: index * 0.1 }}
-                onClick={() => handleCategoryClick(category.id)}
-                className="service-card"
-                data-testid={`category-${category.id}`}
+          {serviceCategories.length > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              {serviceCategories.map((category, index) => (
+                <motion.div
+                  key={category.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: index * 0.1 }}
+                  onClick={() => handleCategoryClick(category.id)}
+                  className="service-card"
+                  data-testid={`category-${category.id}`}
+                >
+                  <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
+                    <span className="text-2xl">{category.icon || '🔧'}</span>
+                  </div>
+                  <h3 className="font-medium text-sm text-foreground">{category.name}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{category.description || 'Professional service'}</p>
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12" data-testid="empty-services-state">
+              <div className="w-16 h-16 bg-muted/20 rounded-full mx-auto mb-4 flex items-center justify-center">
+                <span className="text-2xl">🔧</span>
+              </div>
+              <h3 className="font-medium text-foreground mb-2">No Services Available</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                We're setting up our services. Please check back soon!
+              </p>
+              <Button
+                onClick={() => setLocation('/services')}
+                variant="outline"
+                data-testid="browse-services-button"
               >
-                <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
-                  <span className="text-2xl">{category.icon}</span>
-                </div>
-                <h3 className="font-medium text-sm text-foreground">{category.name}</h3>
-                <p className="text-xs text-muted-foreground mt-1">Starting ₹{category.startingPrice}</p>
-              </motion.div>
-            ))}
-          </div>
+                Browse Services
+              </Button>
+            </div>
+          )}
         </motion.div>
 
         {/* AI Suggested Services */}
@@ -292,25 +311,25 @@ export default function Home() {
         </motion.div>
 
         {/* Recent Orders */}
-        {recentOrders.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            className="mb-6"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-foreground">Recent Orders</h2>
-              <Button
-                variant="ghost"
-                onClick={() => setLocation('/orders')}
-                className="text-primary text-sm font-medium"
-                data-testid="view-all-orders"
-              >
-                View All
-              </Button>
-            </div>
-            
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="mb-6"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-foreground">Recent Orders</h2>
+            <Button
+              variant="ghost"
+              onClick={() => setLocation('/orders')}
+              className="text-primary text-sm font-medium"
+              data-testid="view-all-orders"
+            >
+              View All
+            </Button>
+          </div>
+          
+          {recentOrders.length > 0 ? (
             <div className="space-y-3">
               {recentOrders.slice(0, 2).map((order, index) => (
                 <motion.div
@@ -363,8 +382,25 @@ export default function Home() {
                 </motion.div>
               ))}
             </div>
-          </motion.div>
-        )}
+          ) : (
+            <div className="text-center py-8" data-testid="empty-orders-state">
+              <div className="w-12 h-12 bg-muted/20 rounded-full mx-auto mb-3 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <h3 className="font-medium text-foreground mb-1">No Recent Orders</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Book your first service to see your order history here
+              </p>
+              <Button
+                onClick={() => setLocation('/services')}
+                size="sm"
+                data-testid="book-first-service-button"
+              >
+                Book a Service
+              </Button>
+            </div>
+          )}
+        </motion.div>
       </main>
 
       <CartSidebar

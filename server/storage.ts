@@ -2105,132 +2105,65 @@ export class PostgresStorage implements IStorage {
       .where(lte(otpChallenges.expiresAt, new Date()));
   }
 
-  // Seed data for development/demo
+  // Seed data for production - creates essential categories only
   async seedData(): Promise<void> {
     try {
       // Check if we already have data
       const existingCategories = await this.getServiceCategories();
       if (existingCategories.length > 0) {
+        console.log("✅ Categories already exist, skipping seed");
         return; // Already seeded
       }
 
-      // Add service categories
-      const homeCategory = await this.createServiceCategory({
+      console.log("🌱 Creating essential production seed data...");
+
+      // Add essential service categories for production
+      await this.createServiceCategory({
         name: "Home Services",
-        description: "Professional home repair and maintenance services",
+        description: "Home repair and maintenance services",
         icon: "🏠",
         isActive: true
       });
 
-      const techCategory = await this.createServiceCategory({
+      await this.createServiceCategory({
         name: "Technology",
         description: "Device repairs and tech support",
         icon: "📱",
         isActive: true
       });
 
-      const autoCategory = await this.createServiceCategory({
+      await this.createServiceCategory({
         name: "Automotive",
         description: "Vehicle maintenance and repair services",
         icon: "🚗",
         isActive: true
       });
 
-      // Add services
-      await this.createService({
-        name: "AC Repair & Service",
-        description: "Professional air conditioning repair and maintenance services",
-        basePrice: "299",
-        categoryId: homeCategory.id,
-        isActive: true,
-        icon: "❄️",
-        rating: "4.8",
-        totalBookings: 1247,
-        features: ["Same day service", "1 year warranty", "Expert technicians"]
+      await this.createServiceCategory({
+        name: "Beauty & Wellness",
+        description: "Beauty and wellness services",
+        icon: "💅",
+        isActive: true
       });
 
-      await this.createService({
-        name: "Phone Screen Replacement",
-        description: "Quick and reliable smartphone screen repair",
-        basePrice: "899",
-        categoryId: techCategory.id,
-        isActive: true,
-        icon: "📱",
-        rating: "4.9",
-        totalBookings: 892,
-        features: ["30 min repair", "Original parts", "6 month warranty"]
+      await this.createServiceCategory({
+        name: "Cleaning Services",
+        description: "Professional cleaning services",
+        icon: "🧹",
+        isActive: true
       });
 
-      await this.createService({
-        name: "Plumbing Services",
-        description: "Emergency and routine plumbing solutions",
-        basePrice: "199",
-        categoryId: homeCategory.id,
-        isActive: true,
-        icon: "🔧",
-        rating: "4.7",
-        totalBookings: 654,
-        features: ["24/7 emergency", "Licensed plumbers", "Fixed pricing"]
-      });
+      // Create essential app settings for production
+      await this.setSetting("maintenance_mode", false, "Application maintenance status");
+      await this.setSetting("app_version", "1.0.0", "Current application version");
+      await this.setSetting("min_order_amount", 99, "Minimum order amount in INR");
+      await this.setSetting("service_fee_percentage", 2.5, "Service fee percentage");
+      await this.setSetting("delivery_radius_km", 25, "Service delivery radius in kilometers");
 
-      await this.createService({
-        name: "Car Battery Replacement",
-        description: "Professional car battery installation service",
-        basePrice: "2499",
-        categoryId: autoCategory.id,
-        isActive: true,
-        icon: "🔋",
-        rating: "4.6",
-        totalBookings: 423,
-        features: ["At your location", "Brand warranty", "Installation included"]
-      });
-
-      // Add parts categories - Check if any exist first
-      const existingPartsCategories = await this.getPartsCategories();
-      let techPartsId: string;
-      let homePartsId: string;
-      
-      if (existingPartsCategories.length === 0) {
-        console.log("Creating parts categories...");
-        // Parts categories don't exist in the schema, so we'll use service category IDs for demo
-        // This is a temporary solution - in a real app you'd create proper parts categories
-        techPartsId = techCategory.id;
-        homePartsId = homeCategory.id;
-      } else {
-        // If parts categories exist, try to find suitable ones
-        const techParts = existingPartsCategories.find(c => c.name.includes("Tech") || c.name.includes("Electronics"));
-        const homeParts = existingPartsCategories.find(c => c.name.includes("Home") || c.name.includes("Appliance"));
-        
-        techPartsId = techParts?.id || techCategory.id;
-        homePartsId = homeParts?.id || homeCategory.id;
-      }
-
-      // Add parts
-      await this.createPart({
-        name: "iPhone 14 Screen",
-        description: "Original quality replacement screen for iPhone 14",
-        price: "2999",
-        categoryId: techPartsId,
-        providerId: null,
-        isActive: true,
-        stock: 25,
-        images: []
-      });
-
-      await this.createPart({
-        name: "AC Air Filter",
-        description: "High-efficiency air filter for split ACs",
-        price: "299",
-        categoryId: homePartsId,
-        providerId: null,
-        isActive: true,
-        stock: 150,
-        images: []
-      });
-
-      console.log("✅ Seed data created successfully");
+      console.log("✅ Production seed data created successfully - ready for service providers to add their services");
     } catch (error) {
-      console.error("❌ Error seeding data:", error);
+      console.error("❌ Error seeding production data:", error);
+      throw error;
     }
   }
 
