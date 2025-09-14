@@ -18,6 +18,8 @@ import {
   insertUserSchema,
   insertOrderSchema,
   insertPartSchema,
+  insertUserAddressSchema,
+  insertUserNotificationPreferencesSchema,
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -1066,6 +1068,389 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to complete profile. Please try again.'
+      });
+    }
+  });
+
+  // ========================================
+  // COMPREHENSIVE PROFILE MANAGEMENT ENDPOINTS
+  // ========================================
+
+  // Profile update validation schema
+  const profileUpdateSchema = z.object({
+    firstName: z.string()
+      .min(1, 'First name is required')
+      .max(50, 'First name must be less than 50 characters')
+      .regex(/^[a-zA-Z\s]+$/, 'First name can only contain letters and spaces'),
+    lastName: z.string()
+      .min(1, 'Last name is required')
+      .max(50, 'Last name must be less than 50 characters')
+      .regex(/^[a-zA-Z\s]+$/, 'Last name can only contain letters and spaces'),
+    email: z.string()
+      .email('Please enter a valid email address')
+      .min(1, 'Email address is required'),
+  });
+
+  // PATCH /api/v1/users/me/profile - Update user profile
+  app.patch('/api/v1/users/me/profile', authMiddleware, validateBody(profileUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const { firstName, lastName, email } = req.body;
+
+      // Check if email is already used by another user
+      if (email) {
+        const existingUser = await storage.getUserByEmail(email);
+        if (existingUser && existingUser.id !== userId) {
+          return res.status(400).json({
+            success: false,
+            message: 'Email address is already in use'
+          });
+        }
+      }
+
+      // Update user profile
+      const updatedUser = await storage.updateUser(userId, {
+        firstName: firstName?.trim(),
+        lastName: lastName?.trim(),
+        email: email?.trim()
+      });
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Profile updated successfully',
+        user: {
+          id: updatedUser.id,
+          phone: updatedUser.phone,
+          email: updatedUser.email,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          role: updatedUser.role,
+          isVerified: updatedUser.isVerified,
+          walletBalance: updatedUser.walletBalance,
+          fixiPoints: updatedUser.fixiPoints,
+          location: updatedUser.location,
+          profileImageUrl: updatedUser.profileImageUrl,
+          isActive: updatedUser.isActive,
+          createdAt: updatedUser.createdAt,
+          lastLoginAt: updatedUser.lastLoginAt
+        }
+      });
+
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update profile. Please try again.'
+      });
+    }
+  });
+
+  // POST /api/v1/users/me/avatar - Upload user avatar
+  app.post('/api/v1/users/me/avatar', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Return 501 Not Implemented since avatar upload requires object storage integration
+      return res.status(501).json({
+        success: false,
+        message: 'Avatar upload functionality is not yet implemented',
+        note: 'This feature requires object storage integration and will be available soon'
+      });
+
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to upload avatar. Please try again.'
+      });
+    }
+  });
+
+  // ========================================
+  // USER ADDRESS MANAGEMENT ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/users/me/addresses - Get user addresses
+  app.get('/api/v1/users/me/addresses', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const addresses = await storage.getUserAddresses(userId);
+      
+      res.json({
+        success: true,
+        addresses
+      });
+
+    } catch (error) {
+      console.error('Error fetching addresses:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch addresses'
+      });
+    }
+  });
+
+  // POST /api/v1/users/me/addresses - Create new address
+  app.post('/api/v1/users/me/addresses', authMiddleware, validateBody(insertUserAddressSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const addressData = {
+        ...req.body,
+        userId
+      };
+
+      const newAddress = await storage.createUserAddress(addressData);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Address created successfully',
+        address: newAddress
+      });
+
+    } catch (error) {
+      console.error('Error creating address:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create address'
+      });
+    }
+  });
+
+  // PATCH /api/v1/users/me/addresses/:addressId - Update address
+  app.patch('/api/v1/users/me/addresses/:addressId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { addressId } = req.params;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Verify address belongs to user
+      const existingAddress = await storage.getUserAddress(addressId);
+      if (!existingAddress || existingAddress.userId !== userId) {
+        return res.status(404).json({
+          success: false,
+          message: 'Address not found'
+        });
+      }
+
+      const updatedAddress = await storage.updateUserAddress(addressId, req.body);
+      
+      if (!updatedAddress) {
+        return res.status(404).json({
+          success: false,
+          message: 'Address not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Address updated successfully',
+        address: updatedAddress
+      });
+
+    } catch (error) {
+      console.error('Error updating address:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update address'
+      });
+    }
+  });
+
+  // DELETE /api/v1/users/me/addresses/:addressId - Delete address
+  app.delete('/api/v1/users/me/addresses/:addressId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { addressId } = req.params;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Verify address belongs to user
+      const existingAddress = await storage.getUserAddress(addressId);
+      if (!existingAddress || existingAddress.userId !== userId) {
+        return res.status(404).json({
+          success: false,
+          message: 'Address not found'
+        });
+      }
+
+      await storage.deleteUserAddress(addressId);
+      
+      res.json({
+        success: true,
+        message: 'Address deleted successfully'
+      });
+
+    } catch (error) {
+      console.error('Error deleting address:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete address'
+      });
+    }
+  });
+
+  // PATCH /api/v1/users/me/addresses/:addressId/default - Set default address
+  app.patch('/api/v1/users/me/addresses/:addressId/default', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { addressId } = req.params;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Verify address belongs to user
+      const existingAddress = await storage.getUserAddress(addressId);
+      if (!existingAddress || existingAddress.userId !== userId) {
+        return res.status(404).json({
+          success: false,
+          message: 'Address not found'
+        });
+      }
+
+      await storage.setDefaultAddress(userId, addressId);
+      
+      res.json({
+        success: true,
+        message: 'Default address updated successfully'
+      });
+
+    } catch (error) {
+      console.error('Error setting default address:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to set default address'
+      });
+    }
+  });
+
+  // ========================================
+  // USER NOTIFICATION PREFERENCES ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/users/me/notifications/preferences - Get notification preferences
+  app.get('/api/v1/users/me/notifications/preferences', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const preferences = await storage.getUserNotificationPreferences(userId);
+      
+      // Return default preferences if none exist
+      if (!preferences) {
+        const defaultPreferences = {
+          pushNotifications: true,
+          emailNotifications: true,
+          smsNotifications: false,
+          whatsappNotifications: true,
+          orderUpdates: true,
+          promotions: true,
+          serviceReminders: true,
+          paymentAlerts: true,
+          securityAlerts: true,
+          newsAndUpdates: false,
+          soundEnabled: true,
+          vibrationEnabled: true,
+          timezone: 'Asia/Kolkata'
+        };
+        
+        res.json({
+          success: true,
+          preferences: defaultPreferences
+        });
+      } else {
+        res.json({
+          success: true,
+          preferences
+        });
+      }
+
+    } catch (error) {
+      console.error('Error fetching notification preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch notification preferences'
+      });
+    }
+  });
+
+  // PUT /api/v1/users/me/notifications/preferences - Update notification preferences
+  app.put('/api/v1/users/me/notifications/preferences', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const updatedPreferences = await storage.upsertUserNotificationPreferences(userId, req.body);
+      
+      res.json({
+        success: true,
+        message: 'Notification preferences updated successfully',
+        preferences: updatedPreferences
+      });
+
+    } catch (error) {
+      console.error('Error updating notification preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update notification preferences'
       });
     }
   });

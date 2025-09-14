@@ -23,6 +23,7 @@ import Orders from "@/pages/Orders";
 import OrderDetail from "@/pages/OrderDetail";
 import Wallet from "@/pages/Wallet";
 import Account from "@/pages/Account";
+import AccountEdit from "@/pages/AccountEdit";
 import Location from "@/pages/Location";
 import ServiceProvider from "@/pages/ServiceProvider";
 import PartsProvider from "@/pages/PartsProvider";
@@ -140,6 +141,7 @@ function Router() {
       <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
       <Route path="/payment-methods" component={() => <ProtectedRoute component={PaymentMethods} />} />
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
+      <Route path="/account/edit" component={() => <ProtectedRoute component={AccountEdit} />} />
       <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
       
       {/* Service Provider Routes */}

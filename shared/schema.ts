@@ -288,6 +288,68 @@ export const reviews = pgTable("reviews", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// User addresses for multiple delivery locations
+export const userAddresses = pgTable("user_addresses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  type: varchar("type", { enum: ["home", "work", "other"] }).default("home"),
+  title: varchar("title"), // "Home", "Office", "John's Place"
+  fullName: varchar("full_name").notNull(),
+  phone: varchar("phone"),
+  addressLine1: varchar("address_line1").notNull(),
+  addressLine2: varchar("address_line2"),
+  landmark: varchar("landmark"),
+  city: varchar("city").notNull(),
+  state: varchar("state").notNull(),
+  pincode: varchar("pincode").notNull(),
+  country: varchar("country").default("India"),
+  latitude: decimal("latitude", { precision: 10, scale: 8 }),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  isDefault: boolean("is_default").default(false),
+  instructions: text("instructions"), // Special delivery instructions
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("ua_user_id_idx").on(table.userId),
+  defaultIdx: index("ua_default_idx").on(table.userId, table.isDefault),
+  pincodeIdx: index("ua_pincode_idx").on(table.pincode),
+}));
+
+// User notification preferences
+export const userNotificationPreferences = pgTable("user_notification_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull().unique(),
+  
+  // Channel preferences
+  pushNotifications: boolean("push_notifications").default(true),
+  emailNotifications: boolean("email_notifications").default(true),
+  smsNotifications: boolean("sms_notifications").default(false),
+  whatsappNotifications: boolean("whatsapp_notifications").default(true),
+  
+  // Category preferences
+  orderUpdates: boolean("order_updates").default(true),
+  promotions: boolean("promotions").default(true),
+  serviceReminders: boolean("service_reminders").default(true),
+  paymentAlerts: boolean("payment_alerts").default(true),
+  securityAlerts: boolean("security_alerts").default(true),
+  newsAndUpdates: boolean("news_and_updates").default(false),
+  
+  // Timing preferences
+  quietHoursStart: varchar("quiet_hours_start"), // "22:00"
+  quietHoursEnd: varchar("quiet_hours_end"), // "07:00"
+  timezone: varchar("timezone").default("Asia/Kolkata"),
+  
+  // Sound preferences
+  soundEnabled: boolean("sound_enabled").default(true),
+  vibrationEnabled: boolean("vibration_enabled").default(true),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("unp_user_id_idx").on(table.userId),
+}));
+
 // App settings and configuration
 export const appSettings = pgTable("app_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -428,6 +490,8 @@ export const insertUserSessionSchema = createInsertSchema(userSessions).omit({ i
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertStripeCustomerSchema = createInsertSchema(stripeCustomers).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPaymentIntentSchema = createInsertSchema(paymentIntents).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserAddressSchema = createInsertSchema(userAddresses).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserNotificationPreferencesSchema = createInsertSchema(userNotificationPreferences).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Export types
 export type User = typeof users.$inferSelect;
@@ -464,3 +528,7 @@ export type StripeCustomer = typeof stripeCustomers.$inferSelect;
 export type InsertStripeCustomer = z.infer<typeof insertStripeCustomerSchema>;
 export type PaymentIntent = typeof paymentIntents.$inferSelect;
 export type InsertPaymentIntent = z.infer<typeof insertPaymentIntentSchema>;
+export type UserAddress = typeof userAddresses.$inferSelect;
+export type InsertUserAddress = z.infer<typeof insertUserAddressSchema>;
+export type UserNotificationPreferences = typeof userNotificationPreferences.$inferSelect;
+export type InsertUserNotificationPreferences = z.infer<typeof insertUserNotificationPreferencesSchema>;

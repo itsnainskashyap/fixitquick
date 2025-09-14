@@ -35,6 +35,10 @@ import {
   type InsertStripeCustomer,
   type PaymentIntent,
   type InsertPaymentIntent,
+  type UserAddress,
+  type InsertUserAddress,
+  type UserNotificationPreferences,
+  type InsertUserNotificationPreferences,
   users,
   serviceCategories,
   services,
@@ -52,6 +56,8 @@ import {
   paymentMethods,
   stripeCustomers,
   paymentIntents,
+  userAddresses,
+  userNotificationPreferences,
   appSettings,
   insertUserSchema,
   insertServiceCategorySchema,
@@ -69,6 +75,8 @@ import {
   insertPaymentMethodSchema,
   insertStripeCustomerSchema,
   insertPaymentIntentSchema,
+  insertUserAddressSchema,
+  insertUserNotificationPreferencesSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -188,6 +196,21 @@ export interface IStorage {
   // Settings methods
   getSetting(key: string): Promise<unknown>;
   setSetting(key: string, value: unknown, description?: string): Promise<void>;
+
+  // User Address methods
+  getUserAddresses(userId: string): Promise<UserAddress[]>;
+  getUserAddress(id: string): Promise<UserAddress | undefined>;
+  createUserAddress(address: InsertUserAddress): Promise<UserAddress>;
+  updateUserAddress(id: string, data: Partial<InsertUserAddress>): Promise<UserAddress | undefined>;
+  deleteUserAddress(id: string): Promise<void>;
+  setDefaultAddress(userId: string, addressId: string): Promise<void>;
+  getUserDefaultAddress(userId: string): Promise<UserAddress | undefined>;
+
+  // User Notification Preferences methods
+  getUserNotificationPreferences(userId: string): Promise<UserNotificationPreferences | undefined>;
+  createUserNotificationPreferences(preferences: InsertUserNotificationPreferences): Promise<UserNotificationPreferences>;
+  updateUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences | undefined>;
+  upsertUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences>;
 
   // Enhanced AI Search methods
   searchServices(filters: {
@@ -2304,6 +2327,145 @@ export class PostgresStorage implements IStorage {
       .where(eq(orders.id, orderId))
       .returning();
     return result[0];
+  }
+
+  // ========================================
+  // USER ADDRESS OPERATIONS
+  // ========================================
+
+  async getUserAddresses(userId: string): Promise<UserAddress[]> {
+    return await db.select().from(userAddresses)
+      .where(and(eq(userAddresses.userId, userId), eq(userAddresses.isActive, true)))
+      .orderBy(desc(userAddresses.isDefault), desc(userAddresses.createdAt));
+  }
+
+  async getUserAddress(id: string): Promise<UserAddress | undefined> {
+    const result = await db.select().from(userAddresses)
+      .where(and(eq(userAddresses.id, id), eq(userAddresses.isActive, true)))
+      .limit(1);
+    return result[0];
+  }
+
+  async createUserAddress(address: InsertUserAddress): Promise<UserAddress> {
+    // If this is set as default, make sure no other address is default for this user
+    if (address.isDefault) {
+      await db.update(userAddresses)
+        .set({ isDefault: false })
+        .where(eq(userAddresses.userId, address.userId));
+    }
+
+    const result = await db.insert(userAddresses).values([address]).returning();
+    return result[0];
+  }
+
+  async updateUserAddress(id: string, data: Partial<InsertUserAddress>): Promise<UserAddress | undefined> {
+    // If setting as default, remove default from other addresses
+    if (data.isDefault) {
+      const addressResult = await db.select().from(userAddresses)
+        .where(eq(userAddresses.id, id))
+        .limit(1);
+      
+      if (addressResult[0]) {
+        await db.update(userAddresses)
+          .set({ isDefault: false })
+          .where(eq(userAddresses.userId, addressResult[0].userId));
+      }
+    }
+
+    const result = await db.update(userAddresses)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(userAddresses.id, id), eq(userAddresses.isActive, true)))
+      .returning();
+    return result[0];
+  }
+
+  async deleteUserAddress(id: string): Promise<void> {
+    await db.update(userAddresses)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(userAddresses.id, id));
+  }
+
+  async setDefaultAddress(userId: string, addressId: string): Promise<void> {
+    // First, remove default from all addresses for this user
+    await db.update(userAddresses)
+      .set({ isDefault: false })
+      .where(eq(userAddresses.userId, userId));
+
+    // Then set the specified address as default
+    await db.update(userAddresses)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(and(
+        eq(userAddresses.id, addressId),
+        eq(userAddresses.userId, userId),
+        eq(userAddresses.isActive, true)
+      ));
+  }
+
+  async getUserDefaultAddress(userId: string): Promise<UserAddress | undefined> {
+    const result = await db.select().from(userAddresses)
+      .where(and(
+        eq(userAddresses.userId, userId),
+        eq(userAddresses.isDefault, true),
+        eq(userAddresses.isActive, true)
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  // ========================================
+  // USER NOTIFICATION PREFERENCES OPERATIONS
+  // ========================================
+
+  async getUserNotificationPreferences(userId: string): Promise<UserNotificationPreferences | undefined> {
+    const result = await db.select().from(userNotificationPreferences)
+      .where(eq(userNotificationPreferences.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async createUserNotificationPreferences(preferences: InsertUserNotificationPreferences): Promise<UserNotificationPreferences> {
+    const result = await db.insert(userNotificationPreferences).values([preferences]).returning();
+    return result[0];
+  }
+
+  async updateUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences | undefined> {
+    const result = await db.update(userNotificationPreferences)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(userNotificationPreferences.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async upsertUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences> {
+    // First try to get existing preferences
+    const existing = await this.getUserNotificationPreferences(userId);
+    
+    if (existing) {
+      // Update existing preferences
+      const updated = await this.updateUserNotificationPreferences(userId, data);
+      return updated!;
+    } else {
+      // Create new preferences with defaults
+      const newPreferences: InsertUserNotificationPreferences = {
+        userId,
+        pushNotifications: true,
+        emailNotifications: true,
+        smsNotifications: false,
+        whatsappNotifications: true,
+        orderUpdates: true,
+        promotions: true,
+        serviceReminders: true,
+        paymentAlerts: true,
+        securityAlerts: true,
+        newsAndUpdates: false,
+        soundEnabled: true,
+        vibrationEnabled: true,
+        timezone: 'Asia/Kolkata',
+        ...data,
+      };
+      
+      return await this.createUserNotificationPreferences(newPreferences);
+    }
   }
 
 }
