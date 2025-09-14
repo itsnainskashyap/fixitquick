@@ -48,8 +48,8 @@ const phoneSchema = z.object({
     .string()
     .min(1, 'Phone number is required')
     .regex(/^\d+$/, 'Phone number should contain only digits')
-    .min(6, 'Phone number is too short')
-    .max(15, 'Phone number is too long'),
+    .min(7, 'Phone number is too short')
+    .max(12, 'Phone number is too long'),
 });
 
 type PhoneFormData = z.infer<typeof phoneSchema>;
@@ -130,10 +130,12 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
 
   const onSubmit = (data: PhoneFormData) => {
     const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
-    console.log('Submitting phone:', {
+    console.log('📱 Submitting phone:', {
       countryCode: data.countryCode,
       phoneNumber: data.phoneNumber,
-      fullPhoneNumber
+      fullPhoneNumber,
+      phoneLength: data.phoneNumber.length,
+      formErrors: form.formState.errors
     });
     otpRequestMutation.mutate(data);
   };
@@ -263,7 +265,19 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
             )}
           />
 
-          {/* Error Display */}
+          {/* Form Validation Errors */}
+          {Object.keys(form.formState.errors).length > 0 && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {form.formState.errors.phoneNumber?.message || 
+                 form.formState.errors.countryCode?.message ||
+                 'Please fix the errors above'}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* API Error Display */}
           {otpRequestMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
