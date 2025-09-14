@@ -10,8 +10,10 @@ import { type InsertOtpChallenge } from '@shared/schema';
 interface TwilioConfig {
   accountSid: string | undefined;
   authToken: string | undefined;
-  fromNumber: string;
+  fromNumber: string | undefined;
   serviceName: string;
+  devFallbackEnabled: boolean;
+  environment: string;
 }
 
 interface OTPResult {
@@ -35,6 +37,8 @@ class TwilioService {
   private client: any;
   private config: TwilioConfig;
   private isStubMode: boolean;
+  private isProduction: boolean;
+  private hasValidCredentials: boolean;
   
   // Security constants
   private readonly OTP_LENGTH = 6;
@@ -48,22 +52,35 @@ class TwilioService {
     this.config = {
       accountSid: process.env.TWILIO_ACCOUNT_SID,
       authToken: process.env.TWILIO_AUTH_TOKEN,
-      fromNumber: process.env.TWILIO_FROM_NUMBER || '+1234567890', // Fallback for stub
-      serviceName: 'FixitQuick'
+      fromNumber: process.env.TWILIO_FROM_NUMBER,
+      serviceName: 'FixitQuick',
+      devFallbackEnabled: process.env.TWILIO_DEV_FALLBACK === 'true',
+      environment: process.env.NODE_ENV || 'development'
     };
 
-    this.isStubMode = !this.config.accountSid || !this.config.authToken;
+    this.isProduction = this.config.environment === 'production';
+    this.hasValidCredentials = !!(this.config.accountSid && this.config.authToken && this.config.fromNumber);
+    this.isStubMode = !this.hasValidCredentials;
 
     if (this.isStubMode) {
       console.log('🔧 Twilio SMS Service: Running in STUB mode - no real SMS will be sent');
       console.log('📱 To enable real SMS: Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER environment variables');
+      if (this.isProduction) {
+        console.warn('⚠️  PRODUCTION WARNING: Twilio SMS is in stub mode - users cannot receive OTP codes!');
+      }
     } else {
       try {
         this.client = twilio(this.config.accountSid, this.config.authToken);
-        console.log('📱 Twilio SMS Service: Initialized with real credentials');
+        console.log(`📱 Twilio SMS Service: Initialized successfully (${this.config.environment} environment)`);
+        if (!this.isProduction && !this.config.devFallbackEnabled) {
+          console.log('📱 Development mode: Set TWILIO_DEV_FALLBACK=true to enable fallback logging for unverified numbers');
+        }
       } catch (error) {
-        console.error('❌ Twilio SMS Service: Failed to initialize with provided credentials, falling back to stub mode');
+        console.error('❌ Twilio SMS Service: Failed to initialize with provided credentials');
         this.isStubMode = true;
+        if (this.isProduction) {
+          console.error('❌ PRODUCTION ERROR: Twilio credentials are invalid - SMS authentication is disabled!');
+        }
       }
     }
   }
@@ -119,12 +136,17 @@ class TwilioService {
       const smsResult = await this.sendSMS(normalizedPhone, otp);
       
       if (!smsResult.success) {
-        // Mark challenge as failed
+        // Mark challenge as failed and don't expose it to users
         await storage.updateOtpChallenge(createdChallenge.id, { status: 'expired' });
         return {
           success: false,
           message: smsResult.message
         };
+      }
+
+      // Only update challenge to 'sent' status if SMS was actually sent
+      if (smsResult.actuallyDelivered) {
+        await storage.updateOtpChallenge(createdChallenge.id, { status: 'sent' });
       }
 
       return {
@@ -324,9 +346,13 @@ class TwilioService {
   }
 
   /**
-   * Send SMS via Twilio or stub
+   * Send SMS via Twilio with production-safe error handling
    */
-  private async sendSMS(phone: string, otp: string): Promise<{ success: boolean; message: string }> {
+  private async sendSMS(phone: string, otp: string): Promise<{ 
+    success: boolean; 
+    message: string;
+    actuallyDelivered?: boolean;
+  }> {
     // WebOTP compatible message format for auto-fill
     const message = `<#> Your ${this.config.serviceName} verification code is ${otp}
 
@@ -335,11 +361,15 @@ Do not share this code with anyone. Valid for ${this.OTP_EXPIRY_MINUTES} minutes
 ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
 
     if (this.isStubMode) {
-      console.log(`📱 [STUB MODE] SMS to ${phone}: ${otp}`);
-      console.log(`📱 [STUB MODE] Full message: ${message}`);
+      // Only log OTP in non-production environments
+      if (!this.isProduction) {
+        console.log(`📱 [STUB MODE] SMS to ${phone}: ${otp}`);
+        console.log(`📱 [STUB MODE] Full message: ${message}`);
+      }
       return {
         success: true,
-        message: 'SMS sent successfully (stub mode)'
+        message: 'SMS sent successfully (stub mode)',
+        actuallyDelivered: false
       };
     }
 
@@ -350,38 +380,106 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
         to: phone
       });
 
-      console.log(`📱 SMS sent successfully to ${phone}, SID: ${result.sid}`);
+      // Safe logging - no OTP exposure
+      console.log(`📱 SMS sent successfully to ${this.maskPhoneNumber(phone)}, SID: ${result.sid}`);
       return {
         success: true,
-        message: 'SMS sent successfully'
+        message: 'SMS sent successfully',
+        actuallyDelivered: true
       };
 
     } catch (error: any) {
-      console.error('Twilio SMS error:', error);
+      // Safe error logging - no sensitive data
+      console.error(`Twilio SMS error for ${this.maskPhoneNumber(phone)}:`, {
+        code: error.code,
+        message: error.message,
+        moreInfo: error.moreInfo
+      });
       
-      // Handle specific Twilio errors
+      // Handle specific Twilio errors with environment-aware responses
       if (error.code === 21211) {
         return {
           success: false,
-          message: 'Invalid phone number'
+          message: 'Invalid phone number format',
+          actuallyDelivered: false
         };
       } else if (error.code === 21608) {
-        return {
-          success: false,
-          message: 'Phone number not verified with Twilio (development account)'
-        };
+        // Trial account limitation - environment-gated fallback
+        return this.handleTrialLimitation(phone, otp, message);
       } else if (error.code === 21614) {
         return {
           success: false,
-          message: 'Phone number is invalid or blocked'
+          message: 'Phone number is invalid or not reachable',
+          actuallyDelivered: false
+        };
+      } else if (error.code === 20003) {
+        return {
+          success: false,
+          message: 'Authentication failed. Please contact support.',
+          actuallyDelivered: false
         };
       }
 
+      // Generic error handling
+      const userMessage = this.isProduction 
+        ? 'Unable to send verification code. Please try again or contact support.'
+        : 'Failed to send SMS. Please try again later.';
+        
       return {
         success: false,
-        message: 'Failed to send SMS. Please try again later.'
+        message: userMessage,
+        actuallyDelivered: false
       };
     }
+  }
+
+  /**
+   * Handle Twilio trial account limitations with production-safe behavior
+   */
+  private handleTrialLimitation(phone: string, otp: string, message: string): {
+    success: boolean;
+    message: string;
+    actuallyDelivered?: boolean;
+  } {
+    if (this.isProduction) {
+      // PRODUCTION: Never log OTP, return clear error
+      console.warn(`📱 Production SMS failed: Unverified number ${this.maskPhoneNumber(phone)} (Twilio trial limitation)`);
+      return {
+        success: false,
+        message: 'This phone number must be verified with our SMS provider. Please contact support to verify your number.',
+        actuallyDelivered: false
+      };
+    } else {
+      // DEVELOPMENT: Allow fallback only if explicitly enabled
+      if (this.config.devFallbackEnabled) {
+        console.log(`📱 Development fallback for ${phone} (Twilio trial limitation)`);
+        console.log(`📱 [DEV FALLBACK] OTP: ${otp}`);
+        console.log(`📱 [DEV FALLBACK] Message: ${message}`);
+        return {
+          success: true,
+          message: 'OTP sent successfully (development fallback - check logs)',
+          actuallyDelivered: false
+        };
+      } else {
+        console.warn(`📱 Development SMS failed: Unverified number ${phone} (Twilio trial limitation)`);
+        console.log('📱 Set TWILIO_DEV_FALLBACK=true to enable console fallback in development');
+        return {
+          success: false,
+          message: 'This number is not verified for SMS delivery in development mode.',
+          actuallyDelivered: false
+        };
+      }
+    }
+  }
+
+  /**
+   * Mask phone number for safe logging
+   */
+  private maskPhoneNumber(phone: string): string {
+    if (phone.length <= 4) return '****';
+    const visibleDigits = 2;
+    const maskedLength = phone.length - visibleDigits * 2;
+    return phone.substring(0, visibleDigits) + '*'.repeat(maskedLength) + phone.substring(phone.length - visibleDigits);
   }
 
   /**
@@ -489,12 +587,18 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
     totalVerified: number;
     successRate: number;
     activeMode: string;
+    environment: string;
+    hasValidCredentials: boolean;
+    devFallbackEnabled: boolean;
   }> {
     try {
       const stats = await storage.getOtpStatistics(hours);
       return {
         ...stats,
-        activeMode: this.isStubMode ? 'stub' : 'production'
+        activeMode: this.isStubMode ? 'stub' : 'twilio',
+        environment: this.config.environment,
+        hasValidCredentials: this.hasValidCredentials,
+        devFallbackEnabled: this.config.devFallbackEnabled
       };
     } catch (error) {
       console.error('Error getting OTP statistics:', error);
@@ -502,7 +606,10 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
         totalSent: 0,
         totalVerified: 0,
         successRate: 0,
-        activeMode: this.isStubMode ? 'stub' : 'production'
+        activeMode: this.isStubMode ? 'stub' : 'twilio',
+        environment: this.config.environment,
+        hasValidCredentials: this.hasValidCredentials,
+        devFallbackEnabled: this.config.devFallbackEnabled
       };
     }
   }
