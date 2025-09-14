@@ -1,7 +1,8 @@
-// Enhanced AI Service with real database integration
-console.log('Initializing Enhanced AI service with database connection');
+// Enhanced AI Service with real OpenRouter integration
+console.log('🤖 AI Service: Initialized with OpenRouter');
 
 import { storage } from '../storage';
+import { openRouterService } from './openrouter';
 
 interface AISearchFilters {
   category?: string;
@@ -248,26 +249,58 @@ class ServerAIService {
   }
 
   async getSuggestions(userInput: string, context?: any): Promise<ServiceSuggestion[]> {
-    console.log('Enhanced AI: Getting suggestions for:', userInput);
+    console.log('🤖 Enhanced AI: Getting suggestions for:', userInput);
     
-    // Use the enhanced search for suggestions
-    const results = await this.searchServices(userInput);
-    return results.slice(0, 5); // Return top 5 suggestions
+    try {
+      // Get AI-powered smart suggestions
+      const smartSuggestions = await openRouterService.generateSmartSuggestions(userInput, context);
+      
+      // Convert suggestions to search results
+      const suggestionResults: ServiceSuggestion[] = [];
+      for (const suggestion of smartSuggestions.slice(0, 5)) {
+        const searchResult = await this.searchServices(suggestion);
+        if (searchResult.length > 0) {
+          suggestionResults.push(searchResult[0]); // Add the top result from each suggestion
+        }
+      }
+      
+      // If we don't have enough results, fill with direct search
+      if (suggestionResults.length < 3) {
+        const directResults = await this.searchServices(userInput);
+        suggestionResults.push(...directResults.slice(0, 5 - suggestionResults.length));
+      }
+      
+      return suggestionResults.slice(0, 5); // Return top 5 suggestions
+    } catch (error) {
+      console.error('❌ Error getting AI suggestions:', error);
+      
+      // Fallback to database search if AI fails
+      const results = await this.searchServices(userInput);
+      return results.slice(0, 5);
+    }
   }
 
   async generateServiceDescription(serviceName: string, category: string): Promise<string> {
-    console.log('Enhanced AI: Generating description for:', serviceName, category);
+    console.log('🤖 Enhanced AI: Generating description for:', serviceName, category);
     
-    const descriptions = {
-      electrician: `Professional ${serviceName} service with experienced technicians. Safety first approach with quality materials.`,
-      plumber: `Expert ${serviceName} service using modern tools and techniques. Quick response and reliable repairs.`,
-      cleaner: `Thorough ${serviceName} service with eco-friendly products. Attention to detail guaranteed.`,
-      laundry: `Premium ${serviceName} service with care for all fabric types. Quick turnaround time.`,
-      carpentry: `Skilled ${serviceName} service with precision workmanship. Quality wood and materials used.`,
-      pest_control: `Effective ${serviceName} service using safe and approved methods. Long-lasting results guaranteed.`
-    };
-    
-    return descriptions[category as keyof typeof descriptions] || `Professional ${serviceName} service with experienced providers.`;
+    try {
+      // Use OpenRouter for intelligent description generation
+      return await openRouterService.generateServiceDescription(serviceName, category);
+    } catch (error) {
+      console.error('❌ Error generating AI description:', error);
+      
+      // Fallback to template descriptions if OpenRouter fails
+      const descriptions = {
+        electrician: `Professional ${serviceName} service with experienced technicians. Safety first approach with quality materials.`,
+        plumber: `Expert ${serviceName} service using modern tools and techniques. Quick response and reliable repairs.`,
+        cleaner: `Thorough ${serviceName} service with eco-friendly products. Attention to detail guaranteed.`,
+        laundry: `Premium ${serviceName} service with care for all fabric types. Quick turnaround time.`,
+        carpentry: `Skilled ${serviceName} service with precision workmanship. Quality wood and materials used.`,
+        pest_control: `Effective ${serviceName} service using safe and approved methods. Long-lasting results guaranteed.`
+      };
+      
+      return descriptions[category as keyof typeof descriptions] || `Professional ${serviceName} service with experienced providers.`;
+    }
   }
 
   async analyzeUserIntent(input: string): Promise<{
@@ -276,27 +309,43 @@ class ServerAIService {
     urgency: 'low' | 'medium' | 'high';
     extractedInfo: Record<string, any>;
   }> {
-    console.log('Enhanced AI: Analyzing intent for:', input);
+    console.log('🤖 Enhanced AI: Analyzing intent for:', input);
     
-    const parsed = this.parseSearchIntent(input);
-    
-    return {
-      intent: 'service_request',
-      category: parsed.categories[0] || 'general',
-      urgency: parsed.urgency,
-      extractedInfo: {
-        originalQuery: input,
-        detectedKeywords: parsed.keywords,
-        detectedCategories: parsed.categories,
-        cleanQuery: parsed.cleanQuery
-      }
-    };
+    try {
+      // Use OpenRouter for intelligent intent analysis
+      const result = await openRouterService.analyzeSearchIntent(input);
+      return result;
+    } catch (error) {
+      console.error('❌ Error analyzing user intent with AI:', error);
+      
+      // Fallback to pattern matching if OpenRouter fails
+      const parsed = this.parseSearchIntent(input);
+      
+      return {
+        intent: 'service_request',
+        category: parsed.categories[0] || 'general',
+        urgency: parsed.urgency,
+        extractedInfo: {
+          originalQuery: input,
+          detectedKeywords: parsed.keywords,
+          detectedCategories: parsed.categories,
+          cleanQuery: parsed.cleanQuery
+        }
+      };
+    }
   }
 
   async generateChatResponse(message: string, context?: any): Promise<string> {
-    console.log('Enhanced AI: Generating chat response for:', message);
+    console.log('🤖 Enhanced AI: Generating chat response for:', message);
     
     try {
+      // Use OpenRouter for intelligent chat response
+      const contextString = context ? JSON.stringify(context) : '';
+      return await openRouterService.generateChatResponse(message, contextString);
+    } catch (error) {
+      console.error('❌ Error generating AI chat response:', error);
+      
+      // Fallback to pattern matching if OpenRouter fails
       const intent = this.parseSearchIntent(message);
       
       if (intent.urgency === 'high') {
@@ -307,16 +356,6 @@ class ServerAIService {
       } else {
         return "I'd be happy to help you find the right service! Could you tell me more about what you need? For example, what type of repair or service are you looking for?";
       }
-    } catch (error) {
-      console.error('Error generating chat response:', error);
-      const responses = [
-        "I'd be happy to help you with that! Let me find the best service providers in your area.",
-        "Based on your requirements, I can suggest some great options. What's your preferred time for the service?",
-        "That's a common issue! Our verified professionals can handle that efficiently. Would you like to see available slots?",
-        "Great choice! I'll connect you with top-rated service providers. Do you have any specific preferences?"
-      ];
-      
-      return responses[Math.floor(Math.random() * responses.length)];
     }
   }
 

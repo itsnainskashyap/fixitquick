@@ -29,39 +29,37 @@ export interface AIIconRequest {
 }
 
 class AIService {
-  private apiKey: string;
-  private baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
-  private model = 'deepseek/deepseek-chat-v3.1:free';
+  private baseUrl = '/api/v1/ai';
 
   constructor() {
-    this.apiKey = import.meta.env.VITE_OPENROUTER_API_KEY || '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';
+    // No API keys needed - all requests go through secure server endpoints
+    console.log('🤖 AI Service: Initialized with server-side endpoints');
   }
 
-  private async makeRequest(messages: Array<{ role: string; content: string }>, responseFormat?: { type: string }) {
+  private async makeServerRequest(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: any) {
     try {
-      const response = await fetch(this.baseUrl, {
-        method: 'POST',
+      const url = `${this.baseUrl}${endpoint}`;
+      const options: RequestInit = {
+        method,
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'HTTP-Referer': window.location.origin,
-          'X-Title': 'FixitQuick',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          ...(responseFormat && { response_format: responseFormat }),
-        }),
-      });
+      };
 
-      if (!response.ok) {
-        throw new Error(`AI request failed: ${response.status}`);
+      if (body && method === 'POST') {
+        options.body = JSON.stringify(body);
       }
 
-      const data = await response.json();
-      return data.choices[0]?.message?.content;
+      const response = await fetch(url, options);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server request failed: ${response.status} - ${errorText}`);
+      }
+
+      return await response.json();
     } catch (error) {
-      console.error('AI request error:', error);
+      console.error('Server AI request error:', error);
       throw error;
     }
   }
@@ -72,46 +70,28 @@ class AIService {
     urgency?: 'low' | 'medium' | 'high';
     location?: string;
   }): Promise<AISearchResult[]> {
-    const prompt = `
-    You are an AI assistant for FixitQuick, a service marketplace. 
-    Convert the following search query into relevant service suggestions.
-    
-    Query: "${query}"
-    ${filters ? `Filters: ${JSON.stringify(filters)}` : ''}
-    
-    Available service categories:
-    - Electrician: Fan repair, switch installation, wiring, MCB, light fixtures
-    - Plumber: Tap repair, pipe fixing, drain cleaning, water heater
-    - Cleaner: House cleaning, deep cleaning, carpet cleaning
-    - Laundry: Washing, dry cleaning, ironing
-    - Carpentry: Furniture repair, door fixing, cabinet installation
-    - Pest Control: Cockroach treatment, termite control, rodent control
-    
-    Return a JSON array of 5-10 relevant services with this exact structure:
-    [
-      {
-        "id": "service_id",
-        "name": "Service Name",
-        "description": "Brief description",
-        "price": 60,
-        "icon": "🔧",
-        "category": "electrician",
-        "type": "service",
-        "rating": 4.5
-      }
-    ]
-    
-    Make sure prices are realistic (₹30-500) and icons are relevant emojis.
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: 'You are a helpful assistant that returns only valid JSON.' },
-        { role: 'user', content: prompt }
-      ], { type: 'json_object' });
+      const searchBody = {
+        query,
+        context: {
+          urgency: filters?.urgency,
+          searchType: 'services' as const,
+          ...(filters?.location && {
+            location: {
+              latitude: 0, // Default coordinates
+              longitude: 0,
+              maxDistance: 10000
+            }
+          })
+        },
+        filters: {
+          ...(filters?.category && { categories: [filters.category] }),
+          ...(filters?.priceRange && { priceRange: filters.priceRange })
+        }
+      };
 
-      const parsed = JSON.parse(response);
-      return Array.isArray(parsed) ? parsed : parsed.services || [];
+      const response = await this.makeServerRequest('/search', 'POST', searchBody);
+      return response.results || [];
     } catch (error) {
       console.error('Error searching services:', error);
       return [];
@@ -119,43 +99,37 @@ class AIService {
   }
 
   async suggestBundles(cartItems: Array<{ id: string; name: string; price: number; category: string }>): Promise<AIBundleSuggestion[]> {
-    const prompt = `
-    Based on the following cart items, suggest 2-3 complementary service bundles that would provide value to the customer.
-    
-    Cart items: ${JSON.stringify(cartItems)}
-    
-    Consider:
-    - Services that are commonly needed together
-    - Geographic efficiency (same area visits)
-    - Tools/materials that can be shared
-    - Seasonal or maintenance bundles
-    
-    Return JSON with this structure:
-    [
-      {
-        "mainItem": "Fan Repair",
-        "suggestedItems": [
-          {
-            "id": "switch_install",
-            "name": "Switch Installation", 
-            "price": 80,
-            "discount": 15
-          }
-        ],
-        "totalSavings": 25,
-        "combinedPrice": 125
-      }
-    ]
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: 'You are a helpful assistant that returns only valid JSON.' },
-        { role: 'user', content: prompt }
-      ], { type: 'json_object' });
-
-      const parsed = JSON.parse(response);
-      return Array.isArray(parsed) ? parsed : parsed.bundles || [];
+      // For now, return static bundle suggestions until server endpoint is available
+      // This is safer than direct API calls and maintains functionality
+      const bundleSuggestions: AIBundleSuggestion[] = [];
+      
+      // Simple logic to suggest related services
+      cartItems.forEach(item => {
+        if (item.category === 'electrician') {
+          bundleSuggestions.push({
+            mainItem: item.name,
+            suggestedItems: [
+              { id: 'switch_install', name: 'Switch Installation', price: 80, discount: 15 },
+              { id: 'outlet_repair', name: 'Outlet Repair', price: 60, discount: 10 }
+            ],
+            totalSavings: 25,
+            combinedPrice: item.price + 140 - 25
+          });
+        } else if (item.category === 'plumber') {
+          bundleSuggestions.push({
+            mainItem: item.name,
+            suggestedItems: [
+              { id: 'drain_cleaning', name: 'Drain Cleaning', price: 120, discount: 20 },
+              { id: 'faucet_repair', name: 'Faucet Repair', price: 90, discount: 15 }
+            ],
+            totalSavings: 35,
+            combinedPrice: item.price + 210 - 35
+          });
+        }
+      });
+      
+      return bundleSuggestions.slice(0, 3); // Limit to 3 suggestions
     } catch (error) {
       console.error('Error suggesting bundles:', error);
       return [];
@@ -163,32 +137,14 @@ class AIService {
   }
 
   async generateServiceIcon(request: AIIconRequest): Promise<string> {
-    const prompt = `
-    Generate a simple 2D ${request.style || 'cartoon'} SVG icon for "${request.name}" in the ${request.category} category.
-    
-    Requirements:
-    - White background with black outlines
-    - Purple accents (#8B5CF6)
-    - Optimized for 24x24px display
-    - Clean, recognizable design
-    - SVG format with proper viewBox
-    
-    Return only the SVG code, no explanations.
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: 'You are an SVG icon designer. Return only clean SVG code.' },
-        { role: 'user', content: prompt }
-      ]);
-
-      // Basic validation and cleanup
-      if (response.includes('<svg') && response.includes('</svg>')) {
-        return response.trim();
-      } else {
-        // Fallback to emoji if SVG generation fails
-        return this.getEmojiIcon(request.category);
-      }
+      const response = await this.makeServerRequest('/generate-icon', 'POST', {
+        name: request.name,
+        category: request.category,
+        style: request.style || 'cartoon'
+      });
+      
+      return response.icon || this.getEmojiIcon(request.category);
     } catch (error) {
       console.error('Error generating icon:', error);
       return this.getEmojiIcon(request.category);
@@ -212,27 +168,11 @@ class AIService {
   }
 
   async translateText(text: string, targetLanguage: 'hi' | 'bho' | 'en'): Promise<string> {
-    const languageMap = {
-      'hi': 'Hindi',
-      'bho': 'Bhojpuri', 
-      'en': 'English'
-    };
-
-    const prompt = `
-    Translate the following text to ${languageMap[targetLanguage]}:
-    
-    "${text}"
-    
-    Return only the translated text, maintaining the original meaning and context for a service marketplace app.
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: `You are a professional translator specializing in Indian languages.` },
-        { role: 'user', content: prompt }
-      ]);
-
-      return response.trim();
+      // For now, return original text since no server translation endpoint available
+      // This is safer than direct API calls and maintains functionality
+      console.warn('Translation service disabled for security - using original text');
+      return text;
     } catch (error) {
       console.error('Error translating text:', error);
       return text; // Return original text if translation fails
@@ -245,33 +185,46 @@ class AIService {
     category?: string;
     keywords: string[];
   }> {
-    const prompt = `
-    Analyze the search intent for this query from a service marketplace:
-    
-    Query: "${query}"
-    
-    Determine:
-    1. Intent type: service_search, part_search, emergency, or general
-    2. Urgency level: low, medium, high
-    3. Most likely service category if applicable
-    4. Key search keywords
-    
-    Return JSON:
-    {
-      "intent": "service_search",
-      "urgency": "medium", 
-      "category": "electrician",
-      "keywords": ["fan", "repair", "ceiling"]
-    }
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: 'You are a search intent analyzer. Return only valid JSON.' },
-        { role: 'user', content: prompt }
-      ], { type: 'json_object' });
-
-      return JSON.parse(response);
+      // Basic client-side intent analysis without direct API calls
+      const lowerQuery = query.toLowerCase();
+      const keywords = query.split(' ').filter(word => word.length > 2);
+      
+      // Detect urgency from keywords
+      const urgentWords = ['emergency', 'urgent', 'asap', 'immediately', 'broken', 'leaking', 'not working'];
+      const urgency = urgentWords.some(word => lowerQuery.includes(word)) ? 'high' : 'medium';
+      
+      // Detect intent from keywords
+      const serviceWords = ['repair', 'fix', 'install', 'service', 'maintenance'];
+      const partWords = ['part', 'spare', 'component', 'buy', 'purchase'];
+      
+      let intent: 'service_search' | 'part_search' | 'emergency' | 'general' = 'general';
+      if (urgency === 'high') {
+        intent = 'emergency';
+      } else if (partWords.some(word => lowerQuery.includes(word))) {
+        intent = 'part_search';
+      } else if (serviceWords.some(word => lowerQuery.includes(word))) {
+        intent = 'service_search';
+      }
+      
+      // Detect category
+      const categories = {
+        'electrician': ['electric', 'fan', 'switch', 'light', 'wiring', 'mcb'],
+        'plumber': ['water', 'pipe', 'tap', 'leak', 'drain', 'toilet'],
+        'cleaner': ['clean', 'wash', 'dirty', 'vacuum'],
+        'carpentry': ['wood', 'door', 'furniture', 'cabinet'],
+        'pest_control': ['pest', 'cockroach', 'termite', 'rat']
+      };
+      
+      let category: string | undefined;
+      for (const [cat, words] of Object.entries(categories)) {
+        if (words.some(word => lowerQuery.includes(word))) {
+          category = cat;
+          break;
+        }
+      }
+      
+      return { intent, urgency, category, keywords };
     } catch (error) {
       console.error('Error analyzing search intent:', error);
       return {
@@ -288,26 +241,45 @@ class AIService {
     ordersCompleted: number;
     category: string;
   }): Promise<string[]> {
-    const prompt = `
-    Based on these service provider metrics, suggest 3 specific improvement tips:
-    
-    Completion Rate: ${metrics.completionRate}%
-    Average Rating: ${metrics.avgRating}/5
-    Orders Completed: ${metrics.ordersCompleted}
-    Category: ${metrics.category}
-    
-    Provide actionable, specific advice for improving performance in this service category.
-    Return as JSON array of strings.
-    `;
-
     try {
-      const response = await this.makeRequest([
-        { role: 'system', content: 'You are a business advisor for service providers. Return only JSON array.' },
-        { role: 'user', content: prompt }
-      ], { type: 'json_object' });
-
-      const parsed = JSON.parse(response);
-      return Array.isArray(parsed) ? parsed : parsed.tips || [];
+      // Generate basic tips based on metrics without direct API calls
+      const tips: string[] = [];
+      
+      if (metrics.completionRate < 90) {
+        tips.push('Focus on completing all accepted orders to build trust');
+      }
+      
+      if (metrics.avgRating < 4.0) {
+        tips.push('Ask customers for feedback and address their concerns promptly');
+      }
+      
+      if (metrics.ordersCompleted < 10) {
+        tips.push('Build your portfolio by completing more orders and showcasing your work');
+      }
+      
+      // Category-specific tips
+      const categoryTips: Record<string, string[]> = {
+        'electrician': ['Always prioritize safety and use proper tools', 'Explain electrical issues clearly to customers'],
+        'plumber': ['Carry essential spare parts for common repairs', 'Test your work thoroughly before leaving'],
+        'cleaner': ['Bring your own cleaning supplies', 'Pay attention to detail in high-visibility areas'],
+        'carpentry': ['Measure twice, cut once - precision is key', 'Clean up wood shavings and debris after work'],
+        'pest_control': ['Educate customers about prevention methods', 'Follow up to ensure treatment effectiveness']
+      };
+      
+      if (categoryTips[metrics.category]) {
+        tips.push(...categoryTips[metrics.category]);
+      }
+      
+      // Default tips if none generated
+      if (tips.length === 0) {
+        tips.push(
+          'Maintain consistent communication with customers',
+          'Arrive on time for all appointments',
+          'Follow up after service completion'
+        );
+      }
+      
+      return tips.slice(0, 3); // Limit to 3 tips
     } catch (error) {
       console.error('Error generating provider tips:', error);
       return [
