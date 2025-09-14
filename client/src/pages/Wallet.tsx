@@ -14,6 +14,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, useStripe, useElements, PaymentElement } from '@stripe/react-stripe-js';
 import { 
   Wallet, 
   Plus, 
@@ -28,6 +30,100 @@ import {
   ArrowDownLeft,
   Banknote
 } from 'lucide-react';
+
+// Initialize Stripe
+if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
+  console.warn('⚠️ VITE_STRIPE_PUBLIC_KEY not found - Stripe payments may not work');
+}
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
+
+// Stripe Payment Form Component
+const StripePaymentForm = ({ amount, onSuccess, onCancel }: { 
+  amount: number; 
+  onSuccess: () => void; 
+  onCancel: () => void; 
+}) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const { toast } = useToast();
+  const [processing, setProcessing] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!stripe || !elements) {
+      return;
+    }
+
+    setProcessing(true);
+
+    try {
+      const { error } = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          return_url: `${window.location.origin}/wallet?payment=success`,
+        },
+      });
+
+      if (error) {
+        console.error('Stripe payment error:', error);
+        toast({
+          title: "Payment Failed",
+          description: error.message || "Please try again.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Payment Successful",
+          description: "Money has been added to your wallet!",
+        });
+        onSuccess();
+      }
+    } catch (error) {
+      console.error('Payment submission error:', error);
+      toast({
+        title: "Payment Error",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="mb-4">
+        <h3 className="text-lg font-medium mb-2">Add ₹{amount} to Wallet</h3>
+        <p className="text-sm text-muted-foreground">
+          Complete your payment to add money to your wallet
+        </p>
+      </div>
+      
+      <PaymentElement />
+      
+      <div className="flex space-x-3 pt-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onCancel}
+          disabled={processing}
+          className="flex-1"
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          disabled={!stripe || processing}
+          className="flex-1"
+          data-testid="complete-payment"
+        >
+          {processing ? 'Processing...' : `Pay ₹${amount}`}
+        </Button>
+      </div>
+    </form>
+  );
+};
 
 interface WalletTransaction {
   id: string;
@@ -51,6 +147,8 @@ export default function WalletPage() {
   const queryClient = useQueryClient();
   const [topupAmount, setTopupAmount] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   // Fetch wallet data
   const { data: walletData, isLoading } = useQuery<WalletData>({
@@ -64,27 +162,34 @@ export default function WalletPage() {
     enabled: !!user,
   });
 
-  // Top-up mutation
+  // Top-up mutation - Updated for Stripe integration
   const topupMutation = useMutation({
     mutationFn: async (amount: number) => {
       const response = await apiRequest('POST', '/api/v1/wallet/topup', { amount });
       return response.json();
     },
     onSuccess: (data) => {
-      if (data.razorpayOrderId) {
-        // Redirect to Razorpay
-        window.location.href = data.paymentUrl;
+      if (data.success && data.clientSecret) {
+        // Set client secret for Stripe payment
+        setClientSecret(data.clientSecret);
+        setShowPaymentDialog(true);
+        toast({
+          title: "Payment Ready",
+          description: "Complete your payment to add money to your wallet.",
+        });
+      } else {
+        toast({
+          title: "Payment Setup Failed",
+          description: "Unable to initialize payment. Please try again.",
+          variant: "destructive",
+        });
       }
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/wallet/balance'] });
-      toast({
-        title: "Top-up initiated",
-        description: "Please complete the payment to add money to your wallet.",
-      });
     },
-    onError: () => {
+    onError: (error: any) => {
+      console.error('Topup error:', error);
       toast({
         title: "Top-up failed",
-        description: "Please try again later.",
+        description: error.message || "Please try again later.",
         variant: "destructive",
       });
     },
@@ -126,7 +231,29 @@ export default function WalletPage() {
       return;
     }
 
+    if (amount > 50000) {
+      toast({
+        title: "Amount too high",
+        description: "Maximum top-up amount is ₹50,000.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     topupMutation.mutate(amount);
+  };
+
+  const handlePaymentSuccess = () => {
+    setShowPaymentDialog(false);
+    setClientSecret(null);
+    setTopupAmount('');
+    queryClient.invalidateQueries({ queryKey: ['/api/v1/wallet/balance'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/v1/wallet/transactions'] });
+  };
+
+  const handlePaymentCancel = () => {
+    setShowPaymentDialog(false);
+    setClientSecret(null);
   };
 
   const handleRedeemPoints = () => {
@@ -443,6 +570,35 @@ export default function WalletPage() {
           </Tabs>
         </motion.div>
       </main>
+
+      {/* Stripe Payment Dialog */}
+      {clientSecret && (
+        <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Complete Payment</DialogTitle>
+            </DialogHeader>
+            <Elements 
+              stripe={stripePromise} 
+              options={{ 
+                clientSecret,
+                appearance: {
+                  theme: 'stripe',
+                  variables: {
+                    colorPrimary: '#6366f1',
+                  },
+                },
+              }}
+            >
+              <StripePaymentForm
+                amount={parseFloat(topupAmount)}
+                onSuccess={handlePaymentSuccess}
+                onCancel={handlePaymentCancel}
+              />
+            </Elements>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <BottomNavigation />
     </div>

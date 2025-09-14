@@ -375,7 +375,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub || req.user?.id;
+      const userId = req.user?.id || req.user?.claims?.sub;
       const user = await storage.getUser(userId);
       
       if (user) {
@@ -1126,7 +1126,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sub: req.user?.claims?.sub
       });
       
-      const userId = req.user.claims.sub;
+      const userId = req.user?.id || req.user?.claims?.sub;
       if (!userId) {
         console.log('❌ WebSocket token: No userId found');
         return res.status(401).json({ message: 'Unauthorized' });
@@ -2219,7 +2219,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
-      const wallet = await storage.getWalletBalance(userId ?? '');
+      if (!userId) {
+        console.error('❌ Wallet balance: No user ID found in request');
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      console.log(`🔍 Fetching wallet balance for user: ${userId}`);
+      const wallet = await storage.getWalletBalance(userId);
+      console.log(`✅ Wallet balance fetched: ₹${wallet.balance}, Points: ${wallet.fixiPoints}`);
       res.json(wallet);
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
@@ -2230,7 +2237,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/wallet/transactions', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
-      const transactions = await storage.getWalletTransactions(userId ?? '', 20);
+      if (!userId) {
+        console.error('❌ Wallet transactions: No user ID found in request');
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      console.log(`🔍 Fetching wallet transactions for user: ${userId}`);
+      const transactions = await storage.getWalletTransactions(userId, 20);
+      console.log(`✅ Found ${transactions.length} wallet transactions`);
       res.json(transactions);
     } catch (error) {
       console.error('Error fetching transactions:', error);
@@ -2688,9 +2702,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user?.id;
       const { orderId } = req.params;
+      const { idempotencyKey } = req.body;
       
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
+      // IDEMPOTENCY: Generate or use provided idempotency key
+      const finalIdempotencyKey = idempotencyKey || `pay_order_${userId}_${orderId}_${Date.now()}`;
+      
+      // Check if this payment was already processed
+      const existingTransaction = await storage.getWalletTransactionByReference(finalIdempotencyKey);
+      if (existingTransaction) {
+        console.log(`⚠️ Idempotent request detected for order payment: ${orderId}`);
+        const order = await storage.getOrder(orderId);
+        const walletData = await storage.getWalletBalance(userId);
+        return res.json({
+          success: true,
+          transaction: existingTransaction,
+          order,
+          walletBalance: walletData.balance,
+          message: 'Payment already processed',
+          idempotent: true
+        });
       }
 
       // Get and validate order
@@ -2739,43 +2773,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // ATOMIC OPERATION: Create transaction + Update wallet + Decrement inventory + Update order
-      const transaction = await storage.createWalletTransaction({
-        userId,
-        type: 'debit',
-        amount: orderAmount.toString(),
-        description: `Payment for Order #${orderId.slice(-8)}`,
-        category: 'payment',
-        orderId,
-        paymentMethod: 'wallet',
-        status: 'completed'
-      });
-      
-      // Deduct from wallet balance
-      await storage.updateWalletBalance(userId, orderAmount, 'debit');
-
-      // SECURITY: Atomically decrement inventory for all parts in the order
+      // ATOMIC OPERATION: Process entire wallet payment in database transaction
       const partItems = (order.items || [])
         .filter(item => item.type === 'part')
         .map(item => ({ partId: item.id, quantity: item.quantity }));
       
-      if (partItems.length > 0) {
-        const inventoryResult = await storage.atomicDecrementInventory(partItems);
-        if (!inventoryResult.success) {
-          // ROLLBACK: If inventory decrement fails, we need to reverse the wallet deduction
-          await storage.updateWalletBalance(userId, orderAmount, 'credit');
-          return res.status(400).json({
-            message: 'Inventory decrement failed - payment reversed',
-            errors: inventoryResult.errors
-          });
-        }
-      }
-      
-      // Update order payment status
-      await storage.updateOrder(orderId, {
-        paymentStatus: 'paid',
-        status: order.status === 'pending' ? 'accepted' : order.status
+      const paymentResult = await storage.processWalletPayment({
+        userId,
+        orderId,
+        amount: orderAmount,
+        description: `Payment for Order #${orderId.slice(-8)}`,
+        partItems,
+        idempotencyKey: finalIdempotencyKey
       });
+      
+      if (!paymentResult.success) {
+        return res.status(400).json({
+          message: 'Wallet payment failed',
+          errors: paymentResult.errors
+        });
+      }
       
       // Get updated data
       const updatedWalletData = await storage.getWalletBalance(userId);
@@ -2783,10 +2800,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({
         success: true,
-        transaction,
+        transaction: paymentResult.transaction,
         order: updatedOrder,
         walletBalance: updatedWalletData.balance,
-        message: 'Payment successful'
+        message: 'Payment successful',
+        idempotencyKey: finalIdempotencyKey
       });
     } catch (error) {
       console.error('Error processing order payment:', error);
@@ -2845,10 +2863,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      const { points, for: redeemFor } = req.body;
+      const { points, for: redeemFor, idempotencyKey } = req.body;
       
       if (!points || points < 100) {
         return res.status(400).json({ message: 'Minimum 100 points required to redeem' });
+      }
+      
+      // IDEMPOTENCY: Generate or use provided idempotency key
+      const finalIdempotencyKey = idempotencyKey || `redeem_points_${userId}_${points}_${Date.now()}`;
+      
+      // Check if this redemption was already processed
+      const existingTransaction = await storage.getWalletTransactionByReference(finalIdempotencyKey);
+      if (existingTransaction) {
+        console.log(`⚠️ Idempotent request detected for points redemption: ${points} points`);
+        const walletData = await storage.getWalletBalance(userId);
+        return res.json({
+          success: true,
+          transaction: existingTransaction,
+          walletBalance: walletData.balance,
+          fixiPoints: walletData.fixiPoints,
+          message: 'Points already redeemed',
+          idempotent: true
+        });
       }
 
       // Get current user data
@@ -2882,6 +2918,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `FixiPoints redeemed: ${points} points`,
         category: 'redemption',
         status: 'completed',
+        reference: finalIdempotencyKey
       });
       
       await storage.updateWalletBalance(userId, redemptionValue, 'credit');

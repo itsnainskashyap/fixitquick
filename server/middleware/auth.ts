@@ -38,9 +38,80 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
-    // Early exit if user is already authenticated via Replit session
+    // Handle Replit session authentication first
     if (req.user) {
-      return next();
+      // Debug session user object structure
+      console.log(`🔍 authMiddleware: Existing user object:`, {
+        hasId: !!req.user.id,
+        hasClaims: !!req.user.claims,
+        claimsSub: req.user.claims?.sub,
+        userKeys: Object.keys(req.user)
+      });
+      
+      // If user is authenticated via Replit session but needs normalization
+      let userId: string | undefined;
+      
+      // Extract user ID from Replit session claims
+      if (req.user.claims?.sub) {
+        userId = req.user.claims.sub;
+        console.log(`🔐 authMiddleware: Session auth detected for userId: ${userId}`);
+        
+        try {
+          // Get user data from database to enrich session user object
+          const user = await storage.getUser(userId);
+          if (!user || !user.isActive) {
+            console.error(`❌ authMiddleware: Session user ${userId} not found or inactive`);
+            return res.status(404).json({ 
+              message: 'User not found or inactive' 
+            });
+          }
+
+          // Normalize user object with consistent interface
+          req.user = {
+            id: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: user.role || 'user',
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            // Preserve original session claims for compatibility
+            claims: req.user.claims
+          };
+
+          console.log(`✅ authMiddleware: Session user ${user.id} normalized with role: ${user.role}`);
+          return next();
+        } catch (error) {
+          console.error('❌ authMiddleware: Error enriching session user:', error);
+          return res.status(500).json({ 
+            message: 'Authentication processing failed' 
+          });
+        }
+      } else if (req.user.id) {
+        // User object already has normalized ID (likely from JWT or previous middleware)
+        console.log(`✅ authMiddleware: User already authenticated with ID: ${req.user.id}`);
+        return next();
+      } else {
+        // User object exists but missing required identifiers - this should not happen
+        // after session auth normalization, but let's be defensive
+        console.error('❌ authMiddleware: Invalid user object - missing ID and claims:', {
+          hasUser: !!req.user,
+          hasId: !!req.user?.id,
+          hasClaims: !!req.user?.claims,
+          claimsSub: req.user?.claims?.sub
+        });
+        return res.status(401).json({ 
+          message: 'Invalid authentication state' 
+        });
+      }
     }
 
     // Development mode: Check for dev-token

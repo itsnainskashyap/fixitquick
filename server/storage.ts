@@ -146,8 +146,18 @@ export interface IStorage {
   // Wallet methods
   getWalletBalance(userId: string): Promise<{ balance: string; fixiPoints: number }>;
   getWalletTransactions(userId: string, limit?: number): Promise<WalletTransaction[]>;
+  getWalletTransactionByReference(reference: string): Promise<WalletTransaction | undefined>;
   createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction>;
   updateWalletBalance(userId: string, amount: number, type: 'credit' | 'debit'): Promise<void>;
+  // Atomic wallet operations for order payments
+  processWalletPayment(params: {
+    userId: string;
+    orderId: string;
+    amount: number;
+    description: string;
+    partItems?: { partId: string; quantity: number }[];
+    idempotencyKey?: string;
+  }): Promise<{ success: boolean; transaction?: WalletTransaction; errors?: string[]; }>;
 
   // Provider methods
   getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean }): Promise<ServiceProvider[]>;
@@ -1062,6 +1072,13 @@ export class PostgresStorage implements IStorage {
       .limit(limit);
   }
 
+  async getWalletTransactionByReference(reference: string): Promise<WalletTransaction | undefined> {
+    const results = await db.select().from(walletTransactions)
+      .where(eq(walletTransactions.reference, reference))
+      .limit(1);
+    return results[0];
+  }
+
   async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
     const result = await db.insert(walletTransactions).values([transaction]).returning();
     return result[0];
@@ -1081,6 +1098,100 @@ export class PostgresStorage implements IStorage {
     }
     
     await this.updateUser(userId, { walletBalance: newBalance.toFixed(2) });
+  }
+
+  // ATOMIC wallet payment operation - all operations wrapped in database transaction
+  async processWalletPayment(params: {
+    userId: string;
+    orderId: string;
+    amount: number;
+    description: string;
+    partItems?: { partId: string; quantity: number }[];
+    idempotencyKey?: string;
+  }): Promise<{ success: boolean; transaction?: WalletTransaction; errors?: string[]; }> {
+    const { userId, orderId, amount, description, partItems = [], idempotencyKey } = params;
+    const errors: string[] = [];
+
+    try {
+      // Use database transaction to ensure atomicity
+      const result = await db.transaction(async (trx) => {
+        // Step 1: Validate user and wallet balance
+        const userResults = await trx.select().from(users).where(eq(users.id, userId)).limit(1);
+        if (!userResults[0]) {
+          throw new Error('User not found');
+        }
+        
+        const user = userResults[0];
+        const currentBalance = parseFloat(user.walletBalance || '0');
+        
+        if (currentBalance < amount) {
+          throw new Error(`Insufficient wallet balance. Current: ₹${currentBalance}, Required: ₹${amount}`);
+        }
+        
+        // Step 2: Create wallet transaction record
+        const transactionData: InsertWalletTransaction = {
+          userId,
+          type: 'debit',
+          amount: amount.toString(),
+          description,
+          category: 'payment',
+          orderId,
+          paymentMethod: 'wallet',
+          status: 'completed',
+          reference: idempotencyKey
+        };
+        
+        const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
+        const transaction = transactionResults[0];
+        
+        // Step 3: Update wallet balance
+        const newBalance = (currentBalance - amount).toFixed(2);
+        await trx.update(users)
+          .set({ walletBalance: newBalance })
+          .where(eq(users.id, userId));
+        
+        // Step 4: Handle inventory for part items (if any)
+        if (partItems.length > 0) {
+          for (const item of partItems) {
+            const partResults = await trx.select().from(parts).where(eq(parts.id, item.partId)).limit(1);
+            
+            if (!partResults[0]) {
+              throw new Error(`Part ${item.partId} not found`);
+            }
+            
+            const part = partResults[0];
+            const currentStock = part.stock || 0;
+            
+            if (currentStock < item.quantity) {
+              throw new Error(`Insufficient stock for ${part.name}. Available: ${currentStock}, Required: ${item.quantity}`);
+            }
+            
+            // Decrement inventory
+            await trx.update(parts)
+              .set({ stock: currentStock - item.quantity })
+              .where(eq(parts.id, item.partId));
+          }
+        }
+        
+        // Step 5: Update order payment status
+        await trx.update(orders)
+          .set({ 
+            paymentStatus: 'paid',
+            status: sql`CASE WHEN status = 'pending' THEN 'accepted' ELSE status END`
+          })
+          .where(eq(orders.id, orderId));
+        
+        return { success: true, transaction };
+      });
+      
+      console.log(`✅ Atomic wallet payment completed: ${userId} paid ₹${amount} for order ${orderId}`);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Atomic wallet payment failed:', error);
+      errors.push(error.message || 'Payment processing failed');
+      return { success: false, errors };
+    }
   }
 
   // Provider methods
