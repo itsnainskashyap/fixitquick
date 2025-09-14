@@ -385,6 +385,16 @@ export class PostgresStorage implements IStorage {
       .where(sql`${userSessions.expiresAt} < NOW() OR ${userSessions.revokedAt} IS NOT NULL`);
   }
 
+  async getUserSessions(userId: string): Promise<UserSession[]> {
+    return await db.select().from(userSessions)
+      .where(and(
+        eq(userSessions.userId, userId),
+        gte(userSessions.expiresAt, new Date()),
+        sql`${userSessions.revokedAt} IS NULL`
+      ))
+      .orderBy(desc(userSessions.createdAt));
+  }
+
   // Service Category methods
   async getServiceCategories(activeOnly = true): Promise<ServiceCategory[]> {
     if (activeOnly) {
@@ -1941,61 +1951,135 @@ export class PostgresStorage implements IStorage {
       .where(lte(otpChallenges.expiresAt, new Date()));
   }
 
-  // User Session methods
-  async createUserSession(session: InsertUserSession): Promise<UserSession> {
-    const result = await db.insert(userSessions).values(session).returning();
-    return result[0];
+  // Seed data for development/demo
+  async seedData(): Promise<void> {
+    try {
+      // Check if we already have data
+      const existingCategories = await this.getServiceCategories();
+      if (existingCategories.length > 0) {
+        return; // Already seeded
+      }
+
+      // Add service categories
+      const homeCategory = await this.createServiceCategory({
+        name: "Home Services",
+        description: "Professional home repair and maintenance services",
+        icon: "🏠",
+        isActive: true
+      });
+
+      const techCategory = await this.createServiceCategory({
+        name: "Technology",
+        description: "Device repairs and tech support",
+        icon: "📱",
+        isActive: true
+      });
+
+      const autoCategory = await this.createServiceCategory({
+        name: "Automotive",
+        description: "Vehicle maintenance and repair services",
+        icon: "🚗",
+        isActive: true
+      });
+
+      // Add services
+      await this.createService({
+        name: "AC Repair & Service",
+        description: "Professional air conditioning repair and maintenance services",
+        basePrice: "299",
+        categoryId: homeCategory.id,
+        isActive: true,
+        icon: "❄️",
+        rating: "4.8",
+        totalBookings: 1247,
+        features: ["Same day service", "1 year warranty", "Expert technicians"]
+      });
+
+      await this.createService({
+        name: "Phone Screen Replacement",
+        description: "Quick and reliable smartphone screen repair",
+        basePrice: "899",
+        categoryId: techCategory.id,
+        isActive: true,
+        icon: "📱",
+        rating: "4.9",
+        totalBookings: 892,
+        features: ["30 min repair", "Original parts", "6 month warranty"]
+      });
+
+      await this.createService({
+        name: "Plumbing Services",
+        description: "Emergency and routine plumbing solutions",
+        basePrice: "199",
+        categoryId: homeCategory.id,
+        isActive: true,
+        icon: "🔧",
+        rating: "4.7",
+        totalBookings: 654,
+        features: ["24/7 emergency", "Licensed plumbers", "Fixed pricing"]
+      });
+
+      await this.createService({
+        name: "Car Battery Replacement",
+        description: "Professional car battery installation service",
+        basePrice: "2499",
+        categoryId: autoCategory.id,
+        isActive: true,
+        icon: "🔋",
+        rating: "4.6",
+        totalBookings: 423,
+        features: ["At your location", "Brand warranty", "Installation included"]
+      });
+
+      // Add parts categories - Check if any exist first
+      const existingPartsCategories = await this.getPartsCategories();
+      let techPartsId: string;
+      let homePartsId: string;
+      
+      if (existingPartsCategories.length === 0) {
+        console.log("Creating parts categories...");
+        // Parts categories don't exist in the schema, so we'll use service category IDs for demo
+        // This is a temporary solution - in a real app you'd create proper parts categories
+        techPartsId = techCategory.id;
+        homePartsId = homeCategory.id;
+      } else {
+        // If parts categories exist, try to find suitable ones
+        const techParts = existingPartsCategories.find(c => c.name.includes("Tech") || c.name.includes("Electronics"));
+        const homeParts = existingPartsCategories.find(c => c.name.includes("Home") || c.name.includes("Appliance"));
+        
+        techPartsId = techParts?.id || techCategory.id;
+        homePartsId = homeParts?.id || homeCategory.id;
+      }
+
+      // Add parts
+      await this.createPart({
+        name: "iPhone 14 Screen",
+        description: "Original quality replacement screen for iPhone 14",
+        price: "2999",
+        categoryId: techPartsId,
+        providerId: null,
+        isActive: true,
+        stock: 25,
+        images: []
+      });
+
+      await this.createPart({
+        name: "AC Air Filter",
+        description: "High-efficiency air filter for split ACs",
+        price: "299",
+        categoryId: homePartsId,
+        providerId: null,
+        isActive: true,
+        stock: 150,
+        images: []
+      });
+
+      console.log("✅ Seed data created successfully");
+    } catch (error) {
+      console.error("❌ Error seeding data:", error);
+    }
   }
 
-  async getUserSession(userId: string, refreshTokenHash: string): Promise<UserSession | undefined> {
-    const result = await db.select().from(userSessions)
-      .where(and(
-        eq(userSessions.userId, userId),
-        eq(userSessions.refreshTokenHash, refreshTokenHash),
-        gte(userSessions.expiresAt, new Date()),
-        sql`${userSessions.revokedAt} IS NULL`
-      ))
-      .limit(1);
-    return result[0];
-  }
-
-  async getUserSessions(userId: string): Promise<UserSession[]> {
-    return await db.select().from(userSessions)
-      .where(and(
-        eq(userSessions.userId, userId),
-        gte(userSessions.expiresAt, new Date()),
-        sql`${userSessions.revokedAt} IS NULL`
-      ))
-      .orderBy(desc(userSessions.createdAt));
-  }
-
-  async revokeUserSession(sessionId: string): Promise<void> {
-    // SECURITY FIX: Revoke by sessionId not database id
-    await db.update(userSessions)
-      .set({ revokedAt: new Date() })
-      .where(eq(userSessions.sessionId, sessionId));
-  }
-
-  async revokeUserSessionById(id: string): Promise<void> {
-    // Keep old method for compatibility
-    await db.update(userSessions)
-      .set({ revokedAt: new Date() })
-      .where(eq(userSessions.id, id));
-  }
-
-  async revokeAllUserSessions(userId: string): Promise<void> {
-    await db.update(userSessions)
-      .set({ revokedAt: new Date() })
-      .where(and(
-        eq(userSessions.userId, userId),
-        sql`${userSessions.revokedAt} IS NULL`
-      ));
-  }
-
-  async cleanupExpiredSessions(): Promise<void> {
-    await db.delete(userSessions)
-      .where(lte(userSessions.expiresAt, new Date()));
-  }
 }
 
 export const storage = new PostgresStorage();

@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { storage } from "./storage";
-import { authMiddleware, requireRole, type AuthenticatedRequest } from "./middleware/auth";
+import { authMiddleware, optionalAuth, requireRole, type AuthenticatedRequest } from "./middleware/auth";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
@@ -217,6 +217,9 @@ function validateBody(schema: z.ZodSchema) {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - Setup Replit Auth
   await setupAuth(app);
+  
+  // Initialize seed data for demo
+  await storage.seedData();
 
   // Security middleware - more permissive in development
   app.use(helmet({
@@ -786,10 +789,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WebSocket token endpoint for secure WebSocket authentication
-  app.post('/api/v1/auth/ws-token', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/v1/auth/ws-token', isAuthenticated, async (req: any, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      console.log('🔐 WebSocket token request:', {
+        isAuth: req.isAuthenticated(),
+        user: req.user ? 'present' : 'missing',
+        claims: req.user?.claims ? 'present' : 'missing',
+        sub: req.user?.claims?.sub
+      });
+      
+      const userId = req.user.claims.sub;
       if (!userId) {
+        console.log('❌ WebSocket token: No userId found');
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
@@ -982,11 +993,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get personalized suggestions for user
-  app.get('/api/v1/ai/suggestions', authMiddleware, async (req, res) => {
+  app.get('/api/v1/ai/suggestions', optionalAuth, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
-        return res.status(401).json({ message: 'Unauthorized' });
+        // Return default suggestions when not authenticated
+        return res.json({
+          success: true,
+          suggestions: [
+            { query: 'AC repair', count: 156 },
+            { query: 'plumbing services', count: 142 },
+            { query: 'phone screen replacement', count: 98 },
+            { query: 'laptop battery', count: 87 },
+            { query: 'washing machine repair', count: 76 }
+          ]
+        });
       }
 
       const { type = 'mixed', limit = 10 } = req.query;
@@ -1217,22 +1238,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/services/suggested', authMiddleware, async (req, res) => {
+  app.get('/api/v1/services/suggested', optionalAuth, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        // Return default suggested services when not authenticated
+        const defaultServices = await storage.getServices({ isActive: true });
+        const suggested = defaultServices.slice(0, 6);
+        return res.json(suggested);
+      }
       
       // Get user's recent orders for personalization
       const recentOrders = await storage.getRecentOrders(userId, 5);
       
-      // Extract categories from recent orders (using items array)
+      if (recentOrders.length === 0) {
+        // If no history, return popular services
+        const popularServices = await storage.getServices({ isActive: true });
+        return res.json(popularServices.slice(0, 6));
+      }
+      
+      // Extract categories from recent orders
       const recentCategories = recentOrders
-        .map(order => order.items?.map(item => item.type) || [])
+        .map(order => order.items?.map((item: any) => item.categoryId) || [])
         .flat();
       
-      // Get AI suggestions based on user history
-      const suggestions = await aiService.suggestPersonalizedServices(recentCategories);
+      // Get services from those categories
+      let suggested = [];
+      for (const categoryId of [...new Set(recentCategories)]) {
+        const categoryServices = await storage.getServicesByCategory(categoryId);
+        suggested.push(...categoryServices.slice(0, 2));
+      }
       
-      res.json(suggestions);
+      // Fill with general popular services if needed
+      if (suggested.length < 6) {
+        const popularServices = await storage.getServices({ isActive: true });
+        suggested.push(...popularServices.slice(0, 6 - suggested.length));
+      }
+      
+      res.json(suggested.slice(0, 6));
     } catch (error) {
       console.error('Error fetching suggestions:', error);
       res.status(500).json({ message: 'Failed to fetch suggestions' });

@@ -17,7 +17,7 @@ import {
   CheckCircle,
   X,
   Settings,
-  MarkAsUnread,
+  Mail,
   Trash2
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';

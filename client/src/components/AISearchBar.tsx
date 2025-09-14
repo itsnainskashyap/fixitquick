@@ -99,13 +99,13 @@ export function AISearchBar({
   });
 
   const { data: personalizedSuggestions } = useQuery({
-    queryKey: ['ai-suggestions', user?.uid],
+    queryKey: ['ai-suggestions', user?.id],
     queryFn: async () => {
-      if (!user?.uid) return null;
+      if (!user?.id) return null;
       const response = await fetch(`/api/v1/ai/suggestions?type=mixed&limit=6`);
       return response.json();
     },
-    enabled: !!user?.uid && showTrending
+    enabled: !!user?.id && showTrending
   });
 
   const { data: popularSearchesData } = useQuery({

@@ -38,6 +38,11 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
+    // Early exit if user is already authenticated via Replit session
+    if (req.user) {
+      return next();
+    }
+
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {

@@ -235,8 +235,8 @@ export function WebSocketProvider({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${await user?.getIdToken()}`
-        }
+        },
+        credentials: 'include', // Include cookies for Replit auth
       });
       
       if (!response.ok) {

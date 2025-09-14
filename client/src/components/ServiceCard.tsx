@@ -69,7 +69,7 @@ export function ServiceCard({
           {rating > 0 && (
             <div className="flex items-center justify-center mt-1">
               <Star className="w-3 h-3 text-yellow-400 fill-current" />
-              <span className="text-xs text-muted-foreground ml-1">{rating.toFixed(1)}</span>
+              <span className="text-xs text-muted-foreground ml-1">{Number(rating).toFixed(1)}</span>
             </div>
           )}
         </div>
@@ -114,7 +114,7 @@ export function ServiceCard({
                   {rating > 0 && (
                     <div className="flex items-center space-x-1">
                       <Star className="w-4 h-4 text-yellow-400 fill-current" />
-                      <span className="text-sm font-medium">{rating.toFixed(1)}</span>
+                      <span className="text-sm font-medium">{Number(rating).toFixed(1)}</span>
                       <span className="text-xs text-muted-foreground">({totalBookings})</span>
                     </div>
                   )}
@@ -189,7 +189,7 @@ export function ServiceCard({
             {rating > 0 && (
               <div className="flex items-center space-x-1">
                 <Star className="w-3 h-3 text-yellow-400 fill-current" />
-                <span className="text-xs text-muted-foreground">{rating.toFixed(1)}</span>
+                <span className="text-xs text-muted-foreground">{Number(rating).toFixed(1)}</span>
               </div>
             )}
             
