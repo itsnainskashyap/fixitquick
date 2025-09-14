@@ -34,9 +34,45 @@ export const users = pgTable("users", {
     pincode: string;
   }>(),
   isActive: boolean("is_active").default(true),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// OTP challenges for SMS authentication
+export const otpChallenges = pgTable("otp_challenges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  phone: varchar("phone").notNull(),
+  codeHash: varchar("code_hash").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").default(0),
+  lastSentAt: timestamp("last_sent_at").defaultNow(),
+  resendCount: integer("resend_count").default(0),
+  ip: varchar("ip"),
+  userAgent: varchar("user_agent"),
+  status: varchar("status", { enum: ["sent", "verified", "expired"] }).default("sent"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  phoneIdx: index("otp_phone_idx").on(table.phone),
+  statusIdx: index("otp_status_idx").on(table.status),
+  expiresIdx: index("otp_expires_idx").on(table.expiresAt),
+}));
+
+// User sessions for JWT refresh token management
+export const userSessions = pgTable("user_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  refreshTokenHash: varchar("refresh_token_hash").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  ip: varchar("ip"),
+  userAgent: varchar("user_agent"),
+}, (table) => ({
+  userIdIdx: index("session_user_id_idx").on(table.userId),
+  expiresIdx: index("session_expires_idx").on(table.expiresAt),
+  tokenIdx: index("session_token_idx").on(table.refreshTokenHash),
+}));
 
 // Service categories
 export const serviceCategories = pgTable("service_categories", {
@@ -259,6 +295,8 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ i
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true });
 export const insertServiceProviderSchema = createInsertSchema(serviceProviders).omit({ id: true, createdAt: true });
+export const insertOtpChallengeSchema = createInsertSchema(otpChallenges).omit({ id: true, createdAt: true });
+export const insertUserSessionSchema = createInsertSchema(userSessions).omit({ id: true, createdAt: true });
 
 // Export types
 export type User = typeof users.$inferSelect;
@@ -284,3 +322,7 @@ export type Coupon = typeof coupons.$inferSelect;
 export type InsertCoupon = z.infer<typeof insertCouponSchema>;
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = z.infer<typeof insertReviewSchema>;
+export type OtpChallenge = typeof otpChallenges.$inferSelect;
+export type InsertOtpChallenge = z.infer<typeof insertOtpChallengeSchema>;
+export type UserSession = typeof userSessions.$inferSelect;
+export type InsertUserSession = z.infer<typeof insertUserSessionSchema>;

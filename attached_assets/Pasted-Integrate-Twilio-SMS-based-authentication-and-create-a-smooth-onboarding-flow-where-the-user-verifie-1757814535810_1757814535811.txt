@@ -1,0 +1,105 @@
+Integrate Twilio SMS-based authentication and create a smooth onboarding flow where the user verifies their mobile number via OTP, then enters their name and sets their account details.
+
+
+---
+
+1️⃣ Twilio OTP Authentication
+
+Integrate Twilio SMS API for sending OTPs to user’s mobile number.
+
+User enters phone number in a “Sign In / Sign Up” form.
+
+Backend generates a secure 6-digit OTP, sends it via Twilio SMS.
+
+Automatic OTP detection/fill:
+
+If browser supports WebOTP API (on Chrome/Android), automatically read the incoming SMS and auto-fill OTP field.
+
+If not supported, user can manually enter the OTP.
+
+
+Once OTP is verified, user is marked as authenticated and can proceed to the next step.
+
+
+
+---
+
+2️⃣ Onboarding After Verification
+
+1. Name Input:
+
+After OTP verification, show a form asking the user to enter their Name.
+
+Name is stored in user’s profile.
+
+
+
+2. Automatic Location Selector:
+
+Use HTML5 Geolocation API or Maps API to automatically detect current location (city + area).
+
+Show a map/location selector popup to allow user to confirm or adjust location.
+
+Once confirmed, display the current location at the top of the app UI (e.g., in a header bar).
+
+
+
+
+
+---
+
+3️⃣ User Account Details Page
+
+After onboarding, in the Account/Profile page:
+
+Show Name and Mobile Number (from OTP login).
+
+Add an “Update Gmail” option where the user can add or change their Gmail/Email ID.
+
+Ensure changes update in database instantly.
+
+
+
+
+---
+
+4️⃣ Flow Summary
+
+1. User enters mobile number → Click Send OTP.
+
+
+2. Twilio sends SMS with OTP.
+
+
+3. Web app auto-detects OTP (if supported) → auto-verifies; otherwise manual entry.
+
+
+4. After successful verification → Name Entry page.
+
+
+5. Automatic location detection → User confirms → Location displayed in header.
+
+
+6. Account page shows Name, Number, and Update Gmail option.
+
+
+
+
+---
+
+5️⃣ Key Requirements
+
+Security: OTP must expire in a short time (e.g., 5 minutes).
+
+Validation: Limit OTP request attempts to avoid abuse.
+
+UI/UX: Smooth transitions, loading indicators during SMS send & verification.
+
+Database: Store user data: { name, phone, email (optional), location (lat,long, city), verified: true }.
+
+
+
+---
+
+👉 Expected Outcome:
+A fully functional mobile-number based login with Twilio SMS, automatic OTP detection, location auto-selection, and a clean profile page where users can update Gmail any time.

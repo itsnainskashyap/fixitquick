@@ -24,6 +24,10 @@ import {
   type InsertNotification,
   type Review,
   type InsertReview,
+  type OtpChallenge,
+  type InsertOtpChallenge,
+  type UserSession,
+  type InsertUserSession,
   users,
   serviceCategories,
   services,
@@ -36,6 +40,8 @@ import {
   chatMessages,
   notifications,
   reviews,
+  otpChallenges,
+  userSessions,
   appSettings,
   insertUserSchema,
   insertServiceCategorySchema,
@@ -48,6 +54,8 @@ import {
   insertNotificationSchema,
   insertReviewSchema,
   insertServiceProviderSchema,
+  insertOtpChallengeSchema,
+  insertUserSessionSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -218,6 +226,23 @@ export interface IStorage {
     count: number;
     category?: string;
   }[]>;
+
+  // OTP Challenge methods
+  createOtpChallenge(challenge: InsertOtpChallenge): Promise<OtpChallenge>;
+  getOtpChallenge(phone: string): Promise<OtpChallenge | undefined>;
+  getOtpChallengeById(id: string): Promise<OtpChallenge | undefined>;
+  updateOtpChallenge(id: string, data: Partial<InsertOtpChallenge>): Promise<OtpChallenge | undefined>;
+  expireOtpChallenge(id: string): Promise<void>;
+  incrementOtpAttempts(id: string): Promise<OtpChallenge | undefined>;
+  cleanupExpiredOtpChallenges(): Promise<void>;
+
+  // User Session methods
+  createUserSession(session: InsertUserSession): Promise<UserSession>;
+  getUserSession(userId: string, refreshTokenHash: string): Promise<UserSession | undefined>;
+  getUserSessions(userId: string): Promise<UserSession[]>;
+  revokeUserSession(id: string): Promise<void>;
+  revokeAllUserSessions(userId: string): Promise<void>;
+  cleanupExpiredSessions(): Promise<void>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -271,7 +296,7 @@ export class PostgresStorage implements IStorage {
     const searchTerm = `%${search.toLowerCase()}%`;
     let baseQuery = db.select().from(users);
     
-    if (role && role !== 'all') {
+    if (role) {
       return await baseQuery
         .where(and(
           eq(users.role, role),
@@ -329,9 +354,9 @@ export class PostgresStorage implements IStorage {
     
     const whereClause = combineConditions(conditions);
     if (whereClause) {
-      return await baseQuery.where(whereClause);
+      return await baseQuery.where(whereClause).execute();
     } else {
-      return await baseQuery;
+      return await baseQuery.execute();
     }
   }
 
@@ -341,7 +366,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createService(service: InsertService): Promise<Service> {
-    const result = await db.insert(services).values(service).returning();
+    const result = await db.insert(services).values([service]).returning();
     return result[0];
   }
 
@@ -355,7 +380,8 @@ export class PostgresStorage implements IStorage {
 
   async getServicesByCategory(categoryId: string): Promise<Service[]> {
     return await db.select().from(services)
-      .where(and(eq(services.categoryId, categoryId), eq(services.isActive, true)));
+      .where(and(eq(services.categoryId, categoryId), eq(services.isActive, true)))
+      .execute();
   }
 
   // Order methods
@@ -381,7 +407,7 @@ export class PostgresStorage implements IStorage {
       baseQuery = baseQuery.limit(filters.limit);
     }
     
-    return await baseQuery;
+    return await baseQuery.execute();
   }
 
   async getOrder(id: string): Promise<Order | undefined> {
@@ -390,7 +416,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createOrder(order: InsertOrder): Promise<Order> {
-    const result = await db.insert(orders).values(order).returning();
+    const result = await db.insert(orders).values([order]).returning();
     return result[0];
   }
 
@@ -412,7 +438,8 @@ export class PostgresStorage implements IStorage {
     const whereClause = combineConditions(conditions);
     return await db.select().from(orders)
       .where(whereClause!)
-      .orderBy(desc(orders.createdAt));
+      .orderBy(desc(orders.createdAt))
+      .execute();
   }
 
   async getOrdersByProvider(providerId: string, status?: string): Promise<Order[]> {
@@ -513,7 +540,7 @@ export class PostgresStorage implements IStorage {
     };
 
     // Check if transition is valid
-    if (!validTransitions[currentStatus]?.includes(newStatus)) {
+    if (!currentStatus || !validTransitions[currentStatus]?.includes(newStatus)) {
       return { allowed: false, reason: `Cannot change status from ${currentStatus} to ${newStatus}` };
     }
 
@@ -610,8 +637,7 @@ export class PostgresStorage implements IStorage {
     }
 
     const updateData: Partial<InsertOrder> = {
-      status: 'accepted',
-      updatedAt: new Date()
+      status: 'accepted'
     };
 
     if (user.role === 'service_provider' || order.type === 'service') {
@@ -633,7 +659,7 @@ export class PostgresStorage implements IStorage {
     }
 
     // Check if order is already cancelled or completed
-    if (['cancelled', 'completed', 'refunded'].includes(order.status)) {
+    if (order.status && ['cancelled', 'completed', 'refunded'].includes(order.status)) {
       return { allowed: false, reason: `Cannot cancel ${order.status} order` };
     }
 
@@ -735,7 +761,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPart(part: InsertPart): Promise<Part> {
-    const result = await db.insert(parts).values(part).returning();
+    const result = await db.insert(parts).values([part]).returning();
     return result[0];
   }
 
@@ -912,7 +938,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
-    const result = await db.insert(walletTransactions).values(transaction).returning();
+    const result = await db.insert(walletTransactions).values([transaction]).returning();
     return result[0];
   }
 
@@ -958,7 +984,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider> {
-    const result = await db.insert(serviceProviders).values(provider).returning();
+    const result = await db.insert(serviceProviders).values([provider]).returning();
     return result[0];
   }
 
@@ -977,8 +1003,8 @@ export class PostgresStorage implements IStorage {
       .orderBy(asc(chatMessages.createdAt));
   }
 
-  async createChatMessage(message: any): Promise<ChatMessage> {
-    const result = await db.insert(chatMessages).values(message).returning();
+  async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
+    const result = await db.insert(chatMessages).values([message]).returning();
     return result[0];
   }
 
@@ -997,7 +1023,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createNotification(notification: InsertNotification): Promise<Notification> {
-    const result = await db.insert(notifications).values(notification).returning();
+    const result = await db.insert(notifications).values([notification]).returning();
     return result[0];
   }
 
@@ -1028,7 +1054,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createReview(review: InsertReview): Promise<Review> {
-    const result = await db.insert(reviews).values(review).returning();
+    const result = await db.insert(reviews).values([review]).returning();
     return result[0];
   }
 
@@ -1046,7 +1072,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createCoupon(coupon: InsertCoupon): Promise<Coupon> {
-    const result = await db.insert(coupons).values(coupon).returning();
+    const result = await db.insert(coupons).values([coupon]).returning();
     return result[0];
   }
 
@@ -1719,6 +1745,104 @@ export class PostgresStorage implements IStorage {
     }
 
     return [...new Set(suggestions)]; // Remove duplicates
+  }
+
+  // OTP Challenge methods
+  async createOtpChallenge(challenge: InsertOtpChallenge): Promise<OtpChallenge> {
+    const result = await db.insert(otpChallenges).values(challenge).returning();
+    return result[0];
+  }
+
+  async getOtpChallenge(phone: string): Promise<OtpChallenge | undefined> {
+    const result = await db.select().from(otpChallenges)
+      .where(and(
+        eq(otpChallenges.phone, phone),
+        gte(otpChallenges.expiresAt, new Date()),
+        eq(otpChallenges.status, "sent")
+      ))
+      .orderBy(desc(otpChallenges.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getOtpChallengeById(id: string): Promise<OtpChallenge | undefined> {
+    const result = await db.select().from(otpChallenges).where(eq(otpChallenges.id, id)).limit(1);
+    return result[0];
+  }
+
+  async updateOtpChallenge(id: string, data: Partial<InsertOtpChallenge>): Promise<OtpChallenge | undefined> {
+    const result = await db.update(otpChallenges)
+      .set(data)
+      .where(eq(otpChallenges.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async expireOtpChallenge(id: string): Promise<void> {
+    await db.update(otpChallenges)
+      .set({ status: "expired" })
+      .where(eq(otpChallenges.id, id));
+  }
+
+  async incrementOtpAttempts(id: string): Promise<OtpChallenge | undefined> {
+    const result = await db.update(otpChallenges)
+      .set({ attempts: sql`${otpChallenges.attempts} + 1` })
+      .where(eq(otpChallenges.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async cleanupExpiredOtpChallenges(): Promise<void> {
+    await db.delete(otpChallenges)
+      .where(lte(otpChallenges.expiresAt, new Date()));
+  }
+
+  // User Session methods
+  async createUserSession(session: InsertUserSession): Promise<UserSession> {
+    const result = await db.insert(userSessions).values(session).returning();
+    return result[0];
+  }
+
+  async getUserSession(userId: string, refreshTokenHash: string): Promise<UserSession | undefined> {
+    const result = await db.select().from(userSessions)
+      .where(and(
+        eq(userSessions.userId, userId),
+        eq(userSessions.refreshTokenHash, refreshTokenHash),
+        gte(userSessions.expiresAt, new Date()),
+        sql`${userSessions.revokedAt} IS NULL`
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async getUserSessions(userId: string): Promise<UserSession[]> {
+    return await db.select().from(userSessions)
+      .where(and(
+        eq(userSessions.userId, userId),
+        gte(userSessions.expiresAt, new Date()),
+        sql`${userSessions.revokedAt} IS NULL`
+      ))
+      .orderBy(desc(userSessions.createdAt));
+  }
+
+  async revokeUserSession(id: string): Promise<void> {
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(userSessions.id, id));
+  }
+
+  async revokeAllUserSessions(userId: string): Promise<void> {
+    await db.update(userSessions)
+      .set({ revokedAt: new Date() })
+      .where(and(
+        eq(userSessions.userId, userId),
+        sql`${userSessions.revokedAt} IS NULL`
+      ));
+  }
+
+  async cleanupExpiredSessions(): Promise<void> {
+    await db.delete(userSessions)
+      .where(lte(userSessions.expiresAt, new Date()));
   }
 }
 
