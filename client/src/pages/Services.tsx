@@ -246,13 +246,13 @@ export default function Services() {
           transition={{ delay: 0.3 }}
         >
           {loadingServices ? (
-            <div className="space-y-4">
+            <div className={viewMode === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4' : 'space-y-4'}>
               {[...Array(6)].map((_, i) => (
-                <ServiceCardSkeleton key={i} />
+                <ServiceCardSkeleton key={i} variant={viewMode === 'grid' ? 'compact' : 'default'} />
               ))}
             </div>
           ) : (
-            <div className={viewMode === 'grid' ? 'grid grid-cols-2 gap-4' : 'space-y-4'}>
+            <div className={viewMode === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4' : 'space-y-4'}>
               {sortedServices.length > 0 ? (
                 sortedServices.map((service: Service, index: number) => (
                   <motion.div

@@ -208,35 +208,39 @@ export default function Cart() {
                         
                         {/* Quantity Controls */}
                         <div className="flex items-center space-x-2 mt-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                            className="w-8 h-8 p-0"
-                            data-testid={`decrease-${item.id}`}
-                          >
-                            <Minus className="w-3 h-3" />
-                          </Button>
+                          {/* Quantity Selector Group */}
+                          <div className="flex items-center border border-border rounded-md bg-background">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                              className="w-8 h-8 p-0 rounded-none hover:bg-muted"
+                              data-testid={`decrease-${item.id}`}
+                            >
+                              <Minus className="w-3 h-3" />
+                            </Button>
+                            
+                            <span className="text-sm font-medium px-3 py-1 min-w-[40px] text-center border-x border-border">
+                              {item.quantity}
+                            </span>
+                            
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                              className="w-8 h-8 p-0 rounded-none hover:bg-muted"
+                              data-testid={`increase-${item.id}`}
+                            >
+                              <Plus className="w-3 h-3" />
+                            </Button>
+                          </div>
                           
-                          <span className="text-sm font-medium w-8 text-center">
-                            {item.quantity}
-                          </span>
-                          
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                            className="w-8 h-8 p-0"
-                            data-testid={`increase-${item.id}`}
-                          >
-                            <Plus className="w-3 h-3" />
-                          </Button>
-                          
+                          {/* Remove Button */}
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => removeItem(item.id)}
-                            className="w-8 h-8 p-0 text-destructive hover:text-destructive"
+                            className="w-8 h-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                             data-testid={`remove-${item.id}`}
                           >
                             <Trash2 className="w-3 h-3" />
