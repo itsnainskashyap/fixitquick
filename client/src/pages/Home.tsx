@@ -56,19 +56,19 @@ export default function Home() {
   const [isCartOpen, setIsCartOpen] = useState(false);
 
   // Fetch suggested services
-  const { data: suggestedServices, isLoading: loadingSuggestions } = useQuery({
+  const { data: suggestedServices = [], isLoading: loadingSuggestions } = useQuery<SuggestedService[]>({
     queryKey: ['/api/v1/services/suggested'],
     enabled: !!user,
   });
 
   // Fetch recent orders
-  const { data: recentOrders, isLoading: loadingOrders } = useQuery({
+  const { data: recentOrders = [], isLoading: loadingOrders } = useQuery<RecentOrder[]>({
     queryKey: ['/api/v1/orders/recent'],
     enabled: !!user,
   });
 
   // Fetch wallet balance
-  const { data: walletData } = useQuery({
+  const { data: walletData = { balance: 0 } } = useQuery<{ balance: number }>({
     queryKey: ['/api/v1/wallet/balance'],
     enabled: !!user,
   });
@@ -79,7 +79,7 @@ export default function Home() {
 
   const handleAddToCart = (serviceId: string) => {
     // Find service in suggested services or static data
-    const suggestedService = suggestedServices?.find((s: any) => s.id === serviceId);
+    const suggestedService = suggestedServices.find((s: SuggestedService) => s.id === serviceId);
     if (suggestedService) {
       addItem({
         id: suggestedService.id,
@@ -176,7 +176,7 @@ export default function Home() {
               className="flex-shrink-0"
               data-testid="wallet-button"
             >
-              Wallet: ₹{walletData?.balance || 0}
+              Wallet: ₹{walletData.balance}
             </Button>
           </div>
         </motion.div>
@@ -222,7 +222,7 @@ export default function Home() {
         </motion.div>
 
         {/* AI Suggested Services */}
-        {suggestedServices && suggestedServices.length > 0 && (
+        {suggestedServices.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -237,7 +237,7 @@ export default function Home() {
             </div>
             
             <div className="space-y-3">
-              {suggestedServices.slice(0, 3).map((service: SuggestedService, index: number) => (
+              {suggestedServices.slice(0, 3).map((service, index) => (
                 <motion.div
                   key={service.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -292,7 +292,7 @@ export default function Home() {
         </motion.div>
 
         {/* Recent Orders */}
-        {recentOrders && recentOrders.length > 0 && (
+        {recentOrders.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -312,7 +312,7 @@ export default function Home() {
             </div>
             
             <div className="space-y-3">
-              {recentOrders.slice(0, 2).map((order: RecentOrder, index: number) => (
+              {recentOrders.slice(0, 2).map((order, index) => (
                 <motion.div
                   key={order.id}
                   initial={{ opacity: 0, x: -20 }}

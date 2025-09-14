@@ -64,27 +64,50 @@ export function WebSocketProvider({
   const lastPongRef = useRef<number>(0);
 
   const connect = () => {
-    if (!isAuthenticated || !user) {
-      console.log('WebSocket: Not authenticated, skipping connection');
-      return;
-    }
-
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket: Already connected');
-      return;
-    }
-
     try {
+      if (!isAuthenticated || !user) {
+        console.log('WebSocket: Not authenticated, skipping connection');
+        return;
+      }
+
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        console.log('WebSocket: Already connected');
+        return;
+      }
+
+      // Extra safety: check if WebSocket is available
+      if (typeof WebSocket === 'undefined') {
+        console.warn('WebSocket: WebSocket not available in this environment');
+        setConnectionError('WebSocket not supported');
+        return;
+      }
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
       
       console.log(`WebSocket: Connecting to ${wsUrl}`);
-      socketRef.current = new WebSocket(wsUrl);
-
-      socketRef.current.onopen = handleOpen;
-      socketRef.current.onclose = handleClose;
-      socketRef.current.onerror = handleError;
-      socketRef.current.onmessage = handleMessage;
+      
+      try {
+        socketRef.current = new WebSocket(wsUrl);
+        
+        // Add safe event handlers with error boundaries
+        socketRef.current.onopen = (event) => {
+          try { handleOpen(); } catch (e) { console.warn('WebSocket open handler error:', e); }
+        };
+        socketRef.current.onclose = (event) => {
+          try { handleClose(event); } catch (e) { console.warn('WebSocket close handler error:', e); }
+        };
+        socketRef.current.onerror = (event) => {
+          try { handleError(event); } catch (e) { console.warn('WebSocket error handler error:', e); }
+        };
+        socketRef.current.onmessage = (event) => {
+          try { handleMessage(event); } catch (e) { console.warn('WebSocket message handler error:', e); }
+        };
+      } catch (socketError) {
+        console.error('WebSocket: Failed to create WebSocket instance:', socketError);
+        setConnectionError('Failed to create WebSocket connection');
+        setConnectionQuality('disconnected');
+      }
 
     } catch (error) {
       console.error('WebSocket: Connection error:', error);
@@ -382,12 +405,26 @@ export function WebSocketProvider({
     setConnectionQuality('disconnected');
   };
 
-  // Effect to handle authentication changes
+  // Effect to handle authentication changes - with safe initialization
   useEffect(() => {
-    if (isAuthenticated && user) {
-      connect();
-    } else {
-      disconnect();
+    try {
+      if (isAuthenticated && user) {
+        // Delay connection to avoid synchronous initialization issues
+        const connectTimeout = setTimeout(() => {
+          connect();
+        }, 100);
+
+        return () => {
+          clearTimeout(connectTimeout);
+          disconnect();
+        };
+      } else {
+        disconnect();
+      }
+    } catch (error) {
+      console.warn('WebSocket effect error:', error);
+      // Never throw during render - provide fallback
+      setConnectionError('Failed to initialize WebSocket');
     }
 
     return () => {

@@ -169,17 +169,26 @@ function Router() {
 }
 
 function App() {
+  const AppContent = (
+    <CartProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Router />
+      </TooltipProvider>
+    </CartProvider>
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
-          <CartProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Router />
-            </TooltipProvider>
-          </CartProvider>
-        </WebSocketProvider>
+        {/* Only enable WebSocket in production to prevent dev mounting issues */}
+        {import.meta.env.PROD ? (
+          <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+            {AppContent}
+          </WebSocketProvider>
+        ) : (
+          AppContent
+        )}
       </AuthProvider>
     </QueryClientProvider>
   );
