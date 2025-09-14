@@ -2791,21 +2791,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // WebSocket setup with comprehensive real-time features
   const httpServer = createServer(app);
-  const wsManager = new WebSocketManager(httpServer);
+  // TEMPORARILY DISABLED WebSocket to test Vite HMR conflict
+  // const wsManager = new WebSocketManager(httpServer);
   
   // Store WebSocket manager instance globally for use in routes
-  (global as any).wsManager = wsManager;
+  // (global as any).wsManager = wsManager;
   
   // Graceful shutdown
-  process.on('SIGTERM', () => {
-    console.log('Received SIGTERM, closing WebSocket connections...');
-    wsManager.cleanup();
-  });
+  // process.on('SIGTERM', () => {
+  //   console.log('Received SIGTERM, closing WebSocket connections...');
+  //   wsManager.cleanup();
+  // });
   
-  process.on('SIGINT', () => {
-    console.log('Received SIGINT, closing WebSocket connections...');
-    wsManager.cleanup();
-  });
+  // process.on('SIGINT', () => {
+  //   console.log('Received SIGINT, closing WebSocket connections...');
+  //   wsManager.cleanup();
+  // });
 
   return httpServer;
 }

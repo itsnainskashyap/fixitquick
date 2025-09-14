@@ -34,7 +34,7 @@ import {
   Camera,
   Upload,
   AlertTriangle,
-  Timeline,
+  History,
   Award,
   CreditCard
 } from 'lucide-react';
@@ -483,7 +483,7 @@ export default function OrderDetail() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <Timeline className="w-5 h-5" />
+                      <History className="w-5 h-5" />
                       Order Information
                     </CardTitle>
                   </CardHeader>
@@ -686,7 +686,7 @@ export default function OrderDetail() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Timeline className="w-5 h-5" />
+                    <History className="w-5 h-5" />
                     Order Progress
                   </CardTitle>
                 </CardHeader>
