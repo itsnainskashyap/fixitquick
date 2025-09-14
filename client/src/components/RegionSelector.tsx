@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MapPin, Search, Check, ChevronDown, Globe, Navigation } from 'lucide-react';
@@ -29,7 +29,10 @@ interface RegionInfo {
   };
 }
 
-export function RegionSelector({
+const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
+
+// Implementation component (only loaded when i18n is enabled)
+export function RegionSelectorImpl({
   variant = 'default',
   showServiceStatus = true,
   className,
@@ -381,13 +384,122 @@ export function RegionSelector({
           )} />
         </Button>
 
-        {/* Dropdown implementation similar to minimal variant... */}
-        {/* (Same dropdown JSX as minimal variant) */}
+        {/* Compact variant uses the same dropdown as minimal */}
+        <AnimatePresence>
+          {isOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                transition={{ duration: 0.15 }}
+                className={cn(
+                  "absolute top-full mt-2 w-72 bg-card border border-border rounded-lg shadow-lg py-3 z-50",
+                  dropdownAlign === 'left' && 'left-0',
+                  dropdownAlign === 'right' && 'right-0',
+                  dropdownAlign === 'center' && 'left-1/2 -translate-x-1/2'
+                )}
+                data-testid="region-dropdown"
+              >
+                {/* Same content as minimal variant */}
+                <div className="px-3 pb-3 border-b border-border">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center space-x-2 text-sm font-medium">
+                      <MapPin className="h-4 w-4" />
+                      <span>{t('region.select')}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={detectLocation}
+                      disabled={isDetectingLocation}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Navigation className="h-3 w-3 mr-1" />
+                      {isDetectingLocation ? t('common.detecting') : t('region.detect')}
+                    </Button>
+                  </div>
+                  
+                  {/* Search */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('region.search_city', 'Search cities...')}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8 h-8"
+                      data-testid="region-search"
+                    />
+                  </div>
+                </div>
+
+                {/* Cities List */}
+                <div className="max-h-60 overflow-y-auto">
+                  {filteredCities.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                      {t('region.no_cities_found', 'No cities found')}
+                    </div>
+                  ) : (
+                    filteredCities.slice(0, 20).map((city, index) => {
+                      const isServiceAvailable = checkServiceAvailability(city);
+                      const isSelected = selectedRegion?.city === city.city && selectedRegion?.state === city.state;
+                      
+                      return (
+                        <motion.button
+                          key={`${city.city}-${city.state}`}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.02 }}
+                          onClick={() => handleRegionSelect(city)}
+                          className={cn(
+                            "w-full flex items-center justify-between px-3 py-2 text-sm transition-colors",
+                            "hover:bg-muted focus:bg-muted focus:outline-none",
+                            isSelected && "bg-primary/10 text-primary font-medium"
+                          )}
+                          data-testid={`region-option-${city.city.toLowerCase().replace(/\s+/g, '-')}`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <MapPin className="h-4 w-4 text-muted-foreground" />
+                            <div className="text-left">
+                              <div className="font-medium">{city.city}</div>
+                              <div className="text-xs text-muted-foreground">{city.state}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center space-x-2">
+                            {showServiceStatus && (
+                              <Badge 
+                                variant={isServiceAvailable ? "default" : "secondary"}
+                                className={cn(
+                                  "text-xs px-2 py-0",
+                                  isServiceAvailable ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"
+                                )}
+                              >
+                                {isServiceAvailable ? t('common.available') : t('region.coming_soon', 'Soon')}
+                              </Badge>
+                            )}
+                            {isSelected && <Check className="h-4 w-4 text-primary" />}
+                          </div>
+                        </motion.button>
+                      );
+                    })
+                  )}
+                </div>
+              </motion.div>
+              
+              {/* Backdrop */}
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setIsOpen(false)}
+              />
+            </>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
 
-  // Render default variant (full implementation same pattern as LanguageSwitcher)
+  // Render default variant (following same pattern as LanguageSwitcher)
   return (
     <div className="relative">
       <Button
@@ -416,9 +528,212 @@ export function RegionSelector({
         )} />
       </Button>
 
-      {/* Full dropdown implementation... */}
-      {/* (Complete implementation following the same pattern as LanguageSwitcher) */}
+      {/* Full dropdown similar to LanguageSwitcher default variant */}
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className={cn(
+                "absolute top-full mt-2 w-80 bg-card border border-border rounded-lg shadow-lg py-3 z-50",
+                dropdownAlign === 'left' && 'left-0',
+                dropdownAlign === 'right' && 'right-0',
+                dropdownAlign === 'center' && 'left-1/2 -translate-x-1/2'
+              )}
+              data-testid="region-dropdown"
+            >
+              {/* Header */}
+              <div className="px-3 pb-3 border-b border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-2 text-sm font-medium text-muted-foreground">
+                    <Globe className="h-4 w-4" />
+                    <span>{t('region.select')}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={detectLocation}
+                    disabled={isDetectingLocation}
+                    className="h-8 px-3 text-xs"
+                  >
+                    <Navigation className="h-3 w-3 mr-1" />
+                    {isDetectingLocation ? t('common.detecting', 'Detecting...') : t('region.detect', 'Detect')}
+                  </Button>
+                </div>
+                
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder={t('region.search_city', 'Search cities...')}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 h-9"
+                    data-testid="region-search"
+                  />
+                </div>
+              </div>
+
+              {/* Cities List */}
+              <div className="max-h-64 overflow-y-auto">
+                {filteredCities.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    <MapPin className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                    <div>{t('region.no_cities_found', 'No cities found')}</div>
+                    <div className="text-xs mt-1">{t('region.try_different_search', 'Try a different search term')}</div>
+                  </div>
+                ) : (
+                  filteredCities.slice(0, 20).map((city, index) => {
+                    const isServiceAvailable = checkServiceAvailability(city);
+                    const isSelected = selectedRegion?.city === city.city && selectedRegion?.state === city.state;
+                    
+                    return (
+                      <motion.button
+                        key={`${city.city}-${city.state}`}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.02 }}
+                        onClick={() => handleRegionSelect(city)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-3 text-sm transition-colors",
+                          "hover:bg-muted focus:bg-muted focus:outline-none",
+                          isSelected && "bg-primary/10 text-primary font-medium"
+                        )}
+                        data-testid={`region-option-${city.city.toLowerCase().replace(/\s+/g, '-')}`}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <MapPin className={cn("h-4 w-4", isSelected ? "text-primary" : "text-muted-foreground")} />
+                          <div className="text-left">
+                            <div className="font-medium text-base">{city.city}</div>
+                            <div className="text-sm text-muted-foreground">{city.state}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-2">
+                          {showServiceStatus && (
+                            <Badge 
+                              variant={isServiceAvailable ? "default" : "secondary"}
+                              className={cn(
+                                "text-xs px-2 py-1",
+                                isServiceAvailable 
+                                  ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300" 
+                                  : "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300"
+                              )}
+                            >
+                              {isServiceAvailable ? t('common.available', 'Available') : t('region.coming_soon', 'Soon')}
+                            </Badge>
+                          )}
+                          {isSelected && <Check className="h-4 w-4 text-primary" />}
+                        </div>
+                      </motion.button>
+                    );
+                  })
+                )}
+              </div>
+            </motion.div>
+            
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setIsOpen(false)}
+            />
+          </>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// Simple error boundary component
+class RegionSelectorErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(_: Error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('RegionSelector error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// Lazy load the implementation component
+const RegionSelectorLazy = lazy(() => 
+  Promise.resolve({ default: RegionSelectorImpl })
+);
+
+// Error fallback component
+function RegionSelectorError() {
+  return (
+    <div className="text-xs text-muted-foreground px-2 py-1 rounded">
+      Region unavailable
+    </div>
+  );
+}
+
+// Loading fallback component
+function RegionSelectorLoading({ variant }: { variant?: string }) {
+  const getSkeletonSize = () => {
+    switch (variant) {
+      case 'minimal':
+        return 'h-8 w-8';
+      case 'compact':
+        return 'h-8 w-20';
+      default:
+        return 'h-9 w-40';
+    }
+  };
+
+  return (
+    <Skeleton 
+      className={`${getSkeletonSize()} rounded-md`}
+      data-testid="region-selector-loading"
+    />
+  );
+}
+
+// Main wrapper component that handles lazy loading and feature flag
+export function RegionSelector(props: RegionSelectorProps) {
+  // If i18n is disabled, render a placeholder or nothing
+  if (!I18N_ENABLED) {
+    // Return a minimal placeholder that matches the expected space
+    if (props.variant === 'minimal') {
+      return null; // Completely hidden for minimal variant
+    }
+    
+    return (
+      <div 
+        className={`text-xs text-muted-foreground px-2 py-1 ${props.className || ''}`}
+        data-testid="region-selector-disabled"
+      >
+        {/* TODO: Enable i18n by setting VITE_I18N_ENABLED=true */}
+      </div>
+    );
+  }
+
+  // If i18n is enabled, lazy load the actual implementation
+  return (
+    <RegionSelectorErrorBoundary fallback={<RegionSelectorError />}>
+      <Suspense fallback={<RegionSelectorLoading variant={props.variant} />}>
+        <RegionSelectorLazy {...props} />
+      </Suspense>
+    </RegionSelectorErrorBoundary>
   );
 }
 

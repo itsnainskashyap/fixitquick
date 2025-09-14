@@ -5,8 +5,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
-// import { RegionSelector } from '@/components/RegionSelector';
-// import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+import { RegionSelector } from '@/components/RegionSelector';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -506,8 +506,8 @@ export default function Account() {
                     </p>
                   </div>
                 </div>
-                {/* TODO: Add LanguageSwitcher when VITE_I18N_ENABLED=true */}
-                <div className="text-sm text-muted-foreground">English</div>
+                {/* Language Switcher - controlled by VITE_I18N_ENABLED feature flag */}
+                <LanguageSwitcher />
               </div>
               
               <Separator />
@@ -525,8 +525,8 @@ export default function Account() {
                     </p>
                   </div>
                 </div>
-                {/* TODO: Add RegionSelector when VITE_I18N_ENABLED=true */}
-                <div className="text-sm text-muted-foreground">India</div>
+                {/* Region Selector - controlled by VITE_I18N_ENABLED feature flag */}
+                <RegionSelector />
               </div>
             </CardContent>
           </Card>

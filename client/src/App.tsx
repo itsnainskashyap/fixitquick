@@ -6,10 +6,16 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
-import { LocalizationProvider } from "@/contexts/LocalizationContext";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 // Feature flag for i18n functionality
 const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
+
+// Lazy load LocalizationProvider only when i18n is enabled
+const LocalizationProvider = I18N_ENABLED ? lazy(() => 
+  import("@/contexts/LocalizationContext").then(module => ({ 
+    default: module.LocalizationProvider 
+  }))
+) : null;
 
 // Import pages
 import Home from "@/pages/Home";
@@ -208,12 +214,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {I18N_ENABLED ? (
-          <LocalizationProvider>
-            <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
-              {AppContent}
-            </WebSocketProvider>
-          </LocalizationProvider>
+        {I18N_ENABLED && LocalizationProvider ? (
+          <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="loading-spinner" /></div>}>
+            <LocalizationProvider>
+              <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+                {AppContent}
+              </WebSocketProvider>
+            </LocalizationProvider>
+          </Suspense>
         ) : (
           <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
             {AppContent}

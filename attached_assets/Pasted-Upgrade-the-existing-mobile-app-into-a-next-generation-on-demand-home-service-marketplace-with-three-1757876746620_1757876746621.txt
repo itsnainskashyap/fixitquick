@@ -1,0 +1,171 @@
+Upgrade the existing mobile app into a next-generation on-demand home-service marketplace with three powerful dashboards—Admin Panel, Service Provider Panel, and Parts Supplier Panel—and a smart booking engine that supports instant and scheduled bookings, real-time provider allocation, and full inventory management.
+
+
+---
+
+1️⃣ Core Features
+
+OTP Authentication
+
+Mobile-number login with Firebase/Twilio/MSG91 OTP verification.
+
+Auto-read where supported, secure expiry & retry limit.
+
+
+Dynamic Categories & Services
+
+Infinite hierarchy: Category → Sub-Category → Service (e.g. Electrician → Mobile Repair → Screen Replacement).
+
+Each service includes: title, description, base price, workflow steps, estimated time, icon & images.
+
+All editable in the Admin Panel; no hard-coded content.
+
+
+Flexible Booking Flow
+
+Instant Booking: For immediate service.
+
+Scheduled Booking: User picks date & time.
+
+Location Handling:
+
+User’s current GPS location auto-detected and sent to the assigned provider.
+
+User can also “Add Another Location” to manually enter a different service address.
+
+
+User can attach notes & photos while booking.
+
+
+Intelligent Provider Assignment
+
+Location-radius filtering to show only nearby verified providers with matching skills.
+
+Simultaneous push notifications to eligible providers.
+
+“Slide to Accept” request—first to accept is auto-assigned.
+
+Automatic re-broadcast if no one accepts within a configurable time.
+
+
+Real-time Tracking & Communication
+
+Live provider GPS tracking on Google Maps.
+
+Masked calling or in-app chat.
+
+Status updates (On the Way, Work Started, Completed) visible instantly to user and admin.
+
+
+
+
+---
+
+2️⃣ Admin Panel (Web)
+
+Complete CRUD for categories, sub-categories, services, prices, icons, images.
+
+User/Provider/Parts Supplier Management with KYC, ban/unban, performance monitoring.
+
+Bookings Dashboard with real-time tracking of instant & scheduled jobs.
+
+Inventory Oversight of all parts suppliers.
+
+Analytics & Insights: revenue, demand heatmaps, top providers.
+
+Notification Center: push/SMS/email campaigns.
+
+Role-Based Access with multi-admin permissions.
+
+
+
+---
+
+3️⃣ Service Provider Panel
+
+KYC verification & skill selection from admin-approved list.
+
+Real-time job feed with slide-to-accept requests.
+
+Full job workflow: Accept → On the Way → Work Started → Work Completed → Payment Confirmed.
+
+Provider receives user’s current or alternate location automatically.
+
+Earnings dashboard, rating & review history.
+
+Option to request/order spare parts from parts suppliers.
+
+
+
+---
+
+4️⃣ Parts Supplier Panel
+
+Add/update/delete products with name, description, photos, SKU, price, quantity.
+
+Low-stock alerts and inventory analytics.
+
+Accept/decline supply requests from service providers.
+
+Transaction & payment history.
+
+Live sync with Admin Panel inventory.
+
+
+
+---
+
+5️⃣ Booking & Workflow Engine
+
+1. User selects Category → Sub-Category → Service.
+
+
+2. Chooses Instant or Schedule, adds notes/photos.
+
+
+3. Current location auto-captured; optional Add Another Location lets user choose different service address.
+
+
+4. All nearby qualified providers receive request; race-to-accept assigns first responder.
+
+
+5. Once assigned, user instantly sees provider profile, photo, rating, masked phone, and live location.
+
+
+6. Provider updates status in real time; completion triggers optional payment & rating.
+
+
+
+
+---
+
+6️⃣ Technical & Backend Guidelines
+
+Database: Firestore/Firebase RTDB/MySQL with API layer.
+
+Real-Time Infrastructure: WebSockets/Firebase triggers for instant updates.
+
+Security: Role-based permissions, encrypted APIs, OTP rate-limits.
+
+Scalability: Micro-service ready, easy future integrations (wallet, coupons, loyalty).
+
+Extensibility: Modular code for payments, logistics, AI-based service suggestions.
+
+
+
+---
+
+Deliverables
+
+Production-ready code or no-code workflows integrated directly into the existing app.
+
+Fully functional Admin Panel, Service Provider Panel, and Parts Supplier Panel with live interconnectivity.
+
+Documentation: database schema, API endpoints, testing checklist (OTP flow, location forwarding, instant vs scheduled bookings, provider acceptance logic, inventory sync).
+
+
+
+---
+
+⚡ Outcome
+A future-proof, fully dynamic home-services marketplace module where users can book instant or scheduled repairs, share their current or alternate location, providers get real-time verified job requests, and parts suppliers keep the ecosystem stocked—all without any hard-coded data.

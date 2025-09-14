@@ -93,7 +93,8 @@
     "feedback": "प्रतिक्रिया",
     "terms": "नियम और शर्तें",
     "privacy": "गोपनीयता नीति",
-    "about": "हमारे बारे में"
+    "about": "हमारे बारे में",
+    "detecting": "पता लगा रहे हैं..."
   },
   "language": {
     "switch": "भाषा बदलें",
@@ -108,9 +109,21 @@
     "select": "क्षेत्र चुनें",
     "city": "शहर चुनें",
     "state": "राज्य चुनें",
+    "choose_city": "अपना शहर चुनें",
     "service_area": "सेवा क्षेत्र",
-    "not_available": "इस क्षेत्र में सेवा उपलब्ध नहीं है",
-    "expand_soon": "हम जल्द ही आपके क्षेत्र में विस्तार कर रहे हैं!"
+    "not_available": "इस क्षेत्र में सेवा उपलब्ध नहीं",
+    "expand_soon": "हम जल्द ही आपके क्षेत्र में विस्तार कर रहे हैं!",
+    "search_city": "शहर खोजें...",
+    "no_cities_found": "कोई शहर नहीं मिला",
+    "try_different_search": "अलग खोज शब्द आज़माएं",
+    "coming_soon": "जल्द",
+    "detect": "पता लगाएं",
+    "detecting": "पता लगा रहे हैं...",
+    "geolocation_not_supported": "इस ब्राउज़र में जियोलोकेशन समर्थित नहीं है",
+    "location_error": "स्थान का पता लगाने में विफल",
+    "location_permission_denied": "स्थान की अनुमति नकारी गई",
+    "location_unavailable": "स्थान की जानकारी उपलब्ध नहीं",
+    "location_timeout": "स्थान अनुरोध समय समाप्त"
   },
   "currency": {
     "symbol": "₹",

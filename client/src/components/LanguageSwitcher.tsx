@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Languages, Check, Globe, ChevronDown } from 'lucide-react';
@@ -20,7 +20,10 @@ interface Language {
   isRTL: boolean;
 }
 
-export function LanguageSwitcher({ 
+const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
+
+// Implementation component (only loaded when i18n is enabled)
+export function LanguageSwitcherImpl({ 
   variant = 'default', 
   showFlag = true, 
   className,
@@ -456,6 +459,96 @@ export function LanguageSwitcher({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// Simple error boundary component
+class LanguageSwitcherErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(_: Error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('LanguageSwitcher error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// Lazy load the implementation component
+const LanguageSwitcherLazy = lazy(() => 
+  Promise.resolve({ default: LanguageSwitcherImpl })
+);
+
+// Error fallback component
+function LanguageSwitcherError() {
+  return (
+    <div className="text-xs text-muted-foreground px-2 py-1 rounded">
+      Language unavailable
+    </div>
+  );
+}
+
+// Loading fallback component
+function LanguageSwitcherLoading({ variant }: { variant?: string }) {
+  const getSkeletonSize = () => {
+    switch (variant) {
+      case 'minimal':
+        return 'h-8 w-8';
+      case 'compact':
+        return 'h-8 w-16';
+      default:
+        return 'h-9 w-32';
+    }
+  };
+
+  return (
+    <Skeleton 
+      className={`${getSkeletonSize()} rounded-md`}
+      data-testid="language-switcher-loading"
+    />
+  );
+}
+
+// Main wrapper component that handles lazy loading and feature flag
+export function LanguageSwitcher(props: LanguageSwitcherProps) {
+  // If i18n is disabled, render a placeholder or nothing
+  if (!I18N_ENABLED) {
+    // Return a minimal placeholder that matches the expected space
+    if (props.variant === 'minimal') {
+      return null; // Completely hidden for minimal variant
+    }
+    
+    return (
+      <div 
+        className={`text-xs text-muted-foreground px-2 py-1 ${props.className || ''}`}
+        data-testid="language-switcher-disabled"
+      >
+        {/* TODO: Enable i18n by setting VITE_I18N_ENABLED=true */}
+      </div>
+    );
+  }
+
+  // If i18n is enabled, lazy load the actual implementation
+  return (
+    <LanguageSwitcherErrorBoundary fallback={<LanguageSwitcherError />}>
+      <Suspense fallback={<LanguageSwitcherLoading variant={props.variant} />}>
+        <LanguageSwitcherLazy {...props} />
+      </Suspense>
+    </LanguageSwitcherErrorBoundary>
   );
 }
 

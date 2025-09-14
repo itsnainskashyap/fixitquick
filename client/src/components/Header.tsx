@@ -7,8 +7,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AISearchBar } from './AISearchBar';
 import { NotificationCenter } from './NotificationCenter';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
-// import { LanguageSwitcher } from './LanguageSwitcher';
-// import { RegionSelector } from './RegionSelector';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { RegionSelector } from './RegionSelector';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
@@ -215,9 +215,11 @@ export function Header({
                 </motion.div>
               )}
 
-              {/* TODO: Add RegionSelector when VITE_I18N_ENABLED=true */}
+              {/* Region Selector - controlled by VITE_I18N_ENABLED feature flag */}
+              <RegionSelector />
               
-              {/* TODO: Add LanguageSwitcher when VITE_I18N_ENABLED=true */}
+              {/* Language Switcher - controlled by VITE_I18N_ENABLED feature flag */}
+              <LanguageSwitcher />
 
               {/* Notifications - Real-time Notification Center */}
               {isAuthenticated && (
