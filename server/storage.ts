@@ -43,6 +43,8 @@ import {
   type InsertUserLocalePreferences,
   type IndianRegion,
   type InsertIndianRegion,
+  serviceBookings,
+  providerJobRequests,
   users,
   serviceCategories,
   services,
@@ -85,6 +87,8 @@ import {
   insertUserNotificationPreferencesSchema,
   insertUserLocalePreferencesSchema,
   insertIndianRegionSchema,
+  insertServiceBookingSchema,
+  insertProviderJobRequestSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -347,6 +351,63 @@ export interface IStorage {
 
   // Order payment operations
   updateOrderPaymentStatus(orderId: string, status: 'pending' | 'paid' | 'failed' | 'refunded'): Promise<Order | undefined>;
+
+  // Service Booking methods
+  createServiceBooking(booking: InsertServiceBooking): Promise<ServiceBooking>;
+  getServiceBooking(id: string): Promise<ServiceBooking | undefined>;
+  getServiceBookingWithDetails(id: string): Promise<any>;
+  updateServiceBooking(id: string, data: Partial<InsertServiceBooking>): Promise<ServiceBooking | undefined>;
+  getUserServiceBookings(userId: string, options?: {
+    status?: string;
+    bookingType?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ServiceBooking[]>;
+  validateBookingStatusUpdate(bookingId: string, newStatus: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
+  canCancelServiceBooking(bookingId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
+
+  // Provider Job Request methods
+  createProviderJobRequest(request: InsertProviderJobRequest): Promise<ProviderJobRequest>;
+  getProviderJobRequest(bookingId: string, providerId: string): Promise<ProviderJobRequest | undefined>;
+  getProviderJobRequests(providerId: string, options?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ProviderJobRequest[]>;
+  acceptProviderJobRequest(bookingId: string, providerId: string, details?: {
+    estimatedArrival?: Date;
+    quotedPrice?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; message?: string; booking?: ServiceBooking }>;
+  declineProviderJobRequest(bookingId: string, providerId: string, reason?: string): Promise<{ success: boolean; message?: string }>;
+  cancelOtherJobRequests(bookingId: string, acceptedProviderId: string): Promise<void>;
+  cancelAllJobRequests(bookingId: string): Promise<void>;
+
+  // Provider Matching methods
+  findMatchingProviders(criteria: {
+    serviceId: string;
+    location: { latitude: number; longitude: number };
+    urgency: 'low' | 'normal' | 'high' | 'urgent';
+    bookingType: 'instant' | 'scheduled';
+    scheduledAt?: Date;
+    maxDistance?: number;
+    maxProviders?: number;
+  }): Promise<Array<{
+    userId: string;
+    firstName: string;
+    lastName: string;
+    profileImage?: string;
+    rating: number;
+    totalJobs: number;
+    distanceKm?: number;
+    estimatedTravelTime?: number;
+    estimatedArrival?: Date;
+    currentLocation?: { latitude: number; longitude: number };
+    lastKnownLocation?: { latitude: number; longitude: number };
+    isOnline: boolean;
+    responseRate: number;
+    skills: string[];
+  }>>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -2645,6 +2706,491 @@ export class PostgresStorage implements IStorage {
   // - Add Zod validation schemas  
   // - Update IStorage interface with proper typing
   // - Implement methods following established patterns
+
+  // ========================================
+  // SERVICE BOOKING OPERATIONS
+  // ========================================
+
+  async createServiceBooking(booking: InsertServiceBooking): Promise<ServiceBooking> {
+    const result = await db.insert(serviceBookings).values([{
+      ...booking,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }]).returning();
+    return result[0];
+  }
+
+  async getServiceBooking(id: string): Promise<ServiceBooking | undefined> {
+    const result = await db.select().from(serviceBookings)
+      .where(eq(serviceBookings.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async getServiceBookingWithDetails(id: string): Promise<any> {
+    const result = await db.select({
+      // Service booking fields
+      id: serviceBookings.id,
+      userId: serviceBookings.userId,
+      serviceId: serviceBookings.serviceId,
+      bookingType: serviceBookings.bookingType,
+      requestedAt: serviceBookings.requestedAt,
+      scheduledAt: serviceBookings.scheduledAt,
+      serviceLocation: serviceBookings.serviceLocation,
+      serviceDetails: serviceBookings.serviceDetails,
+      notes: serviceBookings.notes,
+      attachments: serviceBookings.attachments,
+      urgency: serviceBookings.urgency,
+      status: serviceBookings.status,
+      assignedProviderId: serviceBookings.assignedProviderId,
+      assignedAt: serviceBookings.assignedAt,
+      assignmentMethod: serviceBookings.assignmentMethod,
+      totalAmount: serviceBookings.totalAmount,
+      paymentMethod: serviceBookings.paymentMethod,
+      paymentStatus: serviceBookings.paymentStatus,
+      completedAt: serviceBookings.completedAt,
+      customerRating: serviceBookings.customerRating,
+      customerReview: serviceBookings.customerReview,
+      providerRating: serviceBookings.providerRating,
+      providerReview: serviceBookings.providerReview,
+      createdAt: serviceBookings.createdAt,
+      updatedAt: serviceBookings.updatedAt,
+      // User details
+      customerFirstName: users.firstName,
+      customerLastName: users.lastName,
+      customerEmail: users.email,
+      customerPhone: users.phone,
+      // Service details
+      serviceName: services.name,
+      serviceDescription: services.description,
+      serviceCategory: services.categoryId,
+      // Provider details (if assigned)
+      providerFirstName: sql<string | null>`provider.first_name`,
+      providerLastName: sql<string | null>`provider.last_name`,
+      providerEmail: sql<string | null>`provider.email`,
+      providerPhone: sql<string | null>`provider.phone`,
+    })
+    .from(serviceBookings)
+    .leftJoin(users, eq(serviceBookings.userId, users.id))
+    .leftJoin(services, eq(serviceBookings.serviceId, services.id))
+    .leftJoin(sql`users AS provider`, sql`${serviceBookings.assignedProviderId} = provider.id`)
+    .where(eq(serviceBookings.id, id))
+    .limit(1);
+    
+    return result[0];
+  }
+
+  async updateServiceBooking(id: string, data: Partial<InsertServiceBooking>): Promise<ServiceBooking | undefined> {
+    const result = await db.update(serviceBookings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(serviceBookings.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getUserServiceBookings(userId: string, options?: {
+    status?: string;
+    bookingType?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ServiceBooking[]> {
+    const conditions: SQL[] = [eq(serviceBookings.userId, userId)];
+    
+    if (options?.status) {
+      conditions.push(eq(serviceBookings.status, options.status));
+    }
+    if (options?.bookingType) {
+      conditions.push(eq(serviceBookings.bookingType, options.bookingType));
+    }
+
+    const whereClause = combineConditions(conditions);
+    let query = db.select().from(serviceBookings);
+    
+    if (whereClause) {
+      query = query.where(whereClause);
+    }
+    
+    query = query.orderBy(desc(serviceBookings.createdAt));
+    
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+    if (options?.offset) {
+      query = query.offset(options.offset);
+    }
+    
+    return await query;
+  }
+
+  async validateBookingStatusUpdate(bookingId: string, newStatus: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }> {
+    const booking = await this.getServiceBooking(bookingId);
+    if (!booking) {
+      return { allowed: false, reason: 'Booking not found' };
+    }
+
+    // Check user permissions
+    const canUpdate = 
+      userRole === 'admin' || 
+      booking.userId === userId || 
+      booking.assignedProviderId === userId;
+    
+    if (!canUpdate) {
+      return { allowed: false, reason: 'Insufficient permissions' };
+    }
+
+    // Validate status transitions
+    const currentStatus = booking.status;
+    const validTransitions: Record<string, string[]> = {
+      'pending': ['provider_search', 'cancelled'],
+      'provider_search': ['provider_assigned', 'cancelled'],
+      'provider_assigned': ['provider_on_way', 'cancelled'],
+      'provider_on_way': ['work_in_progress', 'cancelled'],
+      'work_in_progress': ['work_completed', 'cancelled'],
+      'work_completed': ['payment_pending', 'completed'],
+      'payment_pending': ['completed', 'refunded'],
+      'completed': ['refunded'],
+      'cancelled': [],
+      'refunded': [],
+    };
+
+    const allowedStatuses = validTransitions[currentStatus] || [];
+    if (!allowedStatuses.includes(newStatus)) {
+      return { 
+        allowed: false, 
+        reason: `Cannot transition from ${currentStatus} to ${newStatus}` 
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  async canCancelServiceBooking(bookingId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }> {
+    const booking = await this.getServiceBooking(bookingId);
+    if (!booking) {
+      return { allowed: false, reason: 'Booking not found' };
+    }
+
+    // Admin can always cancel
+    if (userRole === 'admin') {
+      return { allowed: true };
+    }
+
+    // Customer can cancel their own bookings
+    if (booking.userId === userId) {
+      // Check if booking is in cancellable state
+      const cancellableStatuses = ['pending', 'provider_search', 'provider_assigned'];
+      if (cancellableStatuses.includes(booking.status)) {
+        return { allowed: true };
+      }
+      return { 
+        allowed: false, 
+        reason: `Cannot cancel booking in ${booking.status} status` 
+      };
+    }
+
+    // Provider can cancel assigned bookings
+    if (booking.assignedProviderId === userId && userRole === 'service_provider') {
+      const providerCancellableStatuses = ['provider_assigned', 'provider_on_way'];
+      if (providerCancellableStatuses.includes(booking.status)) {
+        return { allowed: true };
+      }
+      return { 
+        allowed: false, 
+        reason: `Provider cannot cancel booking in ${booking.status} status` 
+      };
+    }
+
+    return { allowed: false, reason: 'Insufficient permissions' };
+  }
+
+  // ========================================
+  // PROVIDER JOB REQUEST OPERATIONS
+  // ========================================
+
+  async createProviderJobRequest(request: InsertProviderJobRequest): Promise<ProviderJobRequest> {
+    const result = await db.insert(providerJobRequests).values([{
+      ...request,
+      createdAt: new Date(),
+    }]).returning();
+    return result[0];
+  }
+
+  async getProviderJobRequest(bookingId: string, providerId: string): Promise<ProviderJobRequest | undefined> {
+    const result = await db.select().from(providerJobRequests)
+      .where(and(
+        eq(providerJobRequests.bookingId, bookingId),
+        eq(providerJobRequests.providerId, providerId)
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async getProviderJobRequests(providerId: string, options?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ProviderJobRequest[]> {
+    const conditions: SQL[] = [eq(providerJobRequests.providerId, providerId)];
+    
+    if (options?.status) {
+      conditions.push(eq(providerJobRequests.status, options.status));
+    }
+
+    const whereClause = combineConditions(conditions);
+    let query = db.select().from(providerJobRequests);
+    
+    if (whereClause) {
+      query = query.where(whereClause);
+    }
+    
+    query = query.orderBy(desc(providerJobRequests.createdAt));
+    
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+    if (options?.offset) {
+      query = query.offset(options.offset);
+    }
+    
+    return await query;
+  }
+
+  async acceptProviderJobRequest(bookingId: string, providerId: string, details?: {
+    estimatedArrival?: Date;
+    quotedPrice?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; message?: string; booking?: ServiceBooking }> {
+    // Start transaction for race condition handling
+    const jobRequest = await this.getProviderJobRequest(bookingId, providerId);
+    if (!jobRequest || jobRequest.status !== 'sent') {
+      return { success: false, message: 'Job request not found or already processed' };
+    }
+
+    const booking = await this.getServiceBooking(bookingId);
+    if (!booking || booking.status !== 'provider_search') {
+      return { success: false, message: 'Booking no longer available' };
+    }
+
+    // Check if job request hasn't expired
+    if (jobRequest.expiresAt && jobRequest.expiresAt < new Date()) {
+      return { success: false, message: 'Job request has expired' };
+    }
+
+    try {
+      // Update job request to accepted
+      await db.update(providerJobRequests)
+        .set({ 
+          status: 'accepted',
+          responseTime: Math.floor((Date.now() - jobRequest.createdAt.getTime()) / 1000),
+          notes: details?.notes || null,
+        })
+        .where(and(
+          eq(providerJobRequests.bookingId, bookingId),
+          eq(providerJobRequests.providerId, providerId)
+        ));
+
+      // Update booking with provider assignment
+      const updatedBooking = await this.updateServiceBooking(bookingId, {
+        status: 'provider_assigned',
+        assignedProviderId: providerId,
+        assignedAt: new Date(),
+        assignmentMethod: 'auto',
+        totalAmount: details?.quotedPrice ? details.quotedPrice.toString() : booking.totalAmount,
+      });
+
+      return { 
+        success: true, 
+        message: 'Job accepted successfully',
+        booking: updatedBooking 
+      };
+    } catch (error) {
+      console.error('Error accepting job request:', error);
+      return { success: false, message: 'Failed to accept job request' };
+    }
+  }
+
+  async declineProviderJobRequest(bookingId: string, providerId: string, reason?: string): Promise<{ success: boolean; message?: string }> {
+    const jobRequest = await this.getProviderJobRequest(bookingId, providerId);
+    if (!jobRequest || jobRequest.status !== 'sent') {
+      return { success: false, message: 'Job request not found or already processed' };
+    }
+
+    try {
+      await db.update(providerJobRequests)
+        .set({ 
+          status: 'declined',
+          responseTime: Math.floor((Date.now() - jobRequest.createdAt.getTime()) / 1000),
+          notes: reason || null,
+        })
+        .where(and(
+          eq(providerJobRequests.bookingId, bookingId),
+          eq(providerJobRequests.providerId, providerId)
+        ));
+
+      return { success: true, message: 'Job declined successfully' };
+    } catch (error) {
+      console.error('Error declining job request:', error);
+      return { success: false, message: 'Failed to decline job request' };
+    }
+  }
+
+  async cancelOtherJobRequests(bookingId: string, acceptedProviderId: string): Promise<void> {
+    await db.update(providerJobRequests)
+      .set({ status: 'cancelled' })
+      .where(and(
+        eq(providerJobRequests.bookingId, bookingId),
+        sql`${providerJobRequests.providerId} != ${acceptedProviderId}`,
+        eq(providerJobRequests.status, 'sent')
+      ));
+  }
+
+  async cancelAllJobRequests(bookingId: string): Promise<void> {
+    await db.update(providerJobRequests)
+      .set({ status: 'cancelled' })
+      .where(and(
+        eq(providerJobRequests.bookingId, bookingId),
+        eq(providerJobRequests.status, 'sent')
+      ));
+  }
+
+  // ========================================
+  // PROVIDER MATCHING OPERATIONS
+  // ========================================
+
+  async findMatchingProviders(criteria: {
+    serviceId: string;
+    location: { latitude: number; longitude: number };
+    urgency: 'low' | 'normal' | 'high' | 'urgent';
+    bookingType: 'instant' | 'scheduled';
+    scheduledAt?: Date;
+    maxDistance?: number;
+    maxProviders?: number;
+  }): Promise<Array<{
+    userId: string;
+    firstName: string;
+    lastName: string;
+    profileImage?: string;
+    rating: number;
+    totalJobs: number;
+    distanceKm?: number;
+    estimatedTravelTime?: number;
+    estimatedArrival?: Date;
+    currentLocation?: { latitude: number; longitude: number };
+    lastKnownLocation?: { latitude: number; longitude: number };
+    isOnline: boolean;
+    responseRate: number;
+    skills: string[];
+  }>> {
+    const maxDistance = criteria.maxDistance || 25; // km
+    const maxProviders = criteria.maxProviders || 5;
+
+    // Get service details to find required skills
+    const service = await this.getService(criteria.serviceId);
+    if (!service) {
+      return [];
+    }
+
+    // Find service providers with matching skills and availability
+    const providers = await db.select({
+      userId: serviceProviders.userId,
+      skills: serviceProviders.skills,
+      serviceAreas: serviceProviders.serviceAreas,
+      isActive: serviceProviders.isActive,
+      isVerified: serviceProviders.isVerified,
+      currentLocation: serviceProviders.currentLocation,
+      lastKnownLocation: serviceProviders.lastKnownLocation,
+      isOnline: serviceProviders.isOnline,
+      avgRating: serviceProviders.avgRating,
+      totalJobs: serviceProviders.totalJobs,
+      completionRate: serviceProviders.completionRate,
+      responseRate: serviceProviders.responseRate,
+      // User details
+      firstName: users.firstName,
+      lastName: users.lastName,
+      profileImage: users.profileImage,
+      isActiveUser: users.isActive,
+    })
+    .from(serviceProviders)
+    .leftJoin(users, eq(serviceProviders.userId, users.id))
+    .where(and(
+      eq(serviceProviders.isActive, true),
+      eq(serviceProviders.isVerified, true),
+      eq(users.isActive, true),
+      sql`${serviceProviders.skills} && ARRAY[${service.categoryId}]`, // PostgreSQL array overlap operator
+    ));
+
+    // Filter by distance and other criteria
+    const matchingProviders = providers
+      .filter(provider => {
+        // Check if provider is online for instant bookings
+        if (criteria.bookingType === 'instant' && !provider.isOnline) {
+          return false;
+        }
+
+        // Calculate distance using Haversine formula
+        const providerLocation = provider.currentLocation || provider.lastKnownLocation;
+        if (!providerLocation) {
+          return false;
+        }
+
+        const distance = this.calculateDistance(
+          criteria.location.latitude,
+          criteria.location.longitude,
+          providerLocation.latitude,
+          providerLocation.longitude
+        );
+
+        return distance <= maxDistance;
+      })
+      .map(provider => {
+        const providerLocation = provider.currentLocation || provider.lastKnownLocation;
+        const distanceKm = this.calculateDistance(
+          criteria.location.latitude,
+          criteria.location.longitude,
+          providerLocation!.latitude,
+          providerLocation!.longitude
+        );
+
+        return {
+          userId: provider.userId,
+          firstName: provider.firstName,
+          lastName: provider.lastName,
+          profileImage: provider.profileImage || undefined,
+          rating: parseFloat(provider.avgRating || '0'),
+          totalJobs: provider.totalJobs || 0,
+          distanceKm,
+          estimatedTravelTime: Math.ceil(distanceKm / 25 * 60), // Assume 25 km/h average speed
+          currentLocation: provider.currentLocation,
+          lastKnownLocation: provider.lastKnownLocation,
+          isOnline: provider.isOnline,
+          responseRate: parseFloat(provider.responseRate || '0'),
+          skills: provider.skills || [],
+        };
+      })
+      .sort((a, b) => {
+        // Sort by distance, rating, and response rate
+        const distanceScore = (a.distanceKm || 0) - (b.distanceKm || 0);
+        const ratingScore = (b.rating - a.rating) * 5; // Weight rating heavily
+        const responseScore = (b.responseRate - a.responseRate) * 2;
+        
+        return distanceScore + ratingScore + responseScore;
+      })
+      .slice(0, maxProviders);
+
+    return matchingProviders;
+  }
+
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
 
 }
 

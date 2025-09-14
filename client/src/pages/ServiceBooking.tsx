@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useParams } from 'wouter';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
+import LocationSetup from '@/components/LocationSetup';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,12 +19,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { queryClient, apiRequest } from '@/lib/queryClient';
-import { format, addDays, startOfToday, isAfter, isBefore } from 'date-fns';
+import { format, addDays, startOfToday, isAfter, isBefore, addMinutes } from 'date-fns';
 import { 
   ArrowLeft, 
+  ArrowRight,
   Calendar as CalendarIcon, 
   Clock, 
   MapPin, 
@@ -34,26 +37,99 @@ import {
   CheckCircle2,
   CreditCard,
   Wallet,
-  ShoppingCart
+  ShoppingCart,
+  Zap,
+  AlertTriangle,
+  Navigation,
+  Timer,
+  Route,
+  Loader2,
+  X
 } from 'lucide-react';
 
-// Form validation schema
+// Enhanced form validation schema
 const bookingSchema = z.object({
-  providerId: z.string().min(1, 'Please select a service provider'),
-  scheduledDate: z.date({
-    required_error: 'Please select a date',
+  bookingType: z.enum(['instant', 'scheduled'], {
+    required_error: 'Please select booking type',
   }),
-  scheduledTime: z.string().min(1, 'Please select a time'),
-  address: z.string().min(10, 'Please provide a detailed address'),
-  pincode: z.string().min(6, 'Please provide a valid pincode').max(6, 'Pincode must be 6 digits'),
+  urgency: z.enum(['low', 'normal', 'high', 'urgent'], {
+    required_error: 'Please select urgency level',
+  }).optional(),
+  providerId: z.string().optional(), // Optional for auto-assignment
+  scheduledDate: z.date().optional(),
+  scheduledTime: z.string().optional(),
+  serviceLocation: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+    address: z.string().min(10, 'Please provide a detailed address'),
+    city: z.string(),
+    area: z.string(),
+    pincode: z.string().min(6, 'Please provide a valid pincode').max(6, 'Pincode must be 6 digits'),
+  }),
   phone: z.string().min(10, 'Please provide a valid phone number'),
   notes: z.string().optional(),
   paymentMethod: z.enum(['wallet', 'online', 'cod'], {
     required_error: 'Please select a payment method',
   }),
+}).refine((data) => {
+  // For scheduled bookings, date and time are required
+  if (data.bookingType === 'scheduled') {
+    return data.scheduledDate && data.scheduledTime;
+  }
+  // For instant bookings, urgency is required
+  if (data.bookingType === 'instant') {
+    return data.urgency;
+  }
+  return true;
+}, {
+  message: 'Please complete all required fields for the selected booking type',
+  path: ['bookingType'],
 });
 
 type BookingFormData = z.infer<typeof bookingSchema>;
+
+// Enhanced interfaces
+interface LocationData {
+  latitude: number;
+  longitude: number;
+  city: string;
+  area: string;
+  address: string;
+  pincode: string;
+}
+
+interface MatchedProvider {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  profileImage?: string;
+  rating: number;
+  totalJobs: number;
+  distanceKm?: number;
+  estimatedTravelTime?: number;
+  estimatedArrival?: string;
+  currentLocation?: { latitude: number; longitude: number };
+  lastKnownLocation?: { latitude: number; longitude: number };
+  isOnline: boolean;
+  responseRate: number;
+  skills: string[];
+}
+
+interface ServiceBooking {
+  id: string;
+  userId: string;
+  serviceId: string;
+  bookingType: 'instant' | 'scheduled';
+  urgency?: 'low' | 'normal' | 'high' | 'urgent';
+  status: string;
+  serviceLocation: LocationData;
+  assignedProviderId?: string;
+  requestedAt: string;
+  scheduledAt?: string;
+  totalAmount: string;
+  paymentMethod: string;
+  notes?: string;
+}
 
 interface Service {
   id: string;
@@ -95,21 +171,31 @@ export default function ServiceBooking() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [step, setStep] = useState(1);
+  
+  // Enhanced state management
+  const [step, setStep] = useState(0); // Start with step 0 for booking type selection
   const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
+  const [matchedProviders, setMatchedProviders] = useState<MatchedProvider[]>([]);
+  const [serviceLocation, setServiceLocation] = useState<LocationData | null>(null);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [isLocationSetup, setIsLocationSetup] = useState(false);
+  const [providerSearching, setProviderSearching] = useState(false);
+  const [currentBooking, setCurrentBooking] = useState<ServiceBooking | null>(null);
+  const [bookingStatus, setBookingStatus] = useState<string>('');
 
-  // Form setup
+  // Form setup with enhanced defaults
   const form = useForm<BookingFormData>({
     resolver: zodResolver(bookingSchema),
     defaultValues: {
-      address: '',
-      pincode: '',
-      phone: '',
+      bookingType: 'instant',
+      urgency: 'normal',
+      phone: user?.phone || '',
       notes: '',
       paymentMethod: 'online',
     },
   });
+
+  const bookingType = form.watch('bookingType');
 
   // Fetch service details
   const { data: service, isLoading: loadingService } = useQuery<Service>({
@@ -129,7 +215,74 @@ export default function ServiceBooking() {
     enabled: !!user,
   });
 
-  // Create order mutation
+  // Provider matching mutation for instant bookings
+  const findProvidersMutation = useMutation({
+    mutationFn: async (criteria: {
+      serviceId: string;
+      location: { latitude: number; longitude: number };
+      urgency: 'low' | 'normal' | 'high' | 'urgent';
+      maxDistance?: number;
+    }) => {
+      const response = await apiRequest('POST', '/api/v1/service-bookings/find-providers', criteria);
+      return response.json();
+    },
+    onSuccess: (providers: MatchedProvider[]) => {
+      setMatchedProviders(providers);
+      setProviderSearching(false);
+      if (providers.length === 0) {
+        toast({
+          title: 'No Providers Available',
+          description: 'No providers found in your area. Please try again later or book for a later time.',
+          variant: 'destructive',
+        });
+      }
+    },
+    onError: (error: any) => {
+      setProviderSearching(false);
+      toast({
+        title: 'Provider Search Failed',
+        description: error.message || 'Unable to find providers. Please try again.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Enhanced service booking mutation
+  const createServiceBookingMutation = useMutation({
+    mutationFn: async (bookingData: any) => {
+      const response = await apiRequest('POST', '/api/v1/service-bookings', bookingData);
+      return response.json();
+    },
+    onSuccess: (booking: ServiceBooking) => {
+      setCurrentBooking(booking);
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-bookings'] });
+      
+      if (booking.bookingType === 'instant') {
+        toast({
+          title: 'Booking Created!',
+          description: 'Searching for available providers in your area...',
+        });
+        setBookingStatus('searching_providers');
+        // Start provider search for instant bookings
+        startProviderSearch(booking.id);
+      } else {
+        toast({
+          title: 'Booking Scheduled!',
+          description: 'Your service has been scheduled successfully.',
+        });
+        setLocation(`/bookings/${booking.id}`);
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Booking Failed',
+        description: error.message || 'Something went wrong. Please try again.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Create legacy order mutation (for backward compatibility)
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
       const response = await apiRequest('POST', '/api/v1/orders', orderData);
@@ -152,39 +305,108 @@ export default function ServiceBooking() {
     },
   });
 
-  const handleProviderSelect = (provider: ServiceProvider) => {
-    setSelectedProvider(provider);
-    form.setValue('providerId', provider.id);
-    setStep(2);
+  // Enhanced helper functions for new booking flow
+  const handleLocationConfirm = (location: LocationData) => {
+    setServiceLocation(location);
+    form.setValue('serviceLocation', location);
+    setIsLocationSetup(false);
+    
+    // Auto-advance to next step
+    if (bookingType === 'instant') {
+      setStep(2); // Go to urgency selection
+    } else {
+      setStep(2); // Go to date/time selection
+    }
+  };
+
+  const handleBookingTypeSelect = () => {
+    if (!serviceLocation) {
+      setIsLocationSetup(true);
+      return;
+    }
+    
+    // If location is already set, advance to next step
+    if (bookingType === 'instant') {
+      setStep(2); // Go to urgency selection
+    } else {
+      setStep(2); // Go to date/time selection for scheduled
+    }
+  };
+
+  const handleUrgencySelect = () => {
+    const urgency = form.getValues().urgency;
+    if (urgency && serviceLocation && service) {
+      // For instant bookings, start provider search
+      setProviderSearching(true);
+      findProvidersMutation.mutate({
+        serviceId: service.id,
+        location: {
+          latitude: serviceLocation.latitude,
+          longitude: serviceLocation.longitude,
+        },
+        urgency,
+        maxDistance: 25, // 25km radius
+      });
+      setStep(3); // Go to provider selection
+    }
+  };
+
+  const handleProviderSelect = (provider: ServiceProvider | MatchedProvider) => {
+    setSelectedProvider(provider as ServiceProvider);
+    if ('userId' in provider) {
+      form.setValue('providerId', provider.userId);
+    } else if ('id' in provider) {
+      form.setValue('providerId', (provider as ServiceProvider).id);
+    }
+    
+    if (bookingType === 'instant') {
+      setStep(4); // Go directly to confirmation for instant bookings
+    } else {
+      setStep(3); // Go to date/time selection for scheduled
+    }
   };
 
   const handleDateTimeSelect = () => {
     const formData = form.getValues();
     if (formData.scheduledDate && formData.scheduledTime) {
-      setStep(3);
+      setStep(4); // Go to confirmation
     }
   };
 
   const handleBookingSubmit = async (data: BookingFormData) => {
-    if (!service || !selectedProvider) return;
+    if (!service || !serviceLocation) return;
 
-    const orderData = {
+    const bookingData = {
       serviceId: service.id,
-      providerId: data.providerId,
-      scheduledDate: data.scheduledDate.toISOString(),
-      scheduledTime: data.scheduledTime,
-      customerLocation: {
-        address: data.address,
-        pincode: data.pincode,
-      },
-      customerPhone: data.phone,
-      specialInstructions: data.notes,
+      bookingType: data.bookingType,
+      urgency: data.urgency,
+      serviceLocation: data.serviceLocation,
+      phone: data.phone,
+      notes: data.notes,
       paymentMethod: data.paymentMethod,
       totalAmount: parseFloat(service.basePrice),
       estimatedDuration: service.estimatedDuration,
+      ...(data.bookingType === 'scheduled' && {
+        scheduledAt: new Date(`${format(data.scheduledDate!, 'yyyy-MM-dd')}T${data.scheduledTime}`).toISOString(),
+      }),
+      ...(data.providerId && { providerId: data.providerId }),
     };
 
-    createOrderMutation.mutate(orderData);
+    createServiceBookingMutation.mutate(bookingData);
+  };
+
+  // Helper function to start provider search for instant bookings
+  const startProviderSearch = (bookingId: string) => {
+    // This would typically connect to WebSocket for real-time updates
+    // For now, simulate provider assignment with a timeout
+    setTimeout(() => {
+      setBookingStatus('provider_assigned');
+      toast({
+        title: 'Provider Assigned!',
+        description: 'A provider has been assigned to your booking.',
+      });
+      setLocation(`/bookings/${bookingId}`);
+    }, 3000);
   };
 
   const getAvailableTimeSlots = (date: Date, provider: ServiceProvider) => {
@@ -252,25 +474,37 @@ export default function ServiceBooking() {
             Back to Services
           </Button>
           
-          {/* Progress Indicator */}
-          <div className="flex items-center justify-center mb-6">
-            <div className="flex items-center space-x-4">
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full ${
-                step >= 1 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          {/* Enhanced Progress Indicator */}
+          <div className="flex items-center justify-center mb-6 overflow-x-auto">
+            <div className="flex items-center space-x-2 md:space-x-4 min-w-max">
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+                step >= 0 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
               }`}>
                 1
               </div>
-              <div className={`h-1 w-12 ${step >= 2 ? 'bg-primary' : 'bg-muted'}`} />
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full ${
-                step >= 2 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+              <div className={`h-1 w-8 md:w-12 ${step >= 1 ? 'bg-primary' : 'bg-muted'}`} />
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+                step >= 1 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
               }`}>
                 2
               </div>
-              <div className={`h-1 w-12 ${step >= 3 ? 'bg-primary' : 'bg-muted'}`} />
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full ${
-                step >= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+              <div className={`h-1 w-8 md:w-12 ${step >= 2 ? 'bg-primary' : 'bg-muted'}`} />
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+                step >= 2 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
               }`}>
                 3
+              </div>
+              <div className={`h-1 w-8 md:w-12 ${step >= 3 ? 'bg-primary' : 'bg-muted'}`} />
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+                step >= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+              }`}>
+                4
+              </div>
+              <div className={`h-1 w-8 md:w-12 ${step >= 4 ? 'bg-primary' : 'bg-muted'}`} />
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+                step >= 4 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+              }`}>
+                5
               </div>
             </div>
           </div>
@@ -278,9 +512,11 @@ export default function ServiceBooking() {
           <div className="text-center mb-6">
             <h1 className="text-2xl font-bold text-foreground mb-2">Book {service.name}</h1>
             <p className="text-muted-foreground">
-              {step === 1 && 'Choose your service provider'}
-              {step === 2 && 'Select date and time'}
-              {step === 3 && 'Confirm your booking'}
+              {step === 0 && 'Choose booking type and location'}
+              {step === 1 && (bookingType === 'instant' ? 'Set urgency level' : 'Select date and time')}
+              {step === 2 && 'Choose your service provider'}
+              {step === 3 && 'Review booking details'}
+              {step === 4 && 'Confirm your booking'}
             </p>
           </div>
         </motion.div>
@@ -320,8 +556,272 @@ export default function ServiceBooking() {
           </Card>
         </motion.div>
 
-        {/* Step 1: Provider Selection */}
-        {step === 1 && (
+        {/* Location Setup Modal */}
+        {isLocationSetup && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          >
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Service Location
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsLocationSetup(false)}
+                    data-testid="close-location-setup"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <LocationSetup
+                  onSuccess={handleLocationConfirm}
+                  onSkip={() => setIsLocationSetup(false)}
+                  showSkipOption={false}
+                />
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Step 0: Booking Type Selection */}
+        {step === 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <Form {...form}>
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Choose Booking Type</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="bookingType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>How would you like to book this service?</FormLabel>
+                          <FormControl>
+                            <Tabs
+                              value={field.value}
+                              onValueChange={field.onChange}
+                              className="w-full"
+                              data-testid="booking-type-tabs"
+                            >
+                              <TabsList className="grid w-full grid-cols-2">
+                                <TabsTrigger value="instant" className="flex items-center space-x-2">
+                                  <Zap className="w-4 h-4" />
+                                  <span>Instant</span>
+                                </TabsTrigger>
+                                <TabsTrigger value="scheduled" className="flex items-center space-x-2">
+                                  <CalendarIcon className="w-4 h-4" />
+                                  <span>Scheduled</span>
+                                </TabsTrigger>
+                              </TabsList>
+                              <TabsContent value="instant" className="mt-4">
+                                <div className="space-y-4">
+                                  <div className="flex items-start space-x-3 p-4 bg-orange-50 dark:bg-orange-950/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                                    <Timer className="w-5 h-5 text-orange-500 mt-0.5" />
+                                    <div>
+                                      <h3 className="font-medium text-orange-900 dark:text-orange-100">
+                                        Get service within 30 minutes
+                                      </h3>
+                                      <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
+                                        We'll find the nearest available provider and they'll reach you ASAP.
+                                        Perfect for urgent repairs or emergencies.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </TabsContent>
+                              <TabsContent value="scheduled" className="mt-4">
+                                <div className="space-y-4">
+                                  <div className="flex items-start space-x-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                    <CalendarIcon className="w-5 h-5 text-blue-500 mt-0.5" />
+                                    <div>
+                                      <h3 className="font-medium text-blue-900 dark:text-blue-100">
+                                        Schedule for later
+                                      </h3>
+                                      <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                                        Choose your preferred date and time. More providers to choose from
+                                        and better rates for planned services.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </TabsContent>
+                            </Tabs>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Location Status */}
+                    {serviceLocation ? (
+                      <div className="flex items-start space-x-3 p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5" />
+                        <div className="flex-1">
+                          <h3 className="font-medium text-green-900 dark:text-green-100">
+                            Service Location Confirmed
+                          </h3>
+                          <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                            {serviceLocation.address}, {serviceLocation.area}, {serviceLocation.city} - {serviceLocation.pincode}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsLocationSetup(true)}
+                            className="mt-2"
+                            data-testid="change-location"
+                          >
+                            Change Location
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start space-x-3 p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                        <MapPin className="w-5 h-5 text-amber-500 mt-0.5" />
+                        <div className="flex-1">
+                          <h3 className="font-medium text-amber-900 dark:text-amber-100">
+                            Service Location Required
+                          </h3>
+                          <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                            We need to know where you'd like the service performed.
+                          </p>
+                          <Button
+                            variant="outline"
+                            onClick={() => setIsLocationSetup(true)}
+                            className="mt-2"
+                            data-testid="set-location"
+                          >
+                            <Navigation className="w-4 h-4 mr-2" />
+                            Set Location
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      onClick={handleBookingTypeSelect}
+                      className="w-full"
+                      disabled={!serviceLocation}
+                      data-testid="continue-booking-type"
+                    >
+                      Continue
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            </Form>
+          </motion.div>
+        )}
+
+        {/* Step 1: Urgency Selection for Instant OR Date/Time for Scheduled */}
+        {step === 1 && bookingType === 'instant' && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <Form {...form}>
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Set Urgency Level</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="urgency"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>How urgent is this service?</FormLabel>
+                          <FormControl>
+                            <div className="grid grid-cols-1 gap-3">
+                              {[
+                                { value: 'low', label: 'Low Priority', icon: Clock, desc: 'Can wait 20-30 minutes', color: 'blue' },
+                                { value: 'normal', label: 'Normal', icon: Timer, desc: 'Standard service (15-25 minutes)', color: 'green' },
+                                { value: 'high', label: 'High Priority', icon: AlertTriangle, desc: 'Quick response needed (10-20 minutes)', color: 'orange' },
+                                { value: 'urgent', label: 'Emergency', icon: Zap, desc: 'Immediate attention required (5-15 minutes)', color: 'red' },
+                              ].map(({ value, label, icon: Icon, desc, color }) => (
+                                <div
+                                  key={value}
+                                  onClick={() => field.onChange(value)}
+                                  className={`flex items-center space-x-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                                    field.value === value
+                                      ? `border-${color}-500 bg-${color}-50 dark:bg-${color}-950/20`
+                                      : 'border-border hover:border-primary/50'
+                                  }`}
+                                  data-testid={`urgency-${value}`}
+                                >
+                                  <Icon className={`w-5 h-5 ${
+                                    field.value === value ? `text-${color}-500` : 'text-muted-foreground'
+                                  }`} />
+                                  <div className="flex-1">
+                                    <h3 className="font-medium">{label}</h3>
+                                    <p className="text-sm text-muted-foreground">{desc}</p>
+                                  </div>
+                                  {field.value === value && (
+                                    <CheckCircle2 className={`w-5 h-5 text-${color}-500`} />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="flex space-x-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setStep(0)}
+                        className="flex-1"
+                        data-testid="previous-step"
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handleUrgencySelect}
+                        className="flex-1"
+                        disabled={!form.watch('urgency') || providerSearching}
+                        data-testid="find-providers"
+                      >
+                        {providerSearching ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Finding Providers...
+                          </>
+                        ) : (
+                          <>
+                            Find Providers
+                            <Route className="w-4 h-4 ml-2" />
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </Form>
+          </motion.div>
+        )}
+
+        {/* Step 2: Provider Selection */}
+        {step === 2 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -475,8 +975,8 @@ export default function ServiceBooking() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              {form.watch('scheduledDate') && 
-                                getAvailableTimeSlots(form.watch('scheduledDate'), selectedProvider).map((time) => (
+                              {form.watch('scheduledDate') && selectedProvider && 
+                                getAvailableTimeSlots(form.watch('scheduledDate')!, selectedProvider).map((time) => (
                                   <SelectItem key={time} value={time}>
                                     {time}
                                   </SelectItem>
@@ -547,7 +1047,7 @@ export default function ServiceBooking() {
                       />
                       <FormField
                         control={form.control}
-                        name="pincode"
+                        name="serviceLocation.pincode"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Pincode</FormLabel>
@@ -561,7 +1061,7 @@ export default function ServiceBooking() {
                     </div>
                     <FormField
                       control={form.control}
-                      name="address"
+                      name="serviceLocation.address"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Full Address</FormLabel>
@@ -690,7 +1190,7 @@ export default function ServiceBooking() {
                       <div className="flex justify-between text-sm">
                         <span>Date & Time</span>
                         <span>
-                          {form.watch('scheduledDate') && format(form.watch('scheduledDate'), 'PPP')} at {form.watch('scheduledTime')}
+                          {form.watch('scheduledDate') && format(form.watch('scheduledDate')!, 'PPP')} at {form.watch('scheduledTime')}
                         </span>
                       </div>
                       <div className="flex justify-between text-sm">

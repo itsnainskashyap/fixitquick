@@ -20,6 +20,8 @@ import {
   insertPartSchema,
   insertUserAddressSchema,
   insertUserNotificationPreferencesSchema,
+  insertServiceBookingSchema,
+  insertProviderJobRequestSchema,
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -2655,6 +2657,595 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Failed to cancel order' });
     }
   });
+
+  // ============================================================================
+  // SERVICE BOOKINGS API - Enhanced booking system with instant vs scheduled
+  // ============================================================================
+
+  // Service booking validation schemas
+  const serviceBookingCreateSchema = insertServiceBookingSchema.extend({
+    serviceLocation: z.object({
+      type: z.enum(['current', 'alternate']),
+      address: z.string().min(10, 'Address must be at least 10 characters'),
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+      instructions: z.string().optional(),
+      landmarkDetails: z.string().optional(),
+    }),
+    serviceDetails: z.object({
+      basePrice: z.number().min(0),
+      estimatedDuration: z.number().min(1),
+      workflowSteps: z.array(z.string()),
+      specialRequirements: z.array(z.string()).optional(),
+    }).optional(),
+  });
+
+  const providerMatchingSchema = z.object({
+    serviceId: z.string().min(1, 'Service ID is required'),
+    location: z.object({
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+    }),
+    urgency: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+    bookingType: z.enum(['instant', 'scheduled']),
+    scheduledAt: z.date().optional(),
+    maxDistance: z.number().min(1).max(100).default(25),
+    maxProviders: z.number().min(1).max(10).default(5),
+  });
+
+  // FRONTEND COMPATIBILITY: Add alias endpoint for find-providers (frontend expects this)
+  app.post('/api/v1/service-bookings/find-providers', authMiddleware, validateBody(providerMatchingSchema), async (req, res) => {
+    try {
+      const {
+        serviceId,
+        location,
+        urgency,
+        bookingType,
+        scheduledAt,
+        maxDistance,
+        maxProviders
+      } = req.body;
+
+      // Get service details first
+      const service = await storage.getService(serviceId);
+      if (!service || !service.isActive) {
+        return res.status(404).json({ message: 'Service not found or not available' });
+      }
+
+      // Check if service allows the requested booking type
+      if (bookingType === 'instant' && !service.allowInstantBooking) {
+        return res.status(400).json({ message: 'Instant booking not available for this service' });
+      }
+      if (bookingType === 'scheduled' && !service.allowScheduledBooking) {
+        return res.status(400).json({ message: 'Scheduled booking not available for this service' });
+      }
+
+      // Find matching providers based on service, location, and availability
+      const matchingProviders = await storage.findMatchingProviders({
+        serviceId,
+        location,
+        urgency,
+        bookingType,
+        scheduledAt,
+        maxDistance,
+        maxProviders,
+      });
+
+      // Calculate estimated arrival times for instant bookings
+      if (bookingType === 'instant') {
+        for (const provider of matchingProviders) {
+          const travelTime = await calculateTravelTime(
+            provider.currentLocation || provider.lastKnownLocation,
+            location
+          );
+          provider.estimatedArrival = new Date(Date.now() + travelTime * 60 * 1000);
+          provider.estimatedTravelTime = travelTime;
+        }
+      }
+
+      // Return providers in the format frontend expects
+      res.json(matchingProviders);
+    } catch (error) {
+      console.error('Error finding matching providers:', error);
+      res.status(500).json({ message: 'Failed to find matching providers' });
+    }
+  });
+
+  // Get available providers for a service with distance and availability
+  app.post('/api/v1/service-bookings/providers/match', authMiddleware, validateBody(providerMatchingSchema), async (req, res) => {
+    try {
+      const {
+        serviceId,
+        location,
+        urgency,
+        bookingType,
+        scheduledAt,
+        maxDistance,
+        maxProviders
+      } = req.body;
+
+      // Get service details first
+      const service = await storage.getService(serviceId);
+      if (!service || !service.isActive) {
+        return res.status(404).json({ message: 'Service not found or not available' });
+      }
+
+      // Check if service allows the requested booking type
+      if (bookingType === 'instant' && !service.allowInstantBooking) {
+        return res.status(400).json({ message: 'Instant booking not available for this service' });
+      }
+      if (bookingType === 'scheduled' && !service.allowScheduledBooking) {
+        return res.status(400).json({ message: 'Scheduled booking not available for this service' });
+      }
+
+      // Find matching providers based on service, location, and availability
+      const matchingProviders = await storage.findMatchingProviders({
+        serviceId,
+        location,
+        urgency,
+        bookingType,
+        scheduledAt,
+        maxDistance,
+        maxProviders,
+      });
+
+      // Calculate estimated arrival times for instant bookings
+      if (bookingType === 'instant') {
+        for (const provider of matchingProviders) {
+          const travelTime = await calculateTravelTime(
+            provider.currentLocation || provider.lastKnownLocation,
+            location
+          );
+          provider.estimatedArrival = new Date(Date.now() + travelTime * 60 * 1000);
+          provider.estimatedTravelTime = travelTime;
+        }
+      }
+
+      res.json({
+        providers: matchingProviders,
+        totalFound: matchingProviders.length,
+        searchCriteria: {
+          serviceId,
+          location,
+          urgency,
+          bookingType,
+          maxDistance,
+        },
+      });
+    } catch (error) {
+      console.error('Error finding matching providers:', error);
+      res.status(500).json({ message: 'Failed to find matching providers' });
+    }
+  });
+
+  // Create a new service booking with provider matching
+  app.post('/api/v1/service-bookings', authMiddleware, validateBody(serviceBookingCreateSchema), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      const bookingData = req.body;
+
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Get service details and validate
+      const service = await storage.getService(bookingData.serviceId);
+      if (!service || !service.isActive) {
+        return res.status(404).json({ message: 'Service not found or not available' });
+      }
+
+      // Validate booking type against service settings
+      if (bookingData.bookingType === 'instant' && !service.allowInstantBooking) {
+        return res.status(400).json({ message: 'Instant booking not available for this service' });
+      }
+      if (bookingData.bookingType === 'scheduled' && !service.allowScheduledBooking) {
+        return res.status(400).json({ message: 'Scheduled booking not available for this service' });
+      }
+
+      // Validate scheduled time for scheduled bookings
+      if (bookingData.bookingType === 'scheduled') {
+        if (!bookingData.scheduledAt) {
+          return res.status(400).json({ message: 'Scheduled time is required for scheduled bookings' });
+        }
+        
+        const scheduledTime = new Date(bookingData.scheduledAt);
+        const now = new Date();
+        const minScheduleTime = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
+        
+        if (scheduledTime < minScheduleTime) {
+          return res.status(400).json({ message: 'Scheduled time must be at least 1 hour from now' });
+        }
+        
+        const maxScheduleTime = new Date(now.getTime() + (service.advanceBookingDays || 7) * 24 * 60 * 60 * 1000);
+        if (scheduledTime > maxScheduleTime) {
+          return res.status(400).json({ 
+            message: `Cannot schedule more than ${service.advanceBookingDays || 7} days in advance` 
+          });
+        }
+      }
+
+      // Create service booking
+      const booking = await storage.createServiceBooking({
+        ...bookingData,
+        userId,
+        status: 'pending',
+      });
+
+      // For instant bookings, immediately start provider search
+      if (bookingData.bookingType === 'instant') {
+        await initiateProviderSearch(booking);
+      }
+
+      // Send booking notifications
+      await notificationService.notifyNewBooking(booking);
+
+      res.status(201).json(booking);
+    } catch (error) {
+      console.error('Error creating service booking:', error);
+      res.status(500).json({ message: 'Failed to create service booking' });
+    }
+  });
+
+  // Get user's service bookings
+  app.get('/api/v1/service-bookings', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      const { status, bookingType, limit = 20, offset = 0 } = req.query;
+
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      const bookings = await storage.getUserServiceBookings(userId, {
+        status: status as string,
+        bookingType: bookingType as string,
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string),
+      });
+
+      res.json(bookings);
+    } catch (error) {
+      console.error('Error fetching service bookings:', error);
+      res.status(500).json({ message: 'Failed to fetch service bookings' });
+    }
+  });
+
+  // Get specific service booking details
+  app.get('/api/v1/service-bookings/:bookingId', authMiddleware, async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || 'user';
+
+      const booking = await storage.getServiceBookingWithDetails(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      // Check permissions
+      const canView = 
+        userRole === 'admin' || 
+        booking.userId === userId || 
+        booking.assignedProviderId === userId;
+
+      if (!canView) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      res.json(booking);
+    } catch (error) {
+      console.error('Error fetching service booking:', error);
+      res.status(500).json({ message: 'Failed to fetch service booking' });
+    }
+  });
+
+  // Update service booking status
+  app.put('/api/v1/service-bookings/:bookingId/status', authMiddleware, async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const { status, notes } = req.body;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || 'user';
+
+      // Validate status
+      const validStatuses = [
+        'pending', 'provider_search', 'provider_assigned', 'provider_on_way',
+        'work_in_progress', 'work_completed', 'payment_pending', 'completed',
+        'cancelled', 'refunded'
+      ];
+      
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ message: 'Invalid status' });
+      }
+
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      // Check permissions and validate status transitions
+      const canUpdateStatus = await storage.validateBookingStatusUpdate(bookingId, status, userId ?? '', userRole);
+      if (!canUpdateStatus.allowed) {
+        return res.status(403).json({ message: canUpdateStatus.reason });
+      }
+
+      const updatedBooking = await storage.updateServiceBooking(bookingId, {
+        status,
+        notes: notes || undefined,
+        updatedAt: new Date(),
+      });
+
+      // Send status change notifications
+      await notificationService.notifyBookingStatusChange(
+        updatedBooking?.userId ?? '',
+        bookingId,
+        status
+      );
+
+      // Broadcast real-time update
+      if (webSocketManager) {
+        await webSocketManager.broadcastBookingUpdate(updatedBooking);
+      }
+
+      res.json(updatedBooking);
+    } catch (error) {
+      console.error('Error updating booking status:', error);
+      res.status(500).json({ message: 'Failed to update booking status' });
+    }
+  });
+
+  // Provider accepts a job request
+  app.post('/api/v1/service-bookings/:bookingId/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const providerId = req.user?.id;
+      const { estimatedArrival, quotedPrice, notes } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Check if provider has a valid job request for this booking
+      const jobRequest = await storage.getProviderJobRequest(bookingId, providerId);
+      if (!jobRequest || jobRequest.status !== 'sent') {
+        return res.status(400).json({ message: 'No valid job request found' });
+      }
+
+      // Check if booking is still available
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking || booking.status !== 'provider_search') {
+        return res.status(400).json({ message: 'Booking is no longer available' });
+      }
+
+      // Accept the job (race condition handled in storage)
+      const result = await storage.acceptProviderJobRequest(bookingId, providerId, {
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined,
+        quotedPrice: quotedPrice || undefined,
+        notes: notes || undefined,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      // Cancel other pending job requests for this booking
+      await storage.cancelOtherJobRequests(bookingId, providerId);
+
+      // Send notifications
+      await notificationService.notifyProviderAssigned(booking.userId, bookingId, providerId);
+
+      res.json({
+        success: true,
+        message: 'Job accepted successfully',
+        booking: result.booking,
+      });
+    } catch (error) {
+      console.error('Error accepting job request:', error);
+      res.status(500).json({ message: 'Failed to accept job request' });
+    }
+  });
+
+  // Provider declines a job request
+  app.post('/api/v1/service-bookings/:bookingId/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const providerId = req.user?.id;
+      const { reason } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      const result = await storage.declineProviderJobRequest(bookingId, providerId, reason);
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      res.json({
+        success: true,
+        message: 'Job declined successfully',
+      });
+    } catch (error) {
+      console.error('Error declining job request:', error);
+      res.status(500).json({ message: 'Failed to decline job request' });
+    }
+  });
+
+  // Get provider's job requests
+  app.get('/api/v1/provider/job-requests', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const providerId = req.user?.id;
+      const { status, limit = 20, offset = 0 } = req.query;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      const jobRequests = await storage.getProviderJobRequests(providerId, {
+        status: status as string,
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string),
+      });
+
+      res.json(jobRequests);
+    } catch (error) {
+      console.error('Error fetching job requests:', error);
+      res.status(500).json({ message: 'Failed to fetch job requests' });
+    }
+  });
+
+  // Cancel service booking
+  app.delete('/api/v1/service-bookings/:bookingId', authMiddleware, async (req, res) => {
+    try {
+      const { bookingId } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || 'user';
+
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Booking not found' });
+      }
+
+      // Check cancellation permissions
+      const canCancel = await storage.canCancelServiceBooking(bookingId, userId ?? '', userRole);
+      if (!canCancel.allowed) {
+        return res.status(403).json({ message: canCancel.reason });
+      }
+
+      const cancelledBooking = await storage.updateServiceBooking(bookingId, {
+        status: 'cancelled',
+        updatedAt: new Date(),
+      });
+
+      // Handle refunds if payment was made
+      if (booking.paymentStatus === 'paid') {
+        await storage.updateServiceBooking(bookingId, { paymentStatus: 'refunded' });
+        // TODO: Implement actual refund processing
+      }
+
+      // Cancel any pending job requests
+      await storage.cancelAllJobRequests(bookingId);
+
+      // Send cancellation notifications
+      await notificationService.notifyBookingCancellation(
+        cancelledBooking?.userId ?? '',
+        bookingId,
+        'Booking cancelled by customer'
+      );
+
+      res.json({
+        success: true,
+        message: 'Booking cancelled successfully',
+        booking: cancelledBooking,
+      });
+    } catch (error) {
+      console.error('Error cancelling service booking:', error);
+      res.status(500).json({ message: 'Failed to cancel service booking' });
+    }
+  });
+
+  // Helper function to initiate provider search for instant bookings
+  async function initiateProviderSearch(booking: any) {
+    try {
+      // Find matching providers
+      const providers = await storage.findMatchingProviders({
+        serviceId: booking.serviceId,
+        location: {
+          latitude: booking.serviceLocation.latitude,
+          longitude: booking.serviceLocation.longitude,
+        },
+        urgency: booking.urgency,
+        bookingType: 'instant',
+        maxDistance: 25,
+        maxProviders: 5,
+      });
+
+      // Update booking status
+      await storage.updateServiceBooking(booking.id, {
+        status: 'provider_search',
+      });
+
+      // Send job requests to providers
+      for (const provider of providers) {
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes to respond
+        
+        await storage.createProviderJobRequest({
+          bookingId: booking.id,
+          providerId: provider.userId,
+          expiresAt,
+          distanceKm: provider.distanceKm?.toString() || '0',
+          estimatedTravelTime: provider.estimatedTravelTime || 0,
+        });
+
+        // Send push notification to provider
+        await notificationService.notifyProviderJobRequest(provider.userId, booking.id);
+      }
+
+      // Set up timeout to handle no provider response
+      setTimeout(async () => {
+        const currentBooking = await storage.getServiceBooking(booking.id);
+        if (currentBooking?.status === 'provider_search') {
+          await handleNoProviderResponse(booking.id);
+        }
+      }, 5 * 60 * 1000); // 5 minutes
+
+    } catch (error) {
+      console.error('Error initiating provider search:', error);
+      await storage.updateServiceBooking(booking.id, {
+        status: 'cancelled',
+        notes: 'Failed to find available providers',
+      });
+    }
+  }
+
+  // Helper function to calculate travel time between two locations
+  async function calculateTravelTime(from: any, to: any): Promise<number> {
+    if (!from || !to) return 30; // Default 30 minutes
+    
+    // Simple distance calculation (this could be enhanced with actual routing API)
+    const distance = calculateDistance(
+      from.latitude,
+      from.longitude,
+      to.latitude,
+      to.longitude
+    );
+    
+    // Assume average speed of 25 km/h in urban areas
+    return Math.ceil(distance / 25 * 60);
+  }
+
+  // Helper function to calculate distance between two points
+  function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  // Helper function to handle no provider response
+  async function handleNoProviderResponse(bookingId: string) {
+    try {
+      // Update booking status
+      await storage.updateServiceBooking(bookingId, {
+        status: 'cancelled',
+        notes: 'No providers available at this time',
+      });
+
+      // Get booking details for notification
+      const booking = await storage.getServiceBooking(bookingId);
+      if (booking) {
+        await notificationService.notifyNoProvidersAvailable(booking.userId, bookingId);
+      }
+    } catch (error) {
+      console.error('Error handling no provider response:', error);
+    }
+  }
 
   // Wallet routes
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
