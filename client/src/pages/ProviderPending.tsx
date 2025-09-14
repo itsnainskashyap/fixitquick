@@ -21,7 +21,7 @@ import {
   Mail,
   Phone,
   Home,
-  Refresh,
+  RefreshCw,
   ArrowLeft
 } from 'lucide-react';
 
@@ -171,7 +171,7 @@ export default function ProviderPending() {
                 onClick={() => refetch()}
                 data-testid="button-refresh"
               >
-                <Refresh className="w-4 h-4 mr-2" />
+                <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
               <Button 

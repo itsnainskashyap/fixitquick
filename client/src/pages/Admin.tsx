@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from 'wouter';
@@ -10,8 +10,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
@@ -50,9 +56,61 @@ import {
   TreePine,
   Layers,
   Save,
-  X
+  X,
+  RefreshCw,
+  Activity,
+  Calendar,
+  Clock,
+  Database,
+  Globe,
+  HelpCircle,
+  Mail,
+  MapPin,
+  Phone,
+  PieChart,
+  Zap,
+  ArrowUp,
+  ArrowDown,
+  AlertCircle,
+  Monitor,
+  Server,
+  Wifi,
+  HardDrive,
+  Cpu,
+  MemoryStick,
+  LineChart,
+  AreaChart,
+  TrendingDown,
+  Award,
+  Target,
+  Percent,
+  IndianRupee,
+  Calendar as CalendarIcon,
+  User,
+  Building,
+  Store,
+  Briefcase,
+  Tag,
+  Link,
+  Image,
+  Video,
+  FileImage,
+  Upload,
+  Cloud,
+  Lock,
+  Unlock,
+  Key,
+  Code,
+  Terminal,
+  GitBranch,
+  Layers3,
+  Network,
+  Router,
+  Workflow
 } from 'lucide-react';
+import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+// Enhanced interfaces for comprehensive admin functionality
 interface AdminStats {
   totalUsers: number;
   totalRevenue: number;
@@ -61,38 +119,158 @@ interface AdminStats {
   pendingVerifications: number;
   activeDisputes: number;
   monthlyGrowth: number;
+  totalServices: number;
+  totalParts: number;
+  activeServiceProviders: number;
+  activePartsProviders: number;
+  pendingOrders: number;
+  completedOrders: number;
+  cancelledOrders: number;
+  averageOrderValue: number;
+  customerRetentionRate: number;
+  providerSatisfactionScore: number;
+  systemUptime: number;
+}
+
+interface RevenueAnalytics {
+  daily: Array<{ date: string; revenue: number; orders: number }>;
+  weekly: Array<{ week: string; revenue: number; orders: number }>;
+  monthly: Array<{ month: string; revenue: number; orders: number }>;
+  byCategory: Array<{ category: string; revenue: number; percentage: number }>;
+  byProvider: Array<{ providerId: string; providerName: string; revenue: number; orders: number }>;
+}
+
+interface SystemHealth {
+  cpuUsage: number;
+  memoryUsage: number;
+  diskUsage: number;
+  networkLatency: number;
+  activeConnections: number;
+  errorRate: number;
+  uptime: number;
+}
+
+interface KPIMetrics {
+  customerAcquisitionCost: number;
+  customerLifetimeValue: number;
+  monthlyRecurringRevenue: number;
+  churnRate: number;
+  netPromoterScore: number;
+  averageServiceRating: number;
+  orderFulfillmentTime: number;
+  firstResponseTime: number;
 }
 
 interface User {
   id: string;
   email: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
   displayName: string;
+  profileImageUrl?: string;
   role: 'user' | 'service_provider' | 'parts_provider' | 'admin';
   isVerified: boolean;
+  walletBalance: number;
+  fixiPoints: number;
+  location?: {
+    address: string;
+    latitude: number;
+    longitude: number;
+    city: string;
+    pincode: string;
+  };
+  isActive: boolean;
+  lastLoginAt?: string;
   createdAt: string;
   lastActive: string;
   status: 'active' | 'suspended' | 'pending';
+  totalOrders?: number;
+  totalSpent?: number;
+  averageRating?: number;
+  registrationSource?: string;
 }
 
 interface Order {
   id: string;
   userId: string;
+  customerId: string;
   customerName: string;
+  customerPhone?: string;
+  customerEmail?: string;
   type: 'service' | 'parts';
-  status: string;
-  totalAmount: number;
-  createdAt: string;
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'refunded';
+  serviceId?: string;
+  serviceName?: string;
+  providerId?: string;
   providerName?: string;
+  categoryId?: string;
+  categoryName?: string;
+  totalAmount: number;
+  platformFee: number;
+  providerEarnings: number;
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
+  paymentMethod?: string;
+  scheduledAt?: string;
+  completedAt?: string;
+  address?: {
+    street: string;
+    city: string;
+    pincode: string;
+    latitude: number;
+    longitude: number;
+  };
+  items?: Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    price: number;
+  }>;
+  ratings?: {
+    customerRating?: number;
+    providerRating?: number;
+    customerReview?: string;
+    providerReview?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface Verification {
   id: string;
   userId: string;
   userName: string;
+  userEmail: string;
+  userPhone: string;
   type: 'service_provider' | 'parts_provider';
-  documents: string[];
-  status: 'pending' | 'approved' | 'rejected';
+  documents: {
+    aadhar?: { front?: string; back?: string; verified?: boolean };
+    pan?: { url?: string; verified?: boolean };
+    photo?: { url?: string; verified?: boolean };
+    businessLicense?: { url?: string; verified?: boolean };
+    gst?: { url?: string; number?: string; verified?: boolean };
+    insurance?: { url?: string; verified?: boolean };
+    bankDetails?: { accountNumber?: string; ifsc?: string; verified?: boolean };
+    certificates?: Array<{ url: string; name: string; verified?: boolean }>;
+    licenses?: Array<{ url: string; name: string; verified?: boolean }>;
+    portfolio?: Array<{ url: string; caption?: string }>;
+  };
+  businessInfo?: {
+    businessName: string;
+    businessType: 'individual' | 'company' | 'partnership';
+    experience: number;
+    serviceRadius: number;
+    specializations: string[];
+    workingHours: string;
+    emergencyServices: boolean;
+  };
+  status: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNotes?: string;
+  rejectionReason?: string;
   submittedAt: string;
+  priority: 'low' | 'medium' | 'high';
 }
 
 interface ProviderApplication {
@@ -133,24 +311,267 @@ interface Category {
   name: string;
   description?: string;
   icon?: string;
+  image?: string;
   parentId?: string;
   level: number;
   sortOrder: number;
   isActive: boolean;
+  slug: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  seoKeywords?: string[];
+  commissionRate: number;
+  averagePricing?: {
+    min: number;
+    max: number;
+    currency: string;
+  };
+  popularityScore: number;
+  totalBookings: number;
+  totalRevenue: number;
   createdAt: string;
+  updatedAt: string;
   subCategoriesCount?: number;
   servicesCount?: number;
+  activeProvidersCount?: number;
   hasChildren?: boolean;
   children?: Category[];
+  metadata?: {
+    color?: string;
+    tags?: string[];
+    featured?: boolean;
+    trending?: boolean;
+  };
 }
 
-// Provider Verification Card Component
+interface Service {
+  id: string;
+  name: string;
+  description: string;
+  categoryId: string;
+  categoryName?: string;
+  shortDescription?: string;
+  features?: string[];
+  pricing: {
+    basePrice: number;
+    currency: string;
+    unit: string;
+    priceType: 'fixed' | 'hourly' | 'per_item';
+    additionalCharges?: Array<{
+      name: string;
+      price: number;
+      optional: boolean;
+    }>;
+  };
+  duration?: {
+    estimated: number;
+    unit: 'minutes' | 'hours' | 'days';
+  };
+  requirements?: string[];
+  images?: string[];
+  isActive: boolean;
+  isPopular: boolean;
+  isFeatured: boolean;
+  availabilityZones?: string[];
+  metadata?: {
+    difficulty: 'easy' | 'medium' | 'hard';
+    tools: string[];
+    skills: string[];
+    certifications: string[];
+  };
+  seo?: {
+    title: string;
+    description: string;
+    keywords: string[];
+  };
+  stats: {
+    totalBookings: number;
+    averageRating: number;
+    totalReviews: number;
+    completionRate: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SystemConfig {
+  id: string;
+  category: 'general' | 'payment' | 'notification' | 'commission' | 'security';
+  key: string;
+  value: any;
+  description?: string;
+  dataType: 'string' | 'number' | 'boolean' | 'json' | 'array';
+  isEditable: boolean;
+  isPublic: boolean;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+interface NotificationTemplate {
+  id: string;
+  type: 'email' | 'sms' | 'push' | 'in_app';
+  name: string;
+  subject?: string;
+  content: string;
+  variables: string[];
+  isActive: boolean;
+  category: 'order' | 'payment' | 'user' | 'provider' | 'system';
+  trigger: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SupportTicket {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userPhone?: string;
+  subject: string;
+  description: string;
+  category: 'technical' | 'billing' | 'service' | 'account' | 'other';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  assignedTo?: string;
+  assignedBy?: string;
+  tags?: string[];
+  attachments?: string[];
+  responses: Array<{
+    id: string;
+    userId: string;
+    userName: string;
+    message: string;
+    isInternal: boolean;
+    createdAt: string;
+  }>;
+  resolution?: {
+    resolvedBy: string;
+    resolvedAt: string;
+    resolution: string;
+    satisfactionRating?: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+  firstResponseAt?: string;
+  lastActivityAt: string;
+}
+
+// Enhanced component interfaces
 interface ProviderVerificationCardProps {
   provider: ProviderApplication;
   onStatusChange: (providerId: string, status: 'under_review' | 'approved' | 'rejected', notes?: string) => void;
   isUpdating: boolean;
 }
 
+interface DashboardCardProps {
+  title: string;
+  value: string | number;
+  change?: number;
+  changeType?: 'increase' | 'decrease' | 'neutral';
+  icon: React.ComponentType<any>;
+  description?: string;
+  loading?: boolean;
+}
+
+interface ChartDataPoint {
+  name: string;
+  value: number;
+  change?: number;
+  color?: string;
+}
+
+interface FilterOptions {
+  dateRange: {
+    start: Date;
+    end: Date;
+  };
+  category?: string;
+  provider?: string;
+  status?: string;
+  role?: string;
+  region?: string;
+}
+
+interface BulkAction {
+  id: string;
+  label: string;
+  icon: React.ComponentType<any>;
+  action: (selectedIds: string[]) => Promise<void>;
+  confirmationRequired?: boolean;
+  confirmationMessage?: string;
+  disabled?: boolean;
+}
+
+// Enhanced Dashboard Card Component
+const DashboardCard: React.FC<DashboardCardProps> = ({ 
+  title, 
+  value, 
+  change, 
+  changeType, 
+  icon: Icon, 
+  description, 
+  loading 
+}) => {
+  const getChangeColor = (type?: string) => {
+    switch (type) {
+      case 'increase': return 'text-green-600';
+      case 'decrease': return 'text-red-600';
+      default: return 'text-gray-500';
+    }
+  };
+
+  const getChangeIcon = (type?: string) => {
+    switch (type) {
+      case 'increase': return <ArrowUp className="w-3 h-3" />;
+      case 'decrease': return <ArrowDown className="w-3 h-3" />;
+      default: return null;
+    }
+  };
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center space-x-4">
+            <Skeleton className="w-12 h-12 rounded-full" />
+            <div className="space-y-2">
+              <Skeleton className="w-24 h-4" />
+              <Skeleton className="w-16 h-6" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="transition-all duration-200 hover:shadow-lg">
+      <CardContent className="p-6">
+        <div className="flex items-center space-x-4">
+          <div className="p-3 bg-primary/10 rounded-full">
+            <Icon className="w-6 h-6 text-primary" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+            <p className="text-2xl font-bold text-foreground">{value}</p>
+            {change !== undefined && (
+              <div className={`flex items-center space-x-1 text-xs ${getChangeColor(changeType)}`}>
+                {getChangeIcon(changeType)}
+                <span>{Math.abs(change)}%</span>
+                <span className="text-muted-foreground">vs last period</span>
+              </div>
+            )}
+            {description && (
+              <p className="text-xs text-muted-foreground mt-1">{description}</p>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+// Enhanced Provider Verification Card Component
 const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({ 
   provider, 
   onStatusChange, 
@@ -164,17 +585,17 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800';
       case 'under_review':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
+        return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800';
       case 'approved':
-        return 'bg-green-100 text-green-800 border-green-200';
+        return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800';
       case 'rejected':
-        return 'bg-red-100 text-red-800 border-red-200';
+        return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800';
       case 'suspended':
-        return 'bg-gray-100 text-gray-800 border-gray-200';
+        return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:border-gray-800';
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
+        return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:border-gray-800';
     }
   };
 
@@ -215,13 +636,21 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
               </div>
               <div className="flex items-center space-x-2">
                 <Mail className="w-4 h-4" />
-                <span>{provider.email}</span>
+                <span className="truncate">{provider.email}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <Phone className="w-4 h-4" />
                 <span>{provider.phone}</span>
               </div>
             </div>
+            {!hasRequiredDocuments() && (
+              <Alert className="mt-3">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="text-sm">
+                  Missing required documents: Aadhar card and photo required for verification.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
           <div className="flex items-center space-x-2">
             <span className="text-xs text-muted-foreground">
