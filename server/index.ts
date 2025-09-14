@@ -150,7 +150,8 @@ app.use((req, res, next) => {
         !req.path.startsWith('/api') &&
         !req.path.startsWith('/@') && // Vite internals/HMR
         !req.path.startsWith('/src') && // source modules
-        !req.path.includes('.') // skip asset/file requests
+        !req.path.includes('.') && // skip asset/file requests
+        !req.url.includes('html-proxy') // skip html-proxy requests
       ) {
         req.url = '/'; // Rewrite to root for Vite to process
       }
