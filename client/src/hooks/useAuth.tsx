@@ -8,6 +8,14 @@ interface AuthUser extends User {
   isVerified?: boolean;
   walletBalance?: number;
   fixiPoints?: number;
+  location?: {
+    latitude: number;
+    longitude: number;
+    city: string;
+    area?: string;
+    address: string;
+    pincode?: string;
+  };
 }
 
 interface AuthContextType {

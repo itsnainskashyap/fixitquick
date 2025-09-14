@@ -183,6 +183,16 @@ const emailUpdateSchema = z.object({
     .min(1, 'Email address is required'),
 });
 
+const locationUpdateSchema = z.object({
+  location: z.object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    city: z.string().min(1, 'City is required'),
+    address: z.string().min(1, 'Address is required'),
+    pincode: z.string().optional(),
+  }),
+});
+
 // Validation middleware factory
 function validateBody(schema: z.ZodSchema) {
   return (req: any, res: any, next: any) => {
@@ -821,6 +831,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         success: false,
         message: 'Failed to update email' 
+      });
+    }
+  });
+
+  // Update user location
+  app.patch('/api/v1/auth/location', authMiddleware, validateBody(locationUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Unauthorized' 
+        });
+      }
+
+      const { location } = req.body;
+
+      // Update user location
+      const updatedUser = await storage.updateUser(userId, { location });
+
+      if (!updatedUser) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'User not found' 
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Location updated successfully',
+        user: {
+          id: updatedUser.id,
+          phone: updatedUser.phone,
+          email: updatedUser.email,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          role: updatedUser.role,
+          isVerified: updatedUser.isVerified,
+          walletBalance: updatedUser.walletBalance,
+          fixiPoints: updatedUser.fixiPoints,
+          location: updatedUser.location,
+          profileImageUrl: updatedUser.profileImageUrl
+        }
+      });
+    } catch (error) {
+      console.error('Error updating location:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to update location' 
       });
     }
   });

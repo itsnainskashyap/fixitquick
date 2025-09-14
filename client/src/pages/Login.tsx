@@ -10,8 +10,9 @@ import { Loader2, Mail, ArrowRight, Smartphone } from 'lucide-react';
 import PhoneLogin from '@/components/auth/PhoneLogin';
 import OtpVerification from '@/components/auth/OtpVerification';
 import Onboarding from '@/components/auth/Onboarding';
+import LocationSetup from '@/components/LocationSetup';
 
-type AuthStep = 'method-selection' | 'phone-input' | 'otp-verification' | 'onboarding';
+type AuthStep = 'method-selection' | 'phone-input' | 'otp-verification' | 'onboarding' | 'location-setup';
 
 export default function Login() {
   const { signIn, signInWithSMS, isLoading, isAuthenticated } = useAuth();
@@ -62,8 +63,18 @@ export default function Login() {
       setRefreshToken(refreshToken);
       setCurrentStep('onboarding');
     } else {
-      // Complete sign in for returning users
-      handleCompleteSignIn(accessToken, refreshToken, userData);
+      // Check if user has location data
+      const hasLocation = userData?.user?.location?.latitude && userData?.user?.location?.longitude;
+      
+      if (!hasLocation) {
+        // Store tokens and go to location setup
+        setAccessToken(accessToken);
+        setRefreshToken(refreshToken);
+        setCurrentStep('location-setup');
+      } else {
+        // Complete sign in for returning users with location
+        handleCompleteSignIn(accessToken, refreshToken, userData);
+      }
     }
   };
 
@@ -85,7 +96,18 @@ export default function Login() {
   };
 
   const handleOnboardingSuccess = async (data: any) => {
-    await handleCompleteSignIn(data.accessToken, data.refreshToken, data);
+    // After onboarding, check if user needs location setup
+    const hasLocation = data?.user?.location?.latitude && data?.user?.location?.longitude;
+    
+    if (!hasLocation) {
+      // Store tokens and go to location setup
+      setAccessToken(data.accessToken);
+      setRefreshToken(data.refreshToken);
+      setCurrentStep('location-setup');
+    } else {
+      // Complete sign in if location already exists
+      await handleCompleteSignIn(data.accessToken, data.refreshToken, data);
+    }
   };
 
   const handleBackToMethodSelection = () => {
@@ -104,6 +126,67 @@ export default function Login() {
     setCurrentStep('otp-verification');
     setAccessToken('');
     setRefreshToken('');
+  };
+
+  const handleLocationSetupSuccess = async (locationData: any) => {
+    try {
+      // Update user location on backend
+      const response = await fetch('/api/v1/auth/location', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          location: {
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            city: locationData.city,
+            address: locationData.address,
+            pincode: locationData.pincode,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save location');
+      }
+
+      const updatedUserData = await response.json();
+      
+      // Complete sign in with updated location data
+      // updatedUserData already has { success, message, user } structure
+      await handleCompleteSignIn(accessToken, refreshToken, updatedUserData);
+      
+      toast({
+        title: "Location saved!",
+        description: "Your location has been set successfully.",
+      });
+    } catch (error) {
+      console.error('Error saving location:', error);
+      toast({
+        title: "Location not saved",
+        description: "We couldn't save your location, but you can continue using the app.",
+        variant: "destructive",
+      });
+      
+      // Continue anyway
+      await handleCompleteSignIn(accessToken, refreshToken);
+    }
+  };
+
+  const handleLocationSetupSkip = async () => {
+    // Complete sign in without location
+    await handleCompleteSignIn(accessToken, refreshToken);
+    
+    toast({
+      title: "Location skipped",
+      description: "You can set your location later in your profile.",
+    });
+  };
+
+  const handleBackToOnboarding = () => {
+    setCurrentStep('onboarding');
   };
 
   const handleResendOtp = () => {
@@ -271,6 +354,36 @@ export default function Login() {
               onSuccess={handleOnboardingSuccess}
               onError={(error) => {
                 console.error('Onboarding error:', error);
+              }}
+            />
+          </motion.div>
+        );
+        
+      case 'location-setup':
+        return (
+          <motion.div
+            key="location-setup"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3 }}
+            className="relative"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleBackToOnboarding}
+              className="absolute left-0 top-0 p-2 z-10"
+              data-testid="back-to-onboarding-button"
+            >
+              <ArrowRight className="h-4 w-4 rotate-180" />
+            </Button>
+            <LocationSetup
+              onSuccess={handleLocationSetupSuccess}
+              onSkip={handleLocationSetupSkip}
+              showSkipOption={true}
+              onError={(error) => {
+                console.error('Location setup error:', error);
               }}
             />
           </motion.div>

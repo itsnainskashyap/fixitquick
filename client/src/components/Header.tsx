@@ -16,7 +16,6 @@ interface HeaderProps {
   onLocationClick?: () => void;
   onEmergencyClick?: () => void;
   cartItemsCount?: number;
-  currentLocation?: string;
 }
 
 interface WalletData {
@@ -29,7 +28,6 @@ export function Header({
   onLocationClick,
   onEmergencyClick,
   cartItemsCount = 0,
-  currentLocation = 'Mumbai',
 }: HeaderProps) {
   const { user, isAuthenticated } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
@@ -82,6 +80,22 @@ export function Header({
 
   const handleWalletClick = () => {
     setLocation('/wallet');
+  };
+
+  // Get user location display text
+  const getLocationDisplay = () => {
+    if (!user?.location) {
+      return 'Set Location';
+    }
+    
+    const { city, area } = user.location;
+    if (area && city) {
+      return `${area}, ${city}`;
+    } else if (city) {
+      return city;
+    } else {
+      return 'Unknown Location';
+    }
   };
 
   return (
@@ -201,11 +215,17 @@ export function Header({
                 variant="ghost"
                 size="sm"
                 onClick={onLocationClick}
-                className="flex items-center space-x-1 text-muted-foreground hover:text-foreground transition-colors hidden md:flex"
+                className={`flex items-center space-x-1 transition-colors hidden md:flex ${
+                  !user?.location 
+                    ? 'text-orange-500 hover:text-orange-600 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 data-testid="location-button"
               >
-                <MapPin className="w-4 h-4" />
-                <span className="text-sm font-medium">{currentLocation}</span>
+                <MapPin className={`w-4 h-4 ${!user?.location ? 'text-orange-500' : ''}`} />
+                <span className="text-sm font-medium max-w-[120px] truncate">
+                  {getLocationDisplay()}
+                </span>
               </Button>
 
               {/* Notifications - Real-time Notification Center */}
