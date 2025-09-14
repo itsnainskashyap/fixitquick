@@ -159,11 +159,31 @@ export default function OtpVerification({
         onSuccess(data.accessToken, data.refreshToken || '', data);
       } else {
         const errorMessage = data.message || 'Invalid OTP. Please try again.';
-        toast({
-          title: "Verification Failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
+        
+        // Check if OTP is expired
+        const isExpired = errorMessage.toLowerCase().includes('expired') || 
+                         errorMessage.toLowerCase().includes('no active verification');
+        
+        if (isExpired) {
+          toast({
+            title: "OTP Expired",
+            description: "Your OTP has expired. Please request a new one.",
+            variant: "destructive",
+          });
+          
+          // Auto-enable resend for expired OTP
+          setCanResend(true);
+          setTimer(0);
+        } else {
+          toast({
+            title: "Verification Failed", 
+            description: errorMessage,
+            variant: "destructive",
+          });
+        }
+        
+        // Clear the form for retry
+        form.reset();
         onError?.(errorMessage);
       }
     },
@@ -175,7 +195,19 @@ export default function OtpVerification({
       } else if (error.message.includes('429')) {
         errorMessage = 'Too many attempts. Please wait before trying again.';
       } else if (error.message.includes('410')) {
-        errorMessage = 'OTP has expired. Please request a new one.';
+        // Handle expired OTP with consistent UX
+        setCanResend(true);
+        setTimer(0);
+        form.reset();
+        
+        toast({
+          title: "OTP Expired",
+          description: "Your OTP has expired. Please request a new one.",
+          variant: "destructive",
+        });
+        
+        onError?.('OTP has expired. Please request a new one.');
+        return; // Don't show the generic toast below
       } else if (error.message.includes('500')) {
         errorMessage = 'Something went wrong. Please try again later.';
       }
