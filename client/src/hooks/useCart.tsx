@@ -205,7 +205,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   // Load cart from localStorage on mount
   useEffect(() => {
     try {
-      const savedCart = localStorage.getItem(`cart_${(user as any)?.uid || 'guest'}`);
+      const savedCart = localStorage.getItem(`cart_${(user as any)?.id || 'guest'}`);
       if (savedCart) {
         const parsed = JSON.parse(savedCart);
         dispatch({ type: 'SET_CART', payload: parsed });
@@ -213,7 +213,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Error loading cart from localStorage:', error);
     }
-  }, [(user as any)?.uid]);
+  }, [(user as any)?.id]);
 
   // Save cart to localStorage whenever it changes
   useEffect(() => {
@@ -227,11 +227,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
         couponCode: cart.couponCode,
         couponDiscount: cart.couponDiscount,
       };
-      localStorage.setItem(`cart_${(user as any)?.uid || 'guest'}`, JSON.stringify(cartData));
+      localStorage.setItem(`cart_${(user as any)?.id || 'guest'}`, JSON.stringify(cartData));
     } catch (error) {
       console.error('Error saving cart to localStorage:', error);
     }
-  }, [cart, (user as any)?.uid]);
+  }, [cart, (user as any)?.id]);
 
   const addItem = (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => {
     dispatch({ type: 'ADD_ITEM', payload: item });

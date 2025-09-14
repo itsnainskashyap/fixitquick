@@ -104,18 +104,22 @@ export default function Admin() {
   // Fetch admin dashboard stats
   const { data: stats } = useQuery({
     queryKey: ['/api/v1/admin/stats'],
-    queryFn: () => fetch('/api/v1/admin/stats').then(res => res.json()),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/stats');
+      return response.json();
+    },
     enabled: !!user,
   });
 
   // Fetch users
   const { data: users } = useQuery({
     queryKey: ['/api/v1/admin/users', searchQuery, filterRole],
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
       if (filterRole && filterRole !== 'all') params.set('role', filterRole);
-      return fetch(`/api/v1/admin/users?${params.toString()}`).then(res => res.json());
+      const response = await apiRequest('GET', `/api/v1/admin/users?${params.toString()}`);
+      return response.json();
     },
     enabled: !!user,
   });
@@ -123,14 +127,20 @@ export default function Admin() {
   // Fetch orders
   const { data: orders } = useQuery({
     queryKey: ['/api/v1/admin/orders'],
-    queryFn: () => fetch('/api/v1/admin/orders').then(res => res.json()),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/orders');
+      return response.json();
+    },
     enabled: !!user,
   });
 
   // Fetch pending verifications
   const { data: verifications } = useQuery({
     queryKey: ['/api/v1/admin/verifications/pending'],
-    queryFn: () => fetch('/api/v1/admin/verifications/pending').then(res => res.json()),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/verifications/pending');
+      return response.json();
+    },
     enabled: !!user,
   });
 
@@ -250,13 +260,20 @@ export default function Admin() {
     }
   };
 
-  const filteredUsers = users?.filter((user: User) => {
+  // Normalize API response data - handle different response formats
+  const userList = Array.isArray(users) ? users : 
+                   users?.users ? users.users : 
+                   users?.data ? users.data : [];
+  
+  const filteredUsers = userList.filter((user: User) => {
+    const userName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 
+                     user.displayName || user.email || 'Unknown User';
     const matchesSearch = !searchQuery || 
-      user.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = filterRole === 'all' || user.role === filterRole;
     return matchesSearch && matchesRole;
-  }) || [];
+  });
 
   return (
     <div className="min-h-screen bg-background">
@@ -286,7 +303,7 @@ export default function Admin() {
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
-              Users ({users?.length || 0})
+              Users ({userList?.length || 0})
             </TabsTrigger>
             <TabsTrigger value="orders" data-testid="orders-tab">
               Orders ({orders?.length || 0})

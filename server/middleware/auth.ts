@@ -63,9 +63,11 @@ export const authMiddleware = async (
     try {
       const jwtPayload = await jwtService.verifyAccessToken(token);
       if (jwtPayload) {
+        console.log(`🔑 authMiddleware: JWT token verified for userId: ${jwtPayload.userId}`);
         // Get user data from database
         const user = await storage.getUser(jwtPayload.userId);
         if (!user || !user.isActive) {
+          console.error(`❌ authMiddleware: User ${jwtPayload.userId} not found or inactive`);
           return res.status(404).json({ 
             message: 'User not found or inactive' 
           });
@@ -89,6 +91,8 @@ export const authMiddleware = async (
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         };
+
+        console.log(`✅ authMiddleware: User ${user.id} authenticated with role: ${user.role}`);
 
         // Update last active timestamp
         try {
@@ -126,9 +130,9 @@ export const authMiddleware = async (
         });
       }
 
-      // Attach user data to request
+      // Attach user data to request  
       req.user = {
-        id: decodedToken.uid,
+        id: decodedToken.uid, // Firebase uses uid for user ID
         email: decodedToken.email,
         role: userData?.role || 'user',
         isVerified: userData?.isVerified || false,
@@ -257,6 +261,7 @@ export const optionalAuth = async (
 export const requireRole = (allowedRoles: string | string[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
+      console.error('🚫 requireRole: No user found in request');
       return res.status(401).json({ 
         message: 'Authentication required' 
       });
@@ -264,16 +269,84 @@ export const requireRole = (allowedRoles: string | string[]) => {
 
     const userRole = req.user.role;
     const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+    
+    console.log(`🔐 requireRole: User ${req.user.id} has role "${userRole}", required: [${roles.join(', ')}]`);
 
     if (!roles.includes(userRole)) {
+      console.error(`🚫 requireRole: Access denied for user ${req.user.id}. User role "${userRole}" not in required roles: [${roles.join(', ')}]`);
       return res.status(403).json({ 
-        message: `Access denied. Required role: ${roles.join(' or ')}` 
+        message: `Access denied. Required role: ${roles.join(' or ')}. Current role: ${userRole}` 
       });
     }
 
+    console.log(`✅ requireRole: Access granted for user ${req.user.id} with role "${userRole}"`);
     next();
   };
 };
+
+// Composite admin middleware that handles both session and JWT auth
+export async function adminSessionMiddleware(req: Request, res: Response, next: NextFunction) {
+  console.log(`🔒 adminSessionMiddleware: Checking admin access`);
+  console.log(`🔒 adminSessionMiddleware: req.user present: ${!!req.user}`);
+  
+  try {
+    let userId: string | undefined;
+    
+    // Handle both session (Replit Auth) and JWT auth
+    if (req.user?.claims?.sub) {
+      // Replit Auth session
+      userId = req.user.claims.sub;
+      console.log(`🔍 adminSessionMiddleware: Using session auth, userId: ${userId}`);
+    } else if (req.user?.id) {
+      // JWT Auth
+      userId = req.user.id;
+      console.log(`🔍 adminSessionMiddleware: Using JWT auth, userId: ${userId}`);
+    } else {
+      console.log('🚫 adminSessionMiddleware: No authenticated user');
+      return res.status(401).json({ message: "Authentication required" });
+    }
+
+    console.log(`🔍 adminSessionMiddleware: Fetching user data for ${userId}`);
+    // Get user from database to check current role
+    const user = await storage.getUser(userId);
+    
+    if (!user) {
+      console.log(`🚫 adminSessionMiddleware: User ${userId} not found in database`);
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    if (user.role !== 'admin') {
+      console.log(`🚫 adminSessionMiddleware: User ${userId} has role ${user.role}, admin required`);
+      return res.status(403).json({ message: "Access denied. Admin role required" });
+    }
+
+    // Set normalized user object in request for consistency
+    req.user = {
+      id: user.id,
+      email: user.email || undefined,
+      role: user.role || 'user',
+      isVerified: user.isVerified || false,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      profileImageUrl: user.profileImageUrl,
+      walletBalance: user.walletBalance,
+      fixiPoints: user.fixiPoints,
+      location: user.location,
+      isActive: user.isActive,
+      lastLoginAt: user.lastLoginAt,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      // Keep session claims for compatibility
+      claims: req.user?.claims
+    };
+    
+    console.log(`✅ adminSessionMiddleware: Admin ${user.id} authorized`);
+    next();
+  } catch (error) {
+    console.error('❌ adminSessionMiddleware error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
 
 // Verified user middleware
 export const requireVerified = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

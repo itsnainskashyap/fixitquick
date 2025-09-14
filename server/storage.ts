@@ -262,7 +262,14 @@ export interface IStorage {
 export class PostgresStorage implements IStorage {
   // User methods
   async getUser(id: string): Promise<User | undefined> {
+    console.log(`🔍 storage.getUser: Looking for user with id: "${id}"`);
     const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    console.log(`🔍 storage.getUser: Found ${result.length} users for id: "${id}"`);
+    if (result.length > 0) {
+      console.log(`✅ storage.getUser: User found - id: ${result[0].id}, role: ${result[0].role}`);
+    } else {
+      console.log(`❌ storage.getUser: No user found for id: "${id}"`);
+    }
     return result[0];
   }
 

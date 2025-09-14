@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { storage } from "./storage";
-import { authMiddleware, optionalAuth, requireRole, type AuthenticatedRequest } from "./middleware/auth";
+import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type AuthenticatedRequest } from "./middleware/auth";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
@@ -237,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user?.claims?.sub || req.user?.id;
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
@@ -254,7 +254,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Cart routes
   app.get('/api/v1/cart', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -270,7 +270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/cart/add', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -286,7 +286,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/v1/cart/update', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -301,7 +301,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete('/api/v1/cart/remove', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -316,7 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete('/api/v1/cart/clear', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -621,7 +621,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/v1/auth/me - Get authenticated user
   app.get('/api/v1/auth/me', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({
           success: false,
@@ -669,7 +669,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/auth/onboarding - Complete user profile after phone verification
   app.post('/api/v1/auth/onboarding', authMiddleware, validateBody(simpleOnboardingSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({
           success: false,
@@ -771,7 +771,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/v1/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -837,7 +837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // PATCH /api/v1/users/me/email - Update user email
   app.patch('/api/v1/users/me/email', authMiddleware, validateBody(emailUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ 
           success: false,
@@ -895,7 +895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update user location
   app.patch('/api/v1/auth/location', authMiddleware, validateBody(locationUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ 
           success: false,
@@ -957,7 +957,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/ai/search', validateBody(enhancedSearchSchema), async (req, res) => {
     try {
       const { query, context, filters } = req.body;
-      const userId = req.user?.uid; // Optional user context
+      const userId = req.user?.id; // Optional user context
 
       // Track search query for analytics
       if (userId || context?.userId) {
@@ -1096,7 +1096,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get user's search history
   app.get('/api/v1/ai/search-history', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -1143,7 +1143,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/ai/search-analytics', validateBody(searchAnalyticsSchema), async (req, res) => {
     try {
       const { query, results, category, clicked, duration } = req.body;
-      const userId = req.user?.uid || null;
+      const userId = req.user?.id || null;
 
       // Track search analytics
       await storage.trackSearchQuery(userId, query, results, category);
@@ -1513,7 +1513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Order routes
   app.get('/api/v1/orders', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { status } = req.query;
       
       const orders = await storage.getOrdersByUser(userId, status as string);
@@ -1526,7 +1526,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const orders = await storage.getRecentOrders(userId, 3);
       res.json(orders);
     } catch (error) {
@@ -1537,7 +1537,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { items, totalAmount, ...otherOrderData } = req.body;
       
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -1601,7 +1601,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/orders/:orderId', authMiddleware, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const userRole = req.user?.role || 'user';
       
       const order = await storage.getOrderWithDetails(orderId);
@@ -1633,7 +1633,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { orderId } = req.params;
       const { status } = req.body;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const userRole = req.user?.role || 'user';
       
       // Validate status
@@ -1682,7 +1682,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Auto-assignment for service providers accepting orders
       if (userRole === 'service_provider') {
-        const userId = req.user?.uid;
+        const userId = req.user?.id;
         const canAccept = await storage.canProviderAcceptOrder(orderId, userId);
         if (!canAccept.allowed) {
           return res.status(403).json({ message: canAccept.reason });
@@ -1706,7 +1706,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { orderId } = req.params;
       const { rating, comment } = req.body;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       
       // Validate input
       if (!rating || rating < 1 || rating > 5) {
@@ -1751,7 +1751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/v1/orders/:orderId', authMiddleware, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const userRole = req.user?.role || 'user';
       
       const order = await storage.getOrder(orderId);
@@ -1789,7 +1789,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Wallet routes
   app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const wallet = await storage.getWalletBalance(userId);
       res.json(wallet);
     } catch (error) {
@@ -1800,7 +1800,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/v1/wallet/transactions', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const transactions = await storage.getWalletTransactions(userId, 20);
       res.json(transactions);
     } catch (error) {
@@ -1811,7 +1811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/wallet/topup', authMiddleware, validateBody(walletTopupSchema), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -1847,7 +1847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Confirm wallet topup (mock success for development)
   app.post('/api/v1/wallet/confirm-topup', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -1900,7 +1900,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURE: Pay for a specific order with wallet (server validates everything)
   app.post('/api/v1/orders/:orderId/pay', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { orderId } = req.params;
       
       if (!userId) {
@@ -2011,7 +2011,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Process wallet refund
   app.post('/api/v1/wallet/refund', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -2054,7 +2054,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Redeem FixiPoints
   app.post('/api/v1/wallet/redeem-points', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
@@ -2122,7 +2122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/providers/stats/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
-      const currentUserId = req.user?.uid;
+      const currentUserId = req.user?.id;
       const userRole = req.user?.role;
       
       // Check if user can access this provider's stats
@@ -2163,7 +2163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/providers/orders/pending/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
-      const currentUserId = req.user?.uid;
+      const currentUserId = req.user?.id;
       const userRole = req.user?.role;
       
       if (userRole !== 'admin' && currentUserId !== userId) {
@@ -2181,7 +2181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/providers/orders/active/:userId', authMiddleware, requireRole(['service_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
-      const currentUserId = req.user?.uid;
+      const currentUserId = req.user?.id;
       const userRole = req.user?.role;
       
       if (userRole !== 'admin' && currentUserId !== userId) {
@@ -2200,7 +2200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Provider availability management
   app.put('/api/v1/providers/availability', authMiddleware, requireRole(['service_provider']), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { availability, isOnline } = req.body;
       
       const provider = await storage.getServiceProvider(userId);
@@ -2223,7 +2223,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Provider application
   app.post('/api/v1/providers/apply', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { categoryId, documents, serviceArea } = req.body;
       
       // Check if user already has a provider profile
@@ -2285,7 +2285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/parts-provider/parts', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartSchema), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const partData = {
         ...req.body,
         providerId: userId,
@@ -2305,7 +2305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/parts-provider/inventory/:userId', authMiddleware, requireRole(['parts_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
-      const currentUserId = req.user?.uid;
+      const currentUserId = req.user?.id;
       const userRole = req.user?.role;
       
       if (userRole !== 'admin' && currentUserId !== userId) {
@@ -2323,7 +2323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/parts-provider/orders/:userId', authMiddleware, requireRole(['parts_provider', 'admin']), async (req, res) => {
     try {
       const { userId } = req.params;
-      const currentUserId = req.user?.uid;
+      const currentUserId = req.user?.id;
       const userRole = req.user?.role;
       
       if (userRole !== 'admin' && currentUserId !== userId) {
@@ -2340,7 +2340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/v1/parts-provider/parts/:partId', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { partId } = req.params;
       
       const part = await storage.getPart(partId);
@@ -2362,7 +2362,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/v1/parts-provider/parts/:partId/stock', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { partId } = req.params;
       const { stock } = req.body;
       
@@ -2385,7 +2385,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/parts-provider/orders/:orderId/accept', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { orderId } = req.params;
       
       const order = await storage.getOrder(orderId);
@@ -2411,7 +2411,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/v1/parts-provider/orders/:orderId/ship', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { orderId } = req.params;
       const { trackingId } = req.body;
       
@@ -2440,7 +2440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Parts provider application
   app.post('/api/v1/parts-provider/apply', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { businessName, documents, categories } = req.body;
       
       // Update user role
@@ -2454,7 +2454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin routes
-  app.get('/api/v1/admin/stats', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/admin/stats', adminSessionMiddleware, async (req, res) => {
     try {
       const [totalUsers, allOrders, serviceProviders, partsProviders] = await Promise.all([
         storage.getUsersCount(),
@@ -2483,7 +2483,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/admin/users', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/admin/users', adminSessionMiddleware, async (req, res) => {
     try {
       const { search, role } = req.query;
       
@@ -2509,7 +2509,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/v1/admin/orders', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/admin/orders', adminSessionMiddleware, async (req, res) => {
     try {
       const orders = await storage.getOrders({ limit: 100 });
       res.json(orders);
@@ -2523,7 +2523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/v1/chat/:orderId', authMiddleware, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const userRole = req.user?.role || 'user';
       
       // Verify user has access to this order's chat
@@ -2552,7 +2552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/v1/chat/:orderId/messages', authMiddleware, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const { message, messageType = 'text', attachments = [] } = req.body;
       
       if (!message || !message.trim()) {
@@ -2612,7 +2612,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/v1/notifications', authMiddleware, async (req, res) => {
     try {
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       const limit = parseInt(req.query.limit as string) || 50;
       
       const notifications = await storage.getNotifications(userId, limit);
@@ -2626,7 +2626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/v1/notifications/:notificationId/read', authMiddleware, async (req, res) => {
     try {
       const { notificationId } = req.params;
-      const userId = req.user?.uid;
+      const userId = req.user?.id;
       
       // Verify notification belongs to user (security check)
       const notifications = await storage.getNotifications(userId, 1000);
@@ -2645,7 +2645,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enhanced admin user management
-  app.put('/api/v1/admin/users/:userId', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.put('/api/v1/admin/users/:userId', adminSessionMiddleware, async (req, res) => {
     try {
       const { userId } = req.params;
       const updates = req.body;
@@ -2662,7 +2662,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/v1/admin/users/:userId/role', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.put('/api/v1/admin/users/:userId/role', adminSessionMiddleware, async (req, res) => {
     try {
       const { userId } = req.params;
       const { role } = req.body;
@@ -2685,7 +2685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin verification management
-  app.get('/api/v1/admin/verifications/pending', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/admin/verifications/pending', adminSessionMiddleware, async (req, res) => {
     try {
       // Get unverified service providers
       const serviceProviders = await storage.getServiceProviders({ isVerified: false });
@@ -2712,7 +2712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/admin/verifications/:verificationId', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.post('/api/v1/admin/verifications/:verificationId', adminSessionMiddleware, async (req, res) => {
     try {
       const { verificationId } = req.params;
       const { status, notes } = req.body;
@@ -2751,7 +2751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin refund management
-  app.post('/api/v1/admin/refund/:orderId', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.post('/api/v1/admin/refund/:orderId', adminSessionMiddleware, async (req, res) => {
     try {
       const { orderId } = req.params;
       const { amount, reason } = req.body;
@@ -2797,7 +2797,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin analytics
-  app.get('/api/v1/admin/analytics', authMiddleware, requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/admin/analytics', adminSessionMiddleware, async (req, res) => {
     try {
       const { period = '30d' } = req.query;
       

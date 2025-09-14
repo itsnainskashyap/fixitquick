@@ -152,7 +152,7 @@ export function useOrderChat(orderId?: string) {
         }]);
         
         // Increment unread count if message is from someone else
-        if (data.senderId !== user?.uid) {
+        if (data.senderId !== user?.id) {
           setUnreadCount(prev => prev + 1);
           
           toast({
@@ -165,7 +165,7 @@ export function useOrderChat(orderId?: string) {
     });
 
     const unsubscribeTyping = subscribe('typing_indicator', (data) => {
-      if (data.orderId === orderId && data.userId !== user?.uid) {
+      if (data.orderId === orderId && data.userId !== user?.id) {
         setTypingUsers(prev => {
           const newSet = new Set(prev);
           if (data.isTyping) {
@@ -194,7 +194,7 @@ export function useOrderChat(orderId?: string) {
       unsubscribeTyping();
       leaveRoom(`order:${orderId}`);
     };
-  }, [orderId, isConnected, user?.uid]);
+  }, [orderId, isConnected, user?.id]);
 
   const sendChatMessage = (message: string, messageType: 'text' | 'image' | 'location' = 'text', attachments: string[] = []) => {
     if (!orderId || !message.trim()) return false;

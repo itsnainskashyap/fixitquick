@@ -18,6 +18,12 @@ export async function apiRequest(
     ...customHeaders,
   };
 
+  // Add Bearer token if available (for SMS auth users)
+  const accessToken = localStorage.getItem('accessToken');
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
   const res = await fetch(url, {
     method,
     headers,
