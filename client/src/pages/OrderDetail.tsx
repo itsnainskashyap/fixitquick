@@ -15,6 +15,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { LiveOrderTracking } from '@/components/LiveOrderTracking';
+import { RealTimeChat } from '@/components/RealTimeChat';
+import { useOrderTracking, useOrderChat } from '@/hooks/useSocket';
 import { 
   ArrowLeft, 
   MapPin, 
@@ -103,8 +106,23 @@ export default function OrderDetail() {
   const [reviewComment, setReviewComment] = useState('');
   const [beforePhotos, setBeforePhotos] = useState<string[]>([]);
   const [afterPhotos, setAfterPhotos] = useState<string[]>([]);
+  const [showChat, setShowChat] = useState(false);
 
   const orderId = params?.orderId;
+
+  // Real-time hooks
+  const {
+    orderStatus: liveOrderStatus,
+    providerLocation,
+    isConnected: trackingConnected
+  } = useOrderTracking(orderId);
+
+  const {
+    messages,
+    unreadCount,
+    isConnected: chatConnected,
+    sendChatMessage
+  } = useOrderChat(orderId);
 
   // Fetch order details
   const { data: order, isLoading, error } = useQuery({
@@ -403,12 +421,60 @@ export default function OrderDetail() {
           transition={{ delay: 0.1 }}
         >
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="details" data-testid="details-tab">Details</TabsTrigger>
+              <TabsTrigger value="tracking" data-testid="tracking-tab">
+                Live Tracking
+                {!trackingConnected && <div className="w-2 h-2 bg-red-500 rounded-full ml-1" />}
+              </TabsTrigger>
+              <TabsTrigger value="provider" data-testid="provider-tab">
+                Provider
+                {unreadCount > 0 && (
+                  <Badge className="ml-1 px-1 min-w-[16px] h-4 text-xs bg-red-500">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="timeline" data-testid="timeline-tab">Timeline</TabsTrigger>
-              <TabsTrigger value="provider" data-testid="provider-tab">Provider</TabsTrigger>
               <TabsTrigger value="review" data-testid="review-tab">Review</TabsTrigger>
             </TabsList>
+
+            {/* Live Tracking Tab */}
+            <TabsContent value="tracking" className="mt-6">
+              <LiveOrderTracking 
+                orderId={orderId!}
+                order={order}
+                showMap={true}
+                compact={false}
+              />
+              
+              {/* Connection Status */}
+              <Card className="mt-4">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-3 h-3 rounded-full ${trackingConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="text-sm font-medium">Real-time Tracking</span>
+                    </div>
+                    <Badge variant={trackingConnected ? 'default' : 'destructive'}>
+                      {trackingConnected ? 'Connected' : 'Disconnected'}
+                    </Badge>
+                  </div>
+                  {!trackingConnected && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Trying to reconnect... Some updates may be delayed.
+                    </p>
+                  )}
+                  {providerLocation && (
+                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                      <p className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                        Provider location updated: {new Date(providerLocation.timestamp).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             {/* Order Details Tab */}
             <TabsContent value="details" className="mt-6">
@@ -632,7 +698,8 @@ export default function OrderDetail() {
 
             {/* Provider Tab */}
             <TabsContent value="provider" className="mt-6">
-              <div className="grid gap-6 md:grid-cols-2">
+              <div className="space-y-6">
+                <div className="grid gap-6 md:grid-cols-2">
                 {order.serviceProvider && (
                   <Card>
                     <CardHeader>
@@ -747,6 +814,37 @@ export default function OrderDetail() {
                     </CardContent>
                   </Card>
                 )}
+                </div>
+
+                {/* Real-Time Chat Section */}
+                {(order.serviceProvider || order.partsProvider) && (
+                  <div className="w-full">
+                    <RealTimeChat 
+                      orderId={orderId!}
+                      compact={false}
+                    />
+                  </div>
+                )}
+
+                {/* Chat Connection Status */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-3 h-3 rounded-full ${chatConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                        <span className="text-sm font-medium">Chat System</span>
+                      </div>
+                      <Badge variant={chatConnected ? 'default' : 'destructive'}>
+                        {chatConnected ? 'Connected' : 'Disconnected'}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {unreadCount > 0 && `${unreadCount} unread messages`}
+                      {chatConnected && unreadCount === 0 && "You're all caught up"}
+                      {!chatConnected && "Trying to reconnect... Messages will sync when connected."}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
 

@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
+import { WebSocketProvider } from "@/contexts/WebSocketContext";
 import { useEffect } from "react";
 
 // Import pages
@@ -166,12 +167,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <CartProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-          </TooltipProvider>
-        </CartProvider>
+        <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+          <CartProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+            </TooltipProvider>
+          </CartProvider>
+        </WebSocketProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

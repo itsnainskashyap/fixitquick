@@ -1,15 +1,16 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { storage } from "./storage";
 import { authMiddleware, requireRole } from "./middleware/auth";
 import { aiService } from "./services/ai";
 import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
+import WebSocketManager from "./services/websocket";
 import {
   insertUserSchema,
   insertOrderSchema,
@@ -222,6 +223,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
+    }
+  });
+
+  // WebSocket token endpoint for secure WebSocket authentication
+  app.post('/api/v1/auth/ws-token', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+
+      // Verify user exists and is active
+      const user = await storage.getUser(userId);
+      if (!user || !user.isActive) {
+        return res.status(404).json({ message: 'User not found or inactive' });
+      }
+
+      // Generate JWT token for WebSocket authentication
+      const payload = {
+        userId: user.id,
+        role: user.role,
+        email: user.email,
+        timestamp: Date.now(),
+        exp: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+      };
+
+      const sessionSecret = process.env.SESSION_SECRET || 'fallback-secret-for-development';
+      const token = jwt.sign(payload, sessionSecret);
+
+      res.json({ 
+        token,
+        expiresAt: new Date(payload.exp).toISOString()
+      });
+    } catch (error) {
+      console.error('Error generating WebSocket token:', error);
+      res.status(500).json({ message: 'Failed to generate WebSocket token' });
     }
   });
 
@@ -1560,6 +1597,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Chat and Notification routes
+  app.get('/api/v1/chat/:orderId', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.uid;
+      const userRole = req.user?.role || 'user';
+      
+      // Verify user has access to this order's chat
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      const hasAccess = order.userId === userId || 
+                       order.serviceProviderId === userId || 
+                       order.partsProviderId === userId ||
+                       userRole === 'admin';
+      
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const messages = await storage.getChatMessages(orderId);
+      res.json(messages);
+    } catch (error) {
+      console.error('Error fetching chat messages:', error);
+      res.status(500).json({ message: 'Failed to fetch chat messages' });
+    }
+  });
+
+  app.post('/api/v1/chat/:orderId/messages', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.uid;
+      const { message, messageType = 'text', attachments = [] } = req.body;
+      
+      if (!message || !message.trim()) {
+        return res.status(400).json({ message: 'Message content is required' });
+      }
+      
+      // Verify user has access to this order's chat
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      const hasAccess = order.userId === userId || 
+                       order.serviceProviderId === userId || 
+                       order.partsProviderId === userId;
+      
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      // Determine receiver
+      let receiverId: string;
+      if (order.userId === userId) {
+        receiverId = order.serviceProviderId || order.partsProviderId || '';
+      } else {
+        receiverId = order.userId;
+      }
+      
+      const chatMessage = await storage.createChatMessage({
+        orderId,
+        senderId: userId,
+        receiverId,
+        message: message.trim(),
+        messageType,
+        attachments,
+        isRead: false
+      });
+      
+      // Send real-time notification via WebSocket
+      const wsManager = (global as any).wsManager;
+      if (wsManager) {
+        wsManager.broadcastToRoom(`order:${orderId}`, {
+          type: 'chat_message',
+          data: {
+            ...chatMessage,
+            senderName: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Unknown User'
+          }
+        });
+      }
+      
+      res.json(chatMessage);
+    } catch (error) {
+      console.error('Error sending chat message:', error);
+      res.status(500).json({ message: 'Failed to send message' });
+    }
+  });
+
+  app.get('/api/v1/notifications', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.uid;
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const notifications = await storage.getNotifications(userId, limit);
+      res.json(notifications);
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+      res.status(500).json({ message: 'Failed to fetch notifications' });
+    }
+  });
+
+  app.put('/api/v1/notifications/:notificationId/read', authMiddleware, async (req, res) => {
+    try {
+      const { notificationId } = req.params;
+      const userId = req.user?.uid;
+      
+      // Verify notification belongs to user (security check)
+      const notifications = await storage.getNotifications(userId, 1000);
+      const notification = notifications.find(n => n.id === notificationId);
+      
+      if (!notification) {
+        return res.status(404).json({ message: 'Notification not found' });
+      }
+      
+      await storage.markNotificationAsRead(notificationId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      res.status(500).json({ message: 'Failed to mark notification as read' });
+    }
+  });
+
   // Enhanced admin user management
   app.put('/api/v1/admin/users/:userId', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
@@ -1795,45 +1957,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // WebSocket setup
+  // WebSocket setup with comprehensive real-time features
   const httpServer = createServer(app);
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-
-  wss.on('connection', (ws: WebSocket, req) => {
-    console.log('WebSocket connection established');
-    
-    ws.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        
-        switch (message.type) {
-          case 'auth':
-            // Handle authentication
-            console.log('WebSocket auth:', message.data);
-            break;
-          case 'subscribe_order':
-            // Handle order subscription
-            console.log('Order subscription:', message.data);
-            break;
-          case 'chat_message':
-            // Handle chat message
-            console.log('Chat message:', message.data);
-            break;
-          default:
-            console.log('Unknown message type:', message.type);
-        }
-      } catch (error) {
-        console.error('WebSocket message error:', error);
-      }
-    });
-    
-    ws.on('close', () => {
-      console.log('WebSocket connection closed');
-    });
-    
-    ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
-    });
+  const wsManager = new WebSocketManager(httpServer);
+  
+  // Store WebSocket manager instance globally for use in routes
+  (global as any).wsManager = wsManager;
+  
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM, closing WebSocket connections...');
+    wsManager.cleanup();
+  });
+  
+  process.on('SIGINT', () => {
+    console.log('Received SIGINT, closing WebSocket connections...');
+    wsManager.cleanup();
   });
 
   return httpServer;
