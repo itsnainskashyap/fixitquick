@@ -38,6 +38,12 @@ interface EnhancedSearchResult {
   icon?: string;
 }
 
+interface TypeaheadSuggestion {
+  text: string;
+  category?: string;
+  confidence: number;
+}
+
 interface AISearchBarProps {
   onSearch?: (query: string) => void;
   onResultSelect?: (result: EnhancedSearchResult) => void;
@@ -70,10 +76,13 @@ export function AISearchBar({
   // Search state
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<EnhancedSearchResult[]>([]);
+  const [typeaheadSuggestions, setTypeaheadSuggestions] = useState<TypeaheadSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isTypeaheadLoading, setIsTypeaheadLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [aiInsights, setAiInsights] = useState<{explanation: string; confidence: number} | null>(null);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
 
   // Voice search state
   const [voiceSearch, setVoiceSearch] = useState<VoiceSearchState>({
@@ -87,34 +96,103 @@ export function AISearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
   const debouncedQuery = useDebounce(query, 300);
+  const debouncedTypeaheadQuery = useDebounce(query, 150); // Faster response for typeahead
 
   // Fetch trending searches and personalized suggestions
-  const { data: trendingData } = useQuery({
+  const { data: trendingData, error: trendingError } = useQuery({
     queryKey: ['ai-trending'],
     queryFn: async () => {
       const response = await fetch('/api/v1/ai/trending?type=mixed&limit=5');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch trending data: ${response.status}`);
+      }
       return response.json();
     },
-    enabled: showTrending
+    enabled: showTrending,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const { data: personalizedSuggestions } = useQuery({
-    queryKey: ['ai-suggestions', user?.id],
+  const { data: personalizedSuggestions, error: personalizedError } = useQuery({
+    queryKey: ['ai-suggestions', user?.id || ''],
     queryFn: async () => {
       if (!user?.id) return null;
       const response = await fetch(`/api/v1/ai/suggestions?type=mixed&limit=6`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch suggestions: ${response.status}`);
+      }
       return response.json();
     },
-    enabled: !!user?.id && showTrending
+    enabled: !!user?.id && showTrending,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const { data: popularSearchesData } = useQuery({
+  const { data: popularSearchesData, error: popularSearchesError } = useQuery({
     queryKey: ['popular-searches'],
     queryFn: async () => {
       const response = await fetch('/api/v1/ai/popular-searches?limit=8');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch popular searches: ${response.status}`);
+      }
       return response.json();
-    }
+    },
+    retry: 1,
+    staleTime: 10 * 60 * 1000, // 10 minutes - popular searches don't change often
   });
+
+  // Enhanced typeahead suggestions using OpenRouter
+  const { data: typeaheadData, isLoading: typeaheadLoading } = useQuery({
+    queryKey: ['ai-typeahead', debouncedTypeaheadQuery || ''],
+    queryFn: async () => {
+      if (!debouncedTypeaheadQuery || debouncedTypeaheadQuery.length < 2) {
+        return { suggestions: [] };
+      }
+      const response = await fetch(`/api/v1/ai/typeahead?query=${encodeURIComponent(debouncedTypeaheadQuery)}&limit=8`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch typeahead suggestions');
+      }
+      return response.json();
+    },
+    enabled: debouncedTypeaheadQuery.length >= 2,
+    staleTime: 3 * 60 * 1000, // 3 minutes - matches server cache
+    gcTime: 5 * 60 * 1000, // 5 minutes
+    retry: 1, // Only retry once on failure
+  });
+
+  // Update typeahead suggestions when data changes
+  useEffect(() => {
+    if (typeaheadData?.suggestions) {
+      setTypeaheadSuggestions(typeaheadData.suggestions);
+      setIsTypeaheadLoading(false);
+    } else {
+      setTypeaheadSuggestions([]);
+    }
+  }, [typeaheadData]);
+
+  // Update loading state
+  useEffect(() => {
+    setIsTypeaheadLoading(typeaheadLoading);
+  }, [typeaheadLoading]);
+
+  // Error handling effects for React Query v5 compatibility
+  useEffect(() => {
+    if (trendingError) {
+      console.warn('Trending data unavailable:', trendingError);
+    }
+  }, [trendingError]);
+
+  useEffect(() => {
+    if (personalizedError) {
+      console.warn('Personalized suggestions unavailable:', personalizedError);
+    }
+  }, [personalizedError]);
+
+  useEffect(() => {
+    if (popularSearchesError) {
+      console.warn('Popular searches unavailable:', popularSearchesError);
+    }
+  }, [popularSearchesError]);
 
   // Initialize effects
   useEffect(() => {
@@ -171,36 +249,54 @@ export function AISearchBar({
     setIsLoading(true);
     
     try {
-      // Use new enhanced search endpoint for suggestions
-      const response = await fetch('/api/v1/ai/search-suggestions', {
-        method: 'GET',
+      // Use correct enhanced search endpoint for suggestions with query
+      const response = await fetch('/api/v1/ai/enhanced-search-suggestions', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: searchQuery,
+          limit: 6,
+          userContext: {
+            recentSearches: recentSearches.slice(0, 3),
+            location: user?.location?.city,
+            preferences: []
+          }
+        }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        const searchResults: EnhancedSearchResult[] = [
-          ...(data.suggestions?.services || []).map((s: any) => ({
-            ...s,
-            type: 'service' as const,
-            icon: '⚡'
-          })),
-          ...(data.suggestions?.parts || []).map((p: any) => ({
-            ...p,
-            type: 'part' as const,
-            icon: '🔧'
-          }))
-        ].slice(0, 6);
-
-        setSuggestions(searchResults);
-        setShowSuggestions(true);
+        console.log('Enhanced search response:', data);
         
-        // Set AI insights if available
-        if (data.explanation && data.confidence) {
-          setAiInsights({
-            explanation: data.explanation,
-            confidence: data.confidence
-          });
+        // Handle OpenRouter enhanced suggestions - they come as TypeaheadSuggestion objects
+        if (data.suggestions && Array.isArray(data.suggestions)) {
+          // Convert TypeaheadSuggestion objects to EnhancedSearchResult format
+          const searchResults: EnhancedSearchResult[] = data.suggestions.map((suggestion: any, index: number) => ({
+            id: `suggestion-${index}`,
+            name: suggestion.text || suggestion.query || suggestion,
+            description: suggestion.category ? `${suggestion.category} suggestion` : 'AI-powered suggestion',
+            price: 0,
+            category: suggestion.category || 'general',
+            type: suggestion.category?.includes('part') ? 'part' : 'service',
+            rating: 4.5,
+            confidence: suggestion.confidence || 0.8,
+            icon: suggestion.category?.includes('part') ? '🔧' : '⚡'
+          })).slice(0, 6);
+
+          setSuggestions(searchResults);
+          setShowSuggestions(true);
+          
+          // Set AI insights based on response metadata
+          if (data.cached !== undefined) {
+            setAiInsights({
+              explanation: `Found ${searchResults.length} AI-powered suggestions${data.cached ? ' (cached)' : ' (fresh)'}`,
+              confidence: 0.85
+            });
+          }
+        } else {
+          // Fallback for empty or malformed response
+          console.warn('No valid suggestions in response:', data);
+          throw new Error('Invalid suggestions format from backend');
         }
       } else {
         // Fallback to existing AI service
@@ -235,11 +331,54 @@ export function AISearchBar({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setQuery(value);
+    setSelectedSuggestionIndex(-1); // Reset selection when typing
     
     if (value.length > 0) {
       setShowSuggestions(true);
     } else {
       setShowSuggestions(false);
+    }
+  };
+
+  // Keyboard navigation for suggestions
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions) return;
+
+    const allSuggestions = [
+      ...typeaheadSuggestions.map(s => ({ type: 'typeahead' as const, text: s.text, data: s })),
+      ...suggestions.map(s => ({ type: 'result' as const, text: s.name, data: s }))
+    ];
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => 
+          prev < allSuggestions.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => prev > -1 ? prev - 1 : -1);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (selectedSuggestionIndex >= 0 && allSuggestions[selectedSuggestionIndex]) {
+          const selected = allSuggestions[selectedSuggestionIndex];
+          if (selected.type === 'typeahead') {
+            setQuery(selected.text);
+            handleSearch(selected.text);
+          } else {
+            handleResultSelect(selected.data as EnhancedSearchResult);
+          }
+        } else {
+          handleSearch();
+        }
+        break;
+      case 'Escape':
+        setShowSuggestions(false);
+        setSelectedSuggestionIndex(-1);
+        inputRef.current?.blur();
+        break;
     }
   };
 
@@ -324,11 +463,7 @@ export function AISearchBar({
             value={query}
             onChange={handleInputChange}
             onFocus={handleInputFocus}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleSearch();
-              }
-            }}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             className="ai-search-input pr-24"
             autoFocus={autoFocus}
@@ -354,14 +489,51 @@ export function AISearchBar({
               </Button>
             )}
 
-            {/* Loading Indicator */}
-            {isLoading && (
+            {/* Enhanced Loading Indicator */}
+            {(isLoading || isTypeaheadLoading) && (
               <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ 
+                  opacity: 1, 
+                  scale: 1,
+                  rotate: 360 
+                }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ 
+                  rotate: { duration: 1, repeat: Infinity, ease: 'linear' },
+                  opacity: { duration: 0.2 },
+                  scale: { duration: 0.2 }
+                }}
                 className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
                 data-testid="search-loading"
               />
+            )}
+
+            {/* Typing Indicator for Typeahead */}
+            {isTypeaheadLoading && query.length >= 2 && (
+              <motion.div
+                initial={{ opacity: 0, x: 5 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 5 }}
+                className="flex items-center space-x-1"
+                data-testid="typeahead-indicator"
+              >
+                <motion.div
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                  className="w-1 h-1 bg-primary rounded-full"
+                />
+                <motion.div
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
+                  className="w-1 h-1 bg-primary rounded-full"
+                />
+                <motion.div
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: 0.4 }}
+                  className="w-1 h-1 bg-primary rounded-full"
+                />
+              </motion.div>
             )}
             
             {/* AI Badge */}
@@ -409,24 +581,143 @@ export function AISearchBar({
               className="absolute top-full left-0 right-0 bg-card border border-border rounded-lg mt-1 shadow-lg z-50 max-h-96 overflow-y-auto"
               data-testid="search-suggestions"
             >
-              {/* Enhanced AI Search Results */}
-              {suggestions.length > 0 && (
+              {/* AI Typeahead Suggestions */}
+              {/* Loading State for Typeahead */}
+              {isTypeaheadLoading && query.length >= 2 && typeaheadSuggestions.length === 0 && (
                 <div className="p-2">
                   <div className="flex items-center space-x-2 px-3 py-2 text-sm text-muted-foreground">
-                    <Brain className="w-4 h-4 text-primary" />
-                    <span>AI Powered Results</span>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    >
+                      <Sparkles className="w-4 h-4 text-primary" />
+                    </motion.div>
+                    <span>Getting AI suggestions...</span>
                   </div>
                   
-                  {suggestions.map((result, index) => (
+                  {/* Skeleton Loading */}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center space-x-3 p-3">
+                      <div className="w-8 h-8 bg-muted rounded-lg animate-pulse" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 bg-muted rounded animate-pulse" style={{ width: `${60 + i * 10}%` }} />
+                        <div className="h-2 bg-muted rounded animate-pulse" style={{ width: `${30 + i * 5}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {typeaheadSuggestions.length > 0 && query.length >= 2 && (
+                <div className="p-2">
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center space-x-2 px-3 py-2 text-sm text-muted-foreground"
+                  >
                     <motion.div
-                      key={result.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      onClick={() => handleResultSelect(result)}
-                      className="flex items-center space-x-3 p-3 hover:bg-muted rounded-lg cursor-pointer transition-all duration-200 border border-transparent hover:border-primary/20"
-                      data-testid={`suggestion-${index}`}
+                      animate={typeaheadData?.cached ? {} : { 
+                        scale: [1, 1.1, 1],
+                        rotate: [0, 180, 360]
+                      }}
+                      transition={{ duration: 0.5 }}
                     >
+                      <Sparkles className="w-4 h-4 text-primary" />
+                    </motion.div>
+                    <span>AI Suggestions</span>
+                    {typeaheadData?.cached && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.1 }}
+                      >
+                        <Badge variant="outline" className="text-xs">
+                          ⚡ Cached
+                        </Badge>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                  
+                  {typeaheadSuggestions.map((suggestion, index) => {
+                    const isSelected = selectedSuggestionIndex === index;
+                    return (
+                      <motion.div
+                        key={`typeahead-${index}`}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.03 }}
+                        onClick={() => {
+                          setQuery(suggestion.text);
+                          handleSearch(suggestion.text);
+                        }}
+                        className={`flex items-center space-x-3 p-3 hover:bg-muted rounded-lg cursor-pointer transition-all duration-200 border ${
+                          isSelected 
+                            ? 'bg-muted border-primary/50 ring-1 ring-primary/20 shadow-sm' 
+                            : 'border-transparent hover:border-primary/20'
+                        }`}
+                        onMouseEnter={() => setSelectedSuggestionIndex(index)}
+                        onMouseLeave={() => setSelectedSuggestionIndex(-1)}
+                        data-testid={`typeahead-suggestion-${index}`}
+                      >
+                        <div className="w-8 h-8 bg-gradient-to-br from-primary/10 to-blue-500/10 rounded-lg flex items-center justify-center">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-medium text-sm text-foreground">{suggestion.text}</p>
+                            {suggestion.category && (
+                              <Badge variant="outline" className="text-xs px-2 py-0.5">
+                                {suggestion.category}
+                              </Badge>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs text-muted-foreground">
+                              {Math.round(suggestion.confidence * 100)}% match
+                            </span>
+                            <div className="flex-1 bg-muted rounded-full h-1">
+                              <div 
+                                className="bg-primary h-1 rounded-full transition-all duration-300"
+                                style={{ width: `${suggestion.confidence * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Enhanced AI Search Results */}
+              {suggestions.length > 0 && (
+                <div className="p-2 border-t border-border">
+                  <div className="flex items-center space-x-2 px-3 py-2 text-sm text-muted-foreground">
+                    <Brain className="w-4 h-4 text-primary" />
+                    <span>Detailed Results</span>
+                  </div>
+                  
+                  {suggestions.map((result, index) => {
+                    const adjustedIndex = typeaheadSuggestions.length + index;
+                    const isSelected = selectedSuggestionIndex === adjustedIndex;
+                    return (
+                      <motion.div
+                        key={result.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.05 }}
+                        onClick={() => handleResultSelect(result)}
+                        className={`flex items-center space-x-3 p-3 hover:bg-muted rounded-lg cursor-pointer transition-all duration-200 border ${
+                          isSelected 
+                            ? 'bg-muted border-primary/50 ring-1 ring-primary/20 shadow-sm' 
+                            : 'border-transparent hover:border-primary/20'
+                        }`}
+                        onMouseEnter={() => setSelectedSuggestionIndex(adjustedIndex)}
+                        onMouseLeave={() => setSelectedSuggestionIndex(-1)}
+                        data-testid={`suggestion-${index}`}
+                      >
                       <div className="w-10 h-10 bg-gradient-to-br from-primary/10 to-purple-500/10 rounded-lg flex items-center justify-center">
                         {result.type === 'service' ? (
                           <Zap className="w-5 h-5 text-primary" />
@@ -491,7 +782,8 @@ export function AISearchBar({
                         )}
                       </div>
                     </motion.div>
-                  ))}
+                  );
+                  })}
                 </div>
               )}
 
