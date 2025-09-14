@@ -116,9 +116,11 @@ export function Header({
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-sm">FQ</span>
-              </div>
+              <img 
+                src="@assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                alt="FixitQuick Logo" 
+                className="w-8 h-8 object-contain"
+              />
               <span className="font-bold text-lg text-foreground">FixitQuick</span>
             </motion.div>
 

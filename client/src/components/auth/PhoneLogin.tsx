@@ -145,8 +145,12 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           {/* Header */}
           <div className="text-center space-y-2">
-            <div className="w-16 h-16 bg-primary rounded-2xl mx-auto mb-4 flex items-center justify-center">
-              <Phone className="h-8 w-8 text-primary-foreground" />
+            <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+              <img 
+                src="@assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                alt="FixitQuick Logo" 
+                className="w-16 h-16 object-contain"
+              />
             </div>
             <h2 className="text-2xl font-bold text-foreground">Enter your phone number</h2>
             <p className="text-sm text-muted-foreground">

@@ -268,8 +268,12 @@ export default function OtpVerification({
               <ArrowLeft className="h-4 w-4" />
             </Button>
             
-            <div className="w-16 h-16 bg-primary rounded-2xl mx-auto mb-4 flex items-center justify-center">
-              <Shield className="h-8 w-8 text-primary-foreground" />
+            <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+              <img 
+                src="@assets/WhatsApp Image 2025-09-14 at 11.38.25_67200540_1757830108540.jpg" 
+                alt="FixitQuick Logo" 
+                className="w-16 h-16 object-contain"
+              />
             </div>
             
             <h2 className="text-2xl font-bold text-foreground">Verify your number</h2>
