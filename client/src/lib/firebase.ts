@@ -119,7 +119,10 @@ export const onAuthStateChange = (callback: (user: User | null) => void) => {
   authStateChangeCallback = callback;
   
   // Immediately call with current user (null on first load)
-  setTimeout(() => callback(auth.currentUser), 50);
+  setTimeout(() => {
+    console.log('Mock: Triggering auth state change with user:', auth.currentUser);
+    callback(auth.currentUser);
+  }, 50);
   
   // Return unsubscribe function
   return () => {

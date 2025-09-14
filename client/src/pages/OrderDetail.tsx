@@ -127,17 +127,17 @@ export default function OrderDetail() {
   // Fetch order details
   const { data: order, isLoading, error } = useQuery({
     queryKey: ['/api/v1/orders', orderId],
-    queryFn: () => apiRequest(`/api/v1/orders/${orderId}`),
+    queryFn: async () => {
+      const response = await apiRequest('GET', `/api/v1/orders/${orderId}`);
+      return await response.json();
+    },
     enabled: !!orderId,
   });
 
   // Update order status mutation
   const updateStatusMutation = useMutation({
     mutationFn: async (status: string) => {
-      return await apiRequest(`/api/v1/orders/${orderId}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status }),
-      });
+      return await apiRequest('PUT', `/api/v1/orders/${orderId}/status`, { status });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
@@ -158,10 +158,7 @@ export default function OrderDetail() {
   // Submit review mutation
   const submitReviewMutation = useMutation({
     mutationFn: async ({ rating, comment }: { rating: number; comment: string }) => {
-      return await apiRequest(`/api/v1/orders/${orderId}/review`, {
-        method: 'POST',
-        body: JSON.stringify({ rating, comment }),
-      });
+      return await apiRequest('POST', `/api/v1/orders/${orderId}/review`, { rating, comment });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
@@ -183,9 +180,7 @@ export default function OrderDetail() {
   // Cancel order mutation
   const cancelOrderMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest(`/api/v1/orders/${orderId}`, {
-        method: 'DELETE',
-      });
+      return await apiRequest('DELETE', `/api/v1/orders/${orderId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });

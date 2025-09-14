@@ -44,24 +44,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    console.log('useAuth: Setting up auth state listener');
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
+      console.log('useAuth: Auth state changed, user:', firebaseUser);
       setIsLoading(true);
       
       if (firebaseUser) {
+        console.log('useAuth: User is authenticated, fetching backend data');
         try {
           // Get additional user data from our backend
           const response = await apiRequest('GET', '/api/v1/auth/user');
           const userData = await response.json();
           
           setUser({ ...firebaseUser, ...userData });
+          console.log('useAuth: Set authenticated user with backend data');
         } catch (error) {
           console.error('Error fetching user data:', error);
           setUser(firebaseUser as AuthUser);
+          console.log('useAuth: Set authenticated user without backend data');
         }
       } else {
+        console.log('useAuth: No user, setting to null');
         setUser(null);
       }
       
+      console.log('useAuth: Setting isLoading to false');
       setIsLoading(false);
     });
 

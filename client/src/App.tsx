@@ -47,10 +47,22 @@ function SmartHome() {
     if (isAuthenticated && user?.role && !isLoading) {
       const dashboardPath = getDashboardRoute(user.role);
       setLocation(dashboardPath);
+    } else if (!isLoading && !isAuthenticated) {
+      // Redirect unauthenticated users to login
+      setLocation('/login');
     }
   }, [isAuthenticated, user?.role, isLoading, setLocation]);
 
-  // Show home for unauthenticated users or while loading
+  // Show loading spinner while auth is being determined
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  // Show home for authenticated users (will redirect via useEffect)
   return <Home />;
 }
 
