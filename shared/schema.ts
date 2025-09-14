@@ -350,6 +350,94 @@ export const userNotificationPreferences = pgTable("user_notification_preference
   userIdIdx: index("unp_user_id_idx").on(table.userId),
 }));
 
+// User locale and region preferences for language/region switching
+export const userLocalePreferences = pgTable("user_locale_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull().unique(),
+  
+  // Language preferences
+  language: varchar("language", { 
+    enum: ["hi", "en", "mr", "bn", "ta", "te", "gu", "kn", "ml", "or", "pa", "ur"] 
+  }).default("en"), // hi=Hindi, en=English, mr=Marathi, bn=Bengali, ta=Tamil, etc.
+  fallbackLanguage: varchar("fallback_language").default("en"),
+  
+  // Region and location preferences
+  country: varchar("country").default("IN"), // ISO country code (IN for India)
+  state: varchar("state"), // Indian states: "Delhi", "Maharashtra", "Karnataka", etc.
+  city: varchar("city"), // Major cities: "New Delhi", "Mumbai", "Bangalore", etc.
+  region: varchar("region"), // Geographic regions: "North India", "South India", "West India", etc.
+  
+  // Service area preferences
+  serviceRadius: integer("service_radius").default(25), // km radius for service availability
+  preferredServiceAreas: jsonb("preferred_service_areas").$type<string[]>(), // ["Indiranagar", "Koramangala"]
+  
+  // Locale formatting preferences
+  dateFormat: varchar("date_format").default("DD/MM/YYYY"), // Indian date format
+  timeFormat: varchar("time_format").default("24h"), // 12h or 24h
+  numberFormat: varchar("number_format").default("indian"), // "indian" (lakhs/crores) or "international"
+  currencyCode: varchar("currency_code").default("INR"), // INR, USD, etc.
+  currencyFormat: varchar("currency_format").default("symbol"), // "symbol" (₹), "code" (INR)
+  
+  // Cultural preferences
+  calendar: varchar("calendar").default("gregorian"), // "gregorian", "hindi", "regional"
+  weekStartsOn: integer("week_starts_on").default(1), // 0=Sunday, 1=Monday (India typically starts Monday)
+  festivals: jsonb("festivals").$type<string[]>(), // ["Diwali", "Holi", "Eid", "Christmas"]
+  
+  // Content preferences
+  contentPreference: varchar("content_preference").default("local"), // "local", "national", "international"
+  showLocalProviders: boolean("show_local_providers").default(true),
+  showRegionalOffers: boolean("show_regional_offers").default(true),
+  
+  // Auto-detection settings
+  autoDetectLocation: boolean("auto_detect_location").default(true),
+  autoDetectLanguage: boolean("auto_detect_language").default(false), // Manual override for language
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("ulp_user_id_idx").on(table.userId),
+  languageIdx: index("ulp_language_idx").on(table.language),
+  regionIdx: index("ulp_region_idx").on(table.country, table.state, table.city),
+  serviceAreaIdx: index("ulp_service_area_idx").on(table.serviceRadius),
+}));
+
+// Indian states and cities reference data
+export const indianRegions = pgTable("indian_regions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  state: varchar("state").notNull(),
+  stateCode: varchar("state_code").notNull(), // "DL", "MH", "KA", etc.
+  city: varchar("city").notNull(),
+  cityType: varchar("city_type", { enum: ["metro", "tier1", "tier2", "tier3"] }).default("tier2"),
+  region: varchar("region"), // "North", "South", "West", "East", "Central", "Northeast"
+  
+  // Service availability
+  isServiceAvailable: boolean("is_service_available").default(false),
+  isPartsAvailable: boolean("is_parts_available").default(false),
+  
+  // Geographic data
+  latitude: decimal("latitude", { precision: 10, scale: 8 }),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  pincode: varchar("pincode"),
+  
+  // Localization data
+  displayNameHi: varchar("display_name_hi"), // Hindi name of the city
+  displayNameLocal: varchar("display_name_local"), // Local language name
+  
+  // Service metadata
+  averageServiceTime: integer("average_service_time"), // minutes
+  serviceCoverage: decimal("service_coverage", { precision: 5, scale: 2 }), // percentage
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  stateIdx: index("ir_state_idx").on(table.state),
+  cityIdx: index("ir_city_idx").on(table.city),
+  serviceIdx: index("ir_service_idx").on(table.isServiceAvailable, table.isPartsAvailable),
+  regionIdx: index("ir_region_idx").on(table.region),
+  pincodeIdx: index("ir_pincode_idx").on(table.pincode),
+}));
+
 // App settings and configuration
 export const appSettings = pgTable("app_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -492,6 +580,8 @@ export const insertStripeCustomerSchema = createInsertSchema(stripeCustomers).om
 export const insertPaymentIntentSchema = createInsertSchema(paymentIntents).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserAddressSchema = createInsertSchema(userAddresses).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserNotificationPreferencesSchema = createInsertSchema(userNotificationPreferences).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserLocalePreferencesSchema = createInsertSchema(userLocalePreferences).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertIndianRegionSchema = createInsertSchema(indianRegions).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Export types
 export type User = typeof users.$inferSelect;
@@ -532,3 +622,7 @@ export type UserAddress = typeof userAddresses.$inferSelect;
 export type InsertUserAddress = z.infer<typeof insertUserAddressSchema>;
 export type UserNotificationPreferences = typeof userNotificationPreferences.$inferSelect;
 export type InsertUserNotificationPreferences = z.infer<typeof insertUserNotificationPreferencesSchema>;
+export type UserLocalePreferences = typeof userLocalePreferences.$inferSelect;
+export type InsertUserLocalePreferences = z.infer<typeof insertUserLocalePreferencesSchema>;
+export type IndianRegion = typeof indianRegions.$inferSelect;
+export type InsertIndianRegion = z.infer<typeof insertIndianRegionSchema>;

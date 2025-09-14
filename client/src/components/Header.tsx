@@ -6,6 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AISearchBar } from './AISearchBar';
 import { NotificationCenter } from './NotificationCenter';
+// Language and Region components - controlled by VITE_I18N_ENABLED feature flag
+// import { LanguageSwitcher } from './LanguageSwitcher';
+// import { RegionSelector } from './RegionSelector';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
@@ -212,23 +215,9 @@ export function Header({
                 </motion.div>
               )}
 
-              {/* Location Button */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onLocationClick}
-                className={`flex items-center space-x-1 transition-colors hidden md:flex ${
-                  !user?.location 
-                    ? 'text-orange-500 hover:text-orange-600 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800' 
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                data-testid="location-button"
-              >
-                <MapPin className={`w-4 h-4 ${!user?.location ? 'text-orange-500' : ''}`} />
-                <span className="text-sm font-medium max-w-[120px] truncate">
-                  {getLocationDisplay()}
-                </span>
-              </Button>
+              {/* TODO: Add RegionSelector when VITE_I18N_ENABLED=true */}
+              
+              {/* TODO: Add LanguageSwitcher when VITE_I18N_ENABLED=true */}
 
               {/* Notifications - Real-time Notification Center */}
               {isAuthenticated && (

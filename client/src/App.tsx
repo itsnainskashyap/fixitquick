@@ -6,7 +6,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
+import { LocalizationProvider } from "@/contexts/LocalizationContext";
 import { useEffect } from "react";
+// Feature flag for i18n functionality
+const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
 
 // Import pages
 import Home from "@/pages/Home";
@@ -205,9 +208,17 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
-          {AppContent}
-        </WebSocketProvider>
+        {I18N_ENABLED ? (
+          <LocalizationProvider>
+            <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+              {AppContent}
+            </WebSocketProvider>
+          </LocalizationProvider>
+        ) : (
+          <WebSocketProvider autoReconnect={true} reconnectInterval={3000} maxReconnectAttempts={10}>
+            {AppContent}
+          </WebSocketProvider>
+        )}
       </AuthProvider>
     </QueryClientProvider>
   );

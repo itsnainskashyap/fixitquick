@@ -39,6 +39,10 @@ import {
   type InsertUserAddress,
   type UserNotificationPreferences,
   type InsertUserNotificationPreferences,
+  type UserLocalePreferences,
+  type InsertUserLocalePreferences,
+  type IndianRegion,
+  type InsertIndianRegion,
   users,
   serviceCategories,
   services,
@@ -58,6 +62,8 @@ import {
   paymentIntents,
   userAddresses,
   userNotificationPreferences,
+  userLocalePreferences,
+  indianRegions,
   appSettings,
   insertUserSchema,
   insertServiceCategorySchema,
@@ -77,6 +83,8 @@ import {
   insertPaymentIntentSchema,
   insertUserAddressSchema,
   insertUserNotificationPreferencesSchema,
+  insertUserLocalePreferencesSchema,
+  insertIndianRegionSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -211,6 +219,11 @@ export interface IStorage {
   createUserNotificationPreferences(preferences: InsertUserNotificationPreferences): Promise<UserNotificationPreferences>;
   updateUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences | undefined>;
   upsertUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences>;
+
+  // TODO: Implement locale preferences following backend guidelines
+  // - Define proper schemas in shared/schema.ts first
+  // - Add Zod validation schemas  
+  // - Update IStorage interface with proper typing
 
   // Enhanced AI Search methods
   searchServices(filters: {
@@ -2467,6 +2480,18 @@ export class PostgresStorage implements IStorage {
       return await this.createUserNotificationPreferences(newPreferences);
     }
   }
+
+  // TODO: Implement locale preferences following backend guidelines
+  // - Define proper schemas in shared/schema.ts first
+  // - Add Zod validation schemas  
+  // - Update IStorage interface with proper typing
+  // - Implement methods following established patterns
+
+  // TODO: Implement regional functionality following backend guidelines
+  // - Define proper schemas in shared/schema.ts first
+  // - Add Zod validation schemas  
+  // - Update IStorage interface with proper typing
+  // - Implement methods following established patterns
 
 }
 

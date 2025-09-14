@@ -4,6 +4,9 @@ import { useLocation } from 'wouter';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
+// Language and Region components - controlled by VITE_I18N_ENABLED feature flag
+// import { RegionSelector } from '@/components/RegionSelector';
+// import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -42,7 +45,9 @@ import {
   Edit3,
   Check,
   X,
-  Loader2
+  Loader2,
+  Languages,
+  MapPin as MapPinIcon
 } from 'lucide-react';
 
 // Email update validation schema
@@ -484,6 +489,44 @@ export default function Account() {
                   onCheckedChange={setSoundEnabled}
                   data-testid="sound-toggle"
                 />
+              </div>
+              
+              <Separator />
+              
+              {/* Language Settings */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <Languages className="w-4 h-4 text-muted-foreground" />
+                  <div>
+                    <Label className="text-sm font-medium">
+                      Language
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Choose your preferred language
+                    </p>
+                  </div>
+                </div>
+                {/* TODO: Add LanguageSwitcher when VITE_I18N_ENABLED=true */}
+                <div className="text-sm text-muted-foreground">English</div>
+              </div>
+              
+              <Separator />
+              
+              {/* Region Settings */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <MapPinIcon className="w-4 h-4 text-muted-foreground" />
+                  <div>
+                    <Label className="text-sm font-medium">
+                      Service Region
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Set your service location
+                    </p>
+                  </div>
+                </div>
+                {/* TODO: Add RegionSelector when VITE_I18N_ENABLED=true */}
+                <div className="text-sm text-muted-foreground">India</div>
               </div>
             </CardContent>
           </Card>

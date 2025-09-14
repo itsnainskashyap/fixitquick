@@ -1,0 +1,54 @@
+{
+  "categories": {
+    "home_cleaning": "घर की सफाई",
+    "appliance_repair": "उपकरण मरम्मत",
+    "plumbing": "प्लम्बिंग",
+    "electrical": "इलेक्ट्रिकल",
+    "painting": "पेंटिंग",
+    "pest_control": "कीट नियंत्रण",
+    "carpentry": "बढ़ईगीरी",
+    "beauty": "सौंदर्य और कल्याण",
+    "tutoring": "ट्यूटरिंग",
+    "fitness": "फिटनेस"
+  },
+  "booking": {
+    "book_service": "सेवा बुक करें",
+    "select_date": "तारीख चुनें",
+    "select_time": "समय चुनें",
+    "add_address": "पता जोड़ें",
+    "service_details": "सेवा विवरण",
+    "provider_details": "प्रदाता विवरण",
+    "pricing": "मूल्य",
+    "estimated_duration": "अनुमानित अवधि",
+    "includes": "शामिल है",
+    "excludes": "शामिल नहीं है",
+    "requirements": "आवश्यकताएं",
+    "special_instructions": "विशेष निर्देश",
+    "book_now": "अभी बुक करें",
+    "booking_confirmed": "बुकिंग की पुष्टि हो गई!",
+    "booking_id": "बुकिंग आईडी: {{id}}"
+  },
+  "provider": {
+    "rating": "{{rating}} ({{reviews}} समीक्षाएं)",
+    "experience": "{{years}} साल का अनुभव",
+    "verified": "सत्यापित",
+    "background_checked": "बैकग्राउंड चेक",
+    "contact_provider": "प्रदाता से संपर्क करें",
+    "view_profile": "प्रोफाइल देखें",
+    "available_now": "अभी उपलब्ध",
+    "next_available": "अगली उपलब्धता: {{time}}"
+  },
+  "search": {
+    "search_services": "सेवाएं खोजें...",
+    "filter_by_category": "श्रेणी के अनुसार फिल्टर करें",
+    "sort_by": "इसके अनुसार क्रमबद्ध करें",
+    "price_low_high": "कीमत: कम से ज्यादा",
+    "price_high_low": "कीमत: ज्यादा से कम",
+    "rating": "रेटिंग",
+    "distance": "दूरी",
+    "availability": "उपलब्धता",
+    "no_results": "कोई सेवा नहीं मिली",
+    "try_different": "अलग कीवर्ड से खोजने की कोशिश करें",
+    "results_found": "{{count}} सेवाएं मिलीं"
+  }
+}

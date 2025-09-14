@@ -1,0 +1,54 @@
+{
+  "categories": {
+    "home_cleaning": "Home Cleaning",
+    "appliance_repair": "Appliance Repair",
+    "plumbing": "Plumbing",
+    "electrical": "Electrical",
+    "painting": "Painting",
+    "pest_control": "Pest Control",
+    "carpentry": "Carpentry",
+    "beauty": "Beauty & Wellness",
+    "tutoring": "Tutoring",
+    "fitness": "Fitness"
+  },
+  "booking": {
+    "book_service": "Book Service",
+    "select_date": "Select Date",
+    "select_time": "Select Time",
+    "add_address": "Add Address",
+    "service_details": "Service Details",
+    "provider_details": "Provider Details",
+    "pricing": "Pricing",
+    "estimated_duration": "Estimated Duration",
+    "includes": "What's Included",
+    "excludes": "What's Not Included",
+    "requirements": "Requirements",
+    "special_instructions": "Special Instructions",
+    "book_now": "Book Now",
+    "booking_confirmed": "Booking Confirmed!",
+    "booking_id": "Booking ID: {{id}}"
+  },
+  "provider": {
+    "rating": "{{rating}} ({{reviews}} reviews)",
+    "experience": "{{years}} years experience",
+    "verified": "Verified",
+    "background_checked": "Background Checked",
+    "contact_provider": "Contact Provider",
+    "view_profile": "View Profile",
+    "available_now": "Available Now",
+    "next_available": "Next Available: {{time}}"
+  },
+  "search": {
+    "search_services": "Search services...",
+    "filter_by_category": "Filter by Category",
+    "sort_by": "Sort by",
+    "price_low_high": "Price: Low to High",
+    "price_high_low": "Price: High to Low",
+    "rating": "Rating",
+    "distance": "Distance",
+    "availability": "Availability",
+    "no_results": "No services found",
+    "try_different": "Try searching with different keywords",
+    "results_found": "{{count}} services found"
+  }
+}

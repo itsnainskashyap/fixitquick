@@ -1455,6 +1455,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+      
+      const filters: any = {};
+      if (categoryId) filters.categoryId = categoryId as string;
+      if (state && city) {
+        filters.region = { state: state as string, city: city as string };
+      }
+      
+      const services = await storage.getLocalizedServices(language as string, filters);
+      
+      res.json({
+        success: true,
+        services
+      });
+
+    } catch (error) {
+      console.error('Error fetching localized services:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch localized services'
+      });
+    }
+  });
+
+  // TODO: Implement localized content following backend guidelines
+  // - Define proper schemas in shared/schema.ts first
+  // - Add Zod validation schemas  
+  // - Update IStorage interface with proper typing
+  // - Implement methods following established patterns
+
   app.post('/api/v1/auth/login', validateBody(loginSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { uid, email, firstName, lastName, profileImageUrl } = req.body;
