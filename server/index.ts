@@ -143,6 +143,20 @@ app.use((req, res, next) => {
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
+    // Add SPA rewrite middleware to prevent Vite HTML proxy module errors
+    app.use((req, _res, next) => {
+      if (
+        req.method === 'GET' &&
+        !req.path.startsWith('/api') &&
+        !req.path.startsWith('/@') && // Vite internals/HMR
+        !req.path.startsWith('/src') && // source modules
+        !req.path.includes('.') // skip asset/file requests
+      ) {
+        req.url = '/'; // Rewrite to root for Vite to process
+      }
+      next();
+    });
+    
     await setupVite(app, server);
   } else {
     serveStatic(app);
