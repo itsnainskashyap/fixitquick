@@ -138,7 +138,8 @@ const otpVerifySchema = z.object({
     .regex(/^\d{6}$/, 'Verification code must contain only digits'),
 });
 
-const onboardingSchema = z.object({
+// Full onboarding schema for complete profile setup
+const fullOnboardingSchema = z.object({
   firstName: z.string()
     .min(1, 'First name is required')
     .max(50, 'First name cannot exceed 50 characters')
@@ -160,6 +161,20 @@ const onboardingSchema = z.object({
     .email('Valid email address is required')
     .optional()
     .or(z.literal('')),
+});
+
+// Simplified onboarding schema for initial name collection (matches frontend)
+const simpleOnboardingSchema = z.object({
+  firstName: z.string()
+    .min(1, 'First name is required')
+    .min(2, 'First name must be at least 2 characters')
+    .max(50, 'First name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s]+$/, 'First name should contain only letters'),
+  lastName: z.string()
+    .min(1, 'Last name is required')
+    .min(2, 'Last name must be at least 2 characters')
+    .max(50, 'Last name cannot exceed 50 characters')
+    .regex(/^[a-zA-Z\s]+$/, 'Last name should contain only letters'),
 });
 
 const emailUpdateSchema = z.object({
@@ -588,6 +603,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch user information'
+      });
+    }
+  });
+
+  // POST /api/v1/auth/onboarding - Complete user profile after phone verification
+  app.post('/api/v1/auth/onboarding', authMiddleware, validateBody(simpleOnboardingSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.uid;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const { firstName, lastName } = req.body;
+
+      // Get current user to verify they exist
+      const currentUser = await storage.getUser(userId);
+      if (!currentUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      // Update user profile with onboarding data
+      const updatedUser = await storage.updateUser(userId, {
+        firstName: firstName.trim(),
+        lastName: lastName.trim()
+      });
+
+      if (!updatedUser) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update user profile'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Profile completed successfully',
+        user: {
+          id: updatedUser.id,
+          phone: updatedUser.phone,
+          email: updatedUser.email,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          role: updatedUser.role,
+          isVerified: updatedUser.isVerified,
+          walletBalance: updatedUser.walletBalance,
+          fixiPoints: updatedUser.fixiPoints,
+          location: updatedUser.location,
+          profileImageUrl: updatedUser.profileImageUrl,
+          isActive: updatedUser.isActive,
+          createdAt: updatedUser.createdAt,
+          lastLoginAt: updatedUser.lastLoginAt
+        }
+      });
+
+    } catch (error) {
+      console.error('Error completing onboarding:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to complete profile. Please try again.'
       });
     }
   });

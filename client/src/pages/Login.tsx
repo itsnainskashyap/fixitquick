@@ -9,8 +9,9 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, Mail, ArrowRight, Smartphone } from 'lucide-react';
 import PhoneLogin from '@/components/auth/PhoneLogin';
 import OtpVerification from '@/components/auth/OtpVerification';
+import Onboarding from '@/components/auth/Onboarding';
 
-type AuthStep = 'method-selection' | 'phone-input' | 'otp-verification';
+type AuthStep = 'method-selection' | 'phone-input' | 'otp-verification' | 'onboarding';
 
 export default function Login() {
   const { signIn, signInWithSMS, isLoading, isAuthenticated } = useAuth();
@@ -20,6 +21,8 @@ export default function Login() {
   const [currentStep, setCurrentStep] = useState<AuthStep>('method-selection');
   const [challengeId, setChallengeId] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const [refreshToken, setRefreshToken] = useState('');
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -49,11 +52,26 @@ export default function Login() {
     setCurrentStep('otp-verification');
   };
 
-  const handleOtpVerificationSuccess = async (accessToken: string, refreshToken: string, userData?: any) => {
+  const handleOtpVerificationSuccess = (accessToken: string, refreshToken: string, userData?: any) => {
+    // Check if user needs onboarding (no first name or last name)
+    const needsOnboarding = !userData?.user?.firstName || !userData?.user?.lastName;
+    
+    if (needsOnboarding) {
+      // Store tokens and go to onboarding
+      setAccessToken(accessToken);
+      setRefreshToken(refreshToken);
+      setCurrentStep('onboarding');
+    } else {
+      // Complete sign in for returning users
+      handleCompleteSignIn(accessToken, refreshToken, userData);
+    }
+  };
+
+  const handleCompleteSignIn = async (accessToken: string, refreshToken: string, userData?: any) => {
     try {
       await signInWithSMS(accessToken, refreshToken, userData);
       toast({
-        title: "Welcome to FixitQuick!",
+        title: "Welcome back to FixitQuick!",
         description: "You have successfully signed in.",
       });
       setLocation('/');
@@ -66,14 +84,26 @@ export default function Login() {
     }
   };
 
+  const handleOnboardingSuccess = async (data: any) => {
+    await handleCompleteSignIn(data.accessToken, data.refreshToken, data);
+  };
+
   const handleBackToMethodSelection = () => {
     setCurrentStep('method-selection');
     setChallengeId('');
     setPhoneNumber('');
+    setAccessToken('');
+    setRefreshToken('');
   };
 
   const handleBackToPhoneInput = () => {
     setCurrentStep('phone-input');
+  };
+
+  const handleBackToOtpVerification = () => {
+    setCurrentStep('otp-verification');
+    setAccessToken('');
+    setRefreshToken('');
   };
 
   const handleResendOtp = () => {
@@ -210,6 +240,37 @@ export default function Login() {
               onResend={handleResendOtp}
               onError={(error) => {
                 console.error('OTP verification error:', error);
+              }}
+            />
+          </motion.div>
+        );
+        
+      case 'onboarding':
+        return (
+          <motion.div
+            key="onboarding"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3 }}
+            className="relative"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleBackToOtpVerification}
+              className="absolute left-0 top-0 p-2 z-10"
+              data-testid="back-to-otp-button"
+            >
+              <ArrowRight className="h-4 w-4 rotate-180" />
+            </Button>
+            <Onboarding
+              accessToken={accessToken}
+              refreshToken={refreshToken}
+              phoneNumber={phoneNumber}
+              onSuccess={handleOnboardingSuccess}
+              onError={(error) => {
+                console.error('Onboarding error:', error);
               }}
             />
           </motion.div>
