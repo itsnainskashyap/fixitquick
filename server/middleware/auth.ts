@@ -3,14 +3,26 @@ import { auth, db } from '../services/firebase';
 import { jwtService } from '../utils/jwt';
 import { storage } from '../storage';
 
+// Define AuthUser type to match database schema
+export interface AuthUser {
+  id: string;
+  email?: string;
+  role?: string;
+  isVerified?: boolean;
+  [key: string]: any;
+}
+
+// Extend Express Request type to include AuthUser
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthUser;
+    }
+  }
+}
+
 interface AuthenticatedRequest extends Request {
-  user?: {
-    uid: string;
-    email?: string;
-    role?: string;
-    isVerified?: boolean;
-    [key: string]: any;
-  };
+  user?: AuthUser;
 }
 
 interface AuthMiddlewareOptions {
@@ -56,7 +68,7 @@ export const authMiddleware = async (
 
         // Attach user data to request in compatible format
         req.user = {
-          uid: user.id,
+          id: user.id,
           email: user.email || undefined,
           phone: user.phone || undefined,
           role: user.role || 'user',
@@ -111,7 +123,7 @@ export const authMiddleware = async (
 
       // Attach user data to request
       req.user = {
-        uid: decodedToken.uid,
+        id: decodedToken.uid,
         email: decodedToken.email,
         role: userData?.role || 'user',
         isVerified: userData?.isVerified || false,
@@ -190,7 +202,7 @@ export const optionalAuth = async (
         const user = await storage.getUser(jwtPayload.userId);
         if (user && user.isActive) {
           req.user = {
-            uid: user.id,
+            id: user.id,
             email: user.email || undefined,
             phone: user.phone || undefined,
             role: user.role || 'user',
@@ -220,7 +232,7 @@ export const optionalAuth = async (
     if (userDoc.exists) {
       const userData = userDoc.data();
       req.user = {
-        uid: decodedToken.uid,
+        id: decodedToken.uid,
         email: decodedToken.email,
         role: userData?.role || 'user',
         isVerified: userData?.isVerified || false,
@@ -331,7 +343,7 @@ export const rateLimitByUser = (maxRequests: number = 100, windowMs: number = 15
   const userRequests = new Map<string, { count: number; resetTime: number }>();
 
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const userId = req.user?.uid || req.ip;
+    const userId = req.user?.id || req.ip;
     const now = Date.now();
 
     const userLimit = userRequests.get(userId);
@@ -428,7 +440,7 @@ export const corsForOrigins = (allowedOrigins: string[]) => {
 // Request logging middleware
 export const requestLogger = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const start = Date.now();
-  const userId = req.user?.uid || 'anonymous';
+  const userId = req.user?.id || 'anonymous';
   const userRole = req.user?.role || 'none';
 
   res.on('finish', () => {
