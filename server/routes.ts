@@ -6,6 +6,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { eq, and, sql } from "drizzle-orm";
+import { db } from "./db";
 import { storage } from "./storage";
 import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type AuthenticatedRequest } from "./middleware/auth";
 import { setupAuth, isAuthenticated } from "./replitAuth";
@@ -31,6 +33,7 @@ import {
   insertUserNotificationPreferencesSchema,
   insertServiceBookingSchema,
   insertProviderJobRequestSchema,
+  providerJobRequests,
   supportTicketCreateSchema,
   supportTicketUpdateSchema,
   supportTicketMessageCreateSchema,
@@ -44,6 +47,7 @@ import {
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
+import multer from "multer";
 import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
 import { objectStorageService } from "./services/objectStorage";
 import { 
@@ -810,7 +814,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ success: false, message: 'Failed to get OTP status' });
       }
     });
+
+    // GET /api/dev/twilio-health - Comprehensive Twilio health check
+    app.get('/api/dev/twilio-health', async (req, res) => {
+      try {
+        const healthStatus = await twilioService.getHealthStatus();
+        res.json({
+          success: true,
+          ...healthStatus
+        });
+      } catch (error) {
+        console.error('Error getting Twilio health status:', error);
+        res.status(500).json({ 
+          success: false, 
+          message: 'Failed to get health status',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // POST /api/dev/twilio-test - Test Twilio functionality
+    app.post('/api/dev/twilio-test', async (req, res) => {
+      try {
+        const { testPhone } = req.body;
+        const testResult = await twilioService.testSMSFunctionality(testPhone);
+        res.json({
+          success: testResult.success,
+          message: testResult.message,
+          results: testResult.results,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('Error testing Twilio functionality:', error);
+        res.status(500).json({ 
+          success: false, 
+          message: 'Test failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // POST /api/dev/phone-validate - Test phone number validation and formatting
+    app.post('/api/dev/phone-validate', async (req, res) => {
+      try {
+        const { phoneNumbers } = req.body;
+        
+        if (!Array.isArray(phoneNumbers)) {
+          return res.status(400).json({
+            success: false,
+            message: 'phoneNumbers should be an array of phone number strings'
+          });
+        }
+
+        const results = phoneNumbers.map(phone => {
+          const isValid = twilioService.isValidPhoneNumber(phone);
+          // Use the formatPhoneNumber method (assuming it's made public or accessible)
+          const formatted = isValid ? phone : null;
+          
+          return {
+            input: phone,
+            isValid,
+            formatted,
+            type: phone.startsWith('+91') ? 'Indian' : 
+                  phone.startsWith('+1') ? 'US/Canada' : 
+                  phone.startsWith('+44') ? 'UK' : 'Other'
+          };
+        });
+
+        res.json({
+          success: true,
+          results,
+          totalTested: phoneNumbers.length,
+          validCount: results.filter(r => r.isValid).length,
+          invalidCount: results.filter(r => !r.isValid).length
+        });
+      } catch (error) {
+        console.error('Error validating phone numbers:', error);
+        res.status(500).json({ 
+          success: false, 
+          message: 'Validation failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
   }
+
+  // Admin-only monitoring endpoints (all environments)
+  app.get('/api/admin/twilio-stats', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const hoursBack = parseInt(req.query.hours as string) || 24;
+      const stats = await twilioService.getStatistics(hoursBack);
+      res.json({
+        success: true,
+        statistics: stats,
+        period: `${hoursBack} hours`,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error getting Twilio statistics:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to get statistics'
+      });
+    }
+  });
+
+  app.get('/api/admin/sms-health', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const healthStatus = await twilioService.getHealthStatus();
+      res.json({
+        success: true,
+        health: healthStatus,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error getting SMS health status:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to get health status'
+      });
+    }
+  });
 
   // Authentication routes
   
@@ -2403,6 +2527,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching subcategories:', error);
       res.status(500).json({ message: 'Failed to fetch subcategories' });
+    }
+  });
+
+  // Enhanced Hierarchical Category APIs
+  
+  // GET /api/v1/categories/tree - Get full hierarchical category tree structure
+  app.get('/api/v1/categories/tree', async (req, res) => {
+    try {
+      const { rootId, maxDepth, activeOnly = 'true' } = req.query;
+      const tree = await storage.getCategoryTree(
+        rootId as string,
+        maxDepth ? parseInt(maxDepth as string) : undefined,
+        activeOnly === 'true'
+      );
+      res.json(tree);
+    } catch (error) {
+      console.error('Error fetching category tree:', error);
+      res.status(500).json({ message: 'Failed to fetch category tree' });
+    }
+  });
+
+  // GET /api/v1/categories/:categoryId/path - Get full category path for breadcrumbs
+  app.get('/api/v1/categories/:categoryId/path', async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      const path = await storage.getCategoryBreadcrumbs(categoryId);
+      res.json(path);
+    } catch (error) {
+      console.error('Error fetching category path:', error);
+      res.status(500).json({ message: 'Failed to fetch category path' });
+    }
+  });
+
+  // GET /api/v1/categories/:categoryId/with-children - Get category with its children
+  app.get('/api/v1/categories/:categoryId/with-children', async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      const { activeOnly = 'true' } = req.query;
+      const categoryWithChildren = await storage.getCategoryWithChildren(categoryId, activeOnly === 'true');
+      res.json(categoryWithChildren);
+    } catch (error) {
+      console.error('Error fetching category with children:', error);
+      res.status(500).json({ message: 'Failed to fetch category with children' });
+    }
+  });
+
+  // GET /api/v1/categories/search-path - Search categories by path prefix
+  app.get('/api/v1/categories/search-path', async (req, res) => {
+    try {
+      const { pathPrefix, activeOnly = 'true' } = req.query;
+      if (!pathPrefix) {
+        return res.status(400).json({ message: 'pathPrefix query parameter is required' });
+      }
+      const categories = await storage.getCategoriesByPath(pathPrefix as string, activeOnly === 'true');
+      res.json(categories);
+    } catch (error) {
+      console.error('Error searching categories by path:', error);
+      res.status(500).json({ message: 'Failed to search categories by path' });
+    }
+  });
+
+  // GET /api/v1/categories/stats - Get category hierarchy statistics
+  app.get('/api/v1/categories/stats', async (req, res) => {
+    try {
+      const { categoryId } = req.query;
+      const stats = await storage.getCategoryStats(categoryId as string);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching category stats:', error);
+      res.status(500).json({ message: 'Failed to fetch category stats' });
+    }
+  });
+
+  // Admin Hierarchical Category Management APIs
+
+  // PUT /api/v1/admin/categories/:categoryId/move - Move category to different parent
+  app.put('/api/v1/admin/categories/:categoryId/move', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      const { newParentId } = req.body;
+      
+      const movedCategory = await storage.moveCategoryToParent(categoryId, newParentId);
+      if (!movedCategory) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Category moved successfully',
+        category: movedCategory
+      });
+    } catch (error) {
+      console.error('Error moving category:', error);
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: 'Failed to move category' });
+      }
+    }
+  });
+
+  // POST /api/v1/admin/categories/bulk-reorder - Bulk reorder categories
+  app.post('/api/v1/admin/categories/bulk-reorder', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { updates } = req.body;
+      
+      if (!Array.isArray(updates)) {
+        return res.status(400).json({ message: 'Updates must be an array' });
+      }
+      
+      await storage.bulkReorderCategories(updates);
+      
+      res.json({
+        success: true,
+        message: 'Categories reordered successfully'
+      });
+    } catch (error) {
+      console.error('Error bulk reordering categories:', error);
+      res.status(500).json({ message: 'Failed to reorder categories' });
+    }
+  });
+
+  // POST /api/v1/admin/categories/update-paths - Update category paths (data maintenance)
+  app.post('/api/v1/admin/categories/update-paths', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { startFromCategoryId } = req.body;
+      
+      await storage.updateCategoryPaths(startFromCategoryId);
+      
+      res.json({
+        success: true,
+        message: 'Category paths updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating category paths:', error);
+      res.status(500).json({ message: 'Failed to update category paths' });
+    }
+  });
+
+  // POST /api/v1/admin/categories/validate-hierarchy - Validate category hierarchy move
+  app.post('/api/v1/admin/categories/validate-hierarchy', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId, newParentId } = req.body;
+      
+      if (!categoryId) {
+        return res.status(400).json({ message: 'categoryId is required' });
+      }
+      
+      const validation = await storage.validateCategoryHierarchy(categoryId, newParentId);
+      res.json(validation);
+    } catch (error) {
+      console.error('Error validating hierarchy:', error);
+      res.status(500).json({ message: 'Failed to validate hierarchy' });
     }
   });
 
@@ -4966,6 +5243,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Parts Provider routes
+  
+  // Parts Provider Dashboard - GET comprehensive dashboard data
+  app.get('/api/v1/parts-provider/dashboard', authMiddleware, requireRole(['parts_provider']), async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      
+      const [
+        parts, 
+        orders, 
+        businessInfo,
+        recentInventoryMovements,
+        suppliers,
+        lowStockParts
+      ] = await Promise.all([
+        storage.getPartsByProvider(userId),
+        storage.getOrdersByProvider(userId),
+        storage.getPartsProviderBusinessInfo(userId),
+        storage.getPartsInventoryMovements({ providerId: userId, limit: 10 }),
+        storage.getPartsSuppliers(userId),
+        storage.getLowStockParts(userId, 10)
+      ]);
+      
+      // Calculate dashboard statistics
+      const pendingOrders = orders.filter(o => o.status === 'pending');
+      const completedOrders = orders.filter(o => o.status === 'completed');
+      const activeProducts = parts.filter(p => p.isActive);
+      const totalRevenue = completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount || '0'), 0);
+      const outOfStockItems = parts.filter(p => p.stock === 0);
+      
+      // Recent activity
+      const recentOrders = orders
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5);
+        
+      // Top selling products
+      const topProducts = parts
+        .sort((a, b) => (b.totalSold || 0) - (a.totalSold || 0))
+        .slice(0, 5);
+
+      const dashboardData = {
+        stats: {
+          totalProducts: parts.length,
+          activeProducts: activeProducts.length,
+          totalOrders: orders.length,
+          pendingOrders: pendingOrders.length,
+          completedOrders: completedOrders.length,
+          totalRevenue: totalRevenue.toFixed(2),
+          lowStockAlerts: lowStockParts.length,
+          outOfStockItems: outOfStockItems.length,
+          totalSuppliers: suppliers.length,
+          averageRating: businessInfo?.averageRating || '0.00'
+        },
+        recentOrders: recentOrders.map(order => ({
+          id: order.id,
+          customerName: order.userId,
+          totalAmount: order.totalAmount,
+          status: order.status,
+          createdAt: order.createdAt,
+          items: order.items || []
+        })),
+        lowStockAlerts: lowStockParts.map(part => ({
+          id: part.id,
+          name: part.name,
+          sku: part.sku,
+          currentStock: part.stock,
+          lowStockThreshold: part.lowStockThreshold,
+          price: part.price
+        })),
+        topProducts: topProducts.map(part => ({
+          id: part.id,
+          name: part.name,
+          sku: part.sku,
+          totalSold: part.totalSold || 0,
+          price: part.price,
+          stock: part.stock,
+          rating: part.rating
+        })),
+        recentActivity: recentInventoryMovements.map(movement => ({
+          id: movement.id,
+          partId: movement.partId,
+          movementType: movement.movementType,
+          quantity: movement.quantity,
+          reason: movement.reason,
+          createdAt: movement.createdAt
+        })),
+        businessInfo: businessInfo ? {
+          businessName: businessInfo.businessName,
+          verificationStatus: businessInfo.verificationStatus,
+          isVerified: businessInfo.isVerified,
+          totalRevenue: businessInfo.totalRevenue,
+          totalOrders: businessInfo.totalOrders,
+          averageRating: businessInfo.averageRating
+        } : null
+      };
+      
+      res.json(dashboardData);
+    } catch (error) {
+      console.error('Error fetching parts provider dashboard:', error);
+      res.status(500).json({ message: 'Failed to fetch dashboard data' });
+    }
+  });
+
   app.get('/api/v1/parts-provider/stats/:userId', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
       const { userId } = req.params;
@@ -6440,6 +6819,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============================================================================
   // END ADMIN CATEGORY HIERARCHY MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // ============================================================================
+  // ADMIN SERVICES MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Admin service validation schemas
+  const adminServiceCreateSchema = z.object({
+    name: z.string().min(1, "Service name is required"),
+    description: z.string().min(1, "Description is required"),
+    shortDescription: z.string().optional(),
+    categoryId: z.string().min(1, "Category is required"),
+    isActive: z.boolean().default(true),
+    isPopular: z.boolean().default(false),
+    isFeatured: z.boolean().default(false),
+    pricing: z.object({
+      basePrice: z.number().min(0, "Price must be non-negative"),
+      currency: z.string().default("INR"),
+      unit: z.string().default("service"),
+      priceType: z.enum(['fixed', 'hourly', 'per_item']).default('fixed')
+    }),
+    features: z.array(z.string()).optional(),
+    requirements: z.array(z.string()).optional()
+  });
+
+  const adminServiceUpdateSchema = z.object({
+    name: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+    shortDescription: z.string().optional(),
+    categoryId: z.string().optional(),
+    isActive: z.boolean().optional(),
+    isPopular: z.boolean().optional(),
+    isFeatured: z.boolean().optional(),
+    pricing: z.object({
+      basePrice: z.number().min(0).optional(),
+      currency: z.string().optional(),
+      unit: z.string().optional(),
+      priceType: z.enum(['fixed', 'hourly', 'per_item']).optional()
+    }).optional(),
+    features: z.array(z.string()).optional(),
+    requirements: z.array(z.string()).optional()
+  });
+
+  // Create new service
+  app.post('/api/v1/admin/services', adminSessionMiddleware, validateBody(adminServiceCreateSchema), async (req, res) => {
+    try {
+      const serviceData = req.body;
+      
+      // Validate category exists
+      const category = await storage.getServiceCategory(serviceData.categoryId);
+      if (!category) {
+        return res.status(400).json({ message: 'Category not found' });
+      }
+      
+      // Create the service
+      const newService = await storage.createService({
+        ...serviceData,
+        createdAt: new Date()
+      });
+      
+      console.log('✅ Admin created service:', { id: newService.id, name: newService.name });
+      res.status(201).json(newService);
+    } catch (error) {
+      console.error('Error creating service:', error);
+      res.status(500).json({ message: 'Failed to create service' });
+    }
+  });
+
+  // Update service
+  app.put('/api/v1/admin/services/:serviceId', adminSessionMiddleware, validateBody(adminServiceUpdateSchema), async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      const updateData = req.body;
+      
+      // Validate service exists
+      const existingService = await storage.getService(serviceId);
+      if (!existingService) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+      
+      // Validate category if being updated
+      if (updateData.categoryId) {
+        const category = await storage.getServiceCategory(updateData.categoryId);
+        if (!category) {
+          return res.status(400).json({ message: 'Category not found' });
+        }
+      }
+      
+      const updatedService = await storage.updateService(serviceId, updateData);
+      
+      if (!updatedService) {
+        return res.status(404).json({ message: 'Service not found or update failed' });
+      }
+      
+      console.log('✅ Admin updated service:', { id: serviceId, name: updatedService.name });
+      res.json(updatedService);
+    } catch (error) {
+      console.error('Error updating service:', error);
+      res.status(500).json({ message: 'Failed to update service' });
+    }
+  });
+
+  // Delete service
+  app.delete('/api/v1/admin/services/:serviceId', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      
+      const result = await storage.deleteService(serviceId);
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+      
+      console.log('✅ Admin deleted service:', { id: serviceId });
+      res.json({ success: true, message: result.message });
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      res.status(500).json({ message: 'Failed to delete service' });
+    }
+  });
+
+  // ============================================================================
+  // END ADMIN SERVICES MANAGEMENT ENDPOINTS
   // ============================================================================
 
   // Stripe webhook endpoint with proper signature verification

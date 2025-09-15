@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { Header } from '@/components/Header';
 import { ServiceCard, ServiceCardSkeleton } from '@/components/ServiceCard';
@@ -11,8 +11,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useQuery } from '@tanstack/react-query';
-import { Filter, Grid, List } from 'lucide-react';
+import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine } from 'lucide-react';
 
 interface Service {
   id: string;
@@ -30,9 +32,28 @@ interface Service {
 interface ServiceCategory {
   id: string;
   name: string;
+  slug: string;
   icon: string;
   description: string;
-  serviceCount: number;
+  parentId?: string | null;
+  level: number;
+  depth: number;
+  sortOrder: number;
+  categoryPath: string;
+  serviceCount?: number;
+  isActive: boolean;
+  children?: ServiceCategory[];
+}
+
+interface CategoryBreadcrumb {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+interface CategoryTreeNode extends ServiceCategory {
+  children: CategoryTreeNode[];
+  expanded?: boolean;
 }
 
 export default function Services() {
@@ -40,29 +61,58 @@ export default function Services() {
   const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedCategoryPath, setSelectedCategoryPath] = useState<CategoryBreadcrumb[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<string>('rating');
   const [priceRange, setPriceRange] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showCategoryTree, setShowCategoryTree] = useState(false);
 
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
   const categoryFromUrl = urlParams.get('category');
 
   useEffect(() => {
-    if (categoryFromUrl) {
+    if (categoryFromUrl && categoryFromUrl !== 'all') {
       setSelectedCategory(categoryFromUrl);
+      // Load breadcrumb path for the selected category
+      loadCategoryPath(categoryFromUrl);
+    } else {
+      setSelectedCategory('all');
+      setSelectedCategoryPath([]);
     }
   }, [categoryFromUrl]);
 
-  // Fetch service categories
-  const { data: categories, isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
-    queryKey: ['/api/v1/services/categories'],
+  // Load category breadcrumb path
+  const loadCategoryPath = async (categoryId: string) => {
+    try {
+      const response = await fetch(`/api/v1/categories/${categoryId}/path`);
+      if (response.ok) {
+        const path = await response.json();
+        setSelectedCategoryPath(path);
+      }
+    } catch (error) {
+      console.error('Error loading category path:', error);
+    }
+  };
+
+  // Fetch hierarchical category tree
+  const { data: categoryTree, isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
+    queryKey: ['/api/v1/categories/tree'],
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
   });
 
-  // Fetch services
+  // Fetch main categories (root level)
+  const { data: mainCategories, isLoading: loadingMainCategories } = useQuery<ServiceCategory[]>({
+    queryKey: ['/api/v1/services/categories/main'],
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch services based on selected category
   const { data: services, isLoading: loadingServices } = useQuery<Service[]>({
     queryKey: ['/api/v1/services', selectedCategory, sortBy, priceRange, searchQuery],
+    staleTime: 2 * 60 * 1000, // 2 minutes cache
   });
 
   const handleServiceBook = (serviceId: string) => {
@@ -84,6 +134,216 @@ export default function Services() {
         estimatedDuration: service.estimatedDuration,
       });
     }
+  };
+
+  // Helper functions for category management
+  const toggleCategoryExpanded = (categoryId: string) => {
+    const newExpanded = new Set(expandedCategories);
+    if (newExpanded.has(categoryId)) {
+      newExpanded.delete(categoryId);
+    } else {
+      newExpanded.add(categoryId);
+    }
+    setExpandedCategories(newExpanded);
+  };
+
+  const selectCategory = async (categoryId: string, categoryName?: string) => {
+    setSelectedCategory(categoryId);
+    if (categoryId !== 'all') {
+      await loadCategoryPath(categoryId);
+    } else {
+      setSelectedCategoryPath([]);
+    }
+    setLocation(`/services?category=${categoryId}`);
+  };
+
+  // Build hierarchical tree structure from flat category array
+  const buildCategoryTree = (categories: ServiceCategory[]): CategoryTreeNode[] => {
+    const categoryMap = new Map<string, CategoryTreeNode>();
+    const rootCategories: CategoryTreeNode[] = [];
+
+    // Create map of all categories
+    categories.forEach(category => {
+      categoryMap.set(category.id, {
+        ...category,
+        children: [],
+        expanded: expandedCategories.has(category.id),
+      });
+    });
+
+    // Build tree structure
+    categories.forEach(category => {
+      const treeNode = categoryMap.get(category.id);
+      if (!treeNode) return;
+
+      if (!category.parentId) {
+        rootCategories.push(treeNode);
+      } else {
+        const parent = categoryMap.get(category.parentId);
+        if (parent) {
+          parent.children.push(treeNode);
+        }
+      }
+    });
+
+    // Sort by sortOrder within each level
+    const sortChildren = (nodes: CategoryTreeNode[]) => {
+      nodes.sort((a, b) => a.sortOrder - b.sortOrder);
+      nodes.forEach(node => sortChildren(node.children));
+    };
+
+    sortChildren(rootCategories);
+    return rootCategories;
+  };
+
+  // Memoized category tree
+  const categoryTreeStructure = useMemo(() => {
+    if (!categoryTree) return [];
+    return buildCategoryTree(categoryTree);
+  }, [categoryTree, expandedCategories]);
+
+  // Filter categories for search
+  const filterCategoriesForSearch = (categories: CategoryTreeNode[], searchTerm: string): CategoryTreeNode[] => {
+    if (!searchTerm) return categories;
+    
+    const filterRecursive = (nodes: CategoryTreeNode[]): CategoryTreeNode[] => {
+      return nodes.reduce<CategoryTreeNode[]>((acc, node) => {
+        const matchesSearch = node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            node.description?.toLowerCase().includes(searchTerm.toLowerCase());
+        
+        const filteredChildren = filterRecursive(node.children);
+        
+        if (matchesSearch || filteredChildren.length > 0) {
+          acc.push({
+            ...node,
+            children: filteredChildren,
+            expanded: filteredChildren.length > 0 ? true : node.expanded, // Auto-expand if has matching children
+          });
+        }
+        
+        return acc;
+      }, []);
+    };
+
+    return filterRecursive(categories);
+  };
+
+  const filteredCategoryTree = useMemo(() => {
+    return filterCategoriesForSearch(categoryTreeStructure, searchQuery);
+  }, [categoryTreeStructure, searchQuery]);
+
+  // CategoryTree rendering component
+  const CategoryTreeNode = ({ category, level = 0 }: { category: CategoryTreeNode; level?: number }) => {
+    const hasChildren = category.children.length > 0;
+    const isSelected = selectedCategory === category.id;
+    const isExpanded = category.expanded;
+
+    return (
+      <div className="w-full">
+        <div 
+          className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-accent/50 transition-colors ${
+            isSelected ? 'bg-primary/10 border border-primary/20' : ''
+          }`}
+          style={{ marginLeft: `${level * 16}px` }}
+          onClick={() => selectCategory(category.id, category.name)}
+          data-testid={`category-tree-${category.id}`}
+        >
+          {hasChildren && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-0 h-6 w-6"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCategoryExpanded(category.id);
+              }}
+              data-testid={`category-expand-${category.id}`}
+            >
+              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          )}
+          
+          {!hasChildren && <div className="w-6" />}
+          
+          <span className="text-lg">{category.icon}</span>
+          
+          <div className="flex-1 flex items-center justify-between">
+            <span className={`font-medium ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+              {category.name}
+            </span>
+            {category.serviceCount && category.serviceCount > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {category.serviceCount}
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <AnimatePresence>
+          {hasChildren && isExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              {category.children.map(child => (
+                <CategoryTreeNode
+                  key={child.id}
+                  category={child}
+                  level={level + 1}
+                />
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  // Breadcrumb navigation component
+  const CategoryBreadcrumbs = () => {
+    if (selectedCategoryPath.length === 0) return null;
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-4"
+      >
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink 
+                onClick={() => selectCategory('all')}
+                className="flex items-center gap-2 cursor-pointer hover:text-primary"
+                data-testid="breadcrumb-home"
+              >
+                <Home className="h-4 w-4" />
+                All Services
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            
+            {selectedCategoryPath.map((crumb, index) => (
+              <div key={crumb.id} className="flex items-center">
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbLink 
+                    onClick={() => selectCategory(crumb.id, crumb.name)}
+                    className={`cursor-pointer hover:text-primary ${
+                      index === selectedCategoryPath.length - 1 ? 'font-medium text-primary' : ''
+                    }`}
+                    data-testid={`breadcrumb-${crumb.id}`}
+                  >
+                    {crumb.name}
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+              </div>
+            ))}
+          </BreadcrumbList>
+        </Breadcrumb>
+      </motion.div>
+    );
   };
 
 
@@ -133,36 +393,118 @@ export default function Services() {
           <p className="text-muted-foreground">Find the perfect service for your needs</p>
         </motion.div>
 
-        {/* Categories */}
-        {categories && (
+        {/* Breadcrumb Navigation */}
+        <CategoryBreadcrumbs />
+
+        {/* Hierarchical Categories */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-6"
+        >
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <TreePine className="h-5 w-5 text-muted-foreground" />
+                  <h3 className="font-semibold text-foreground">Service Categories</h3>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowCategoryTree(!showCategoryTree)}
+                  className="flex items-center gap-2"
+                  data-testid="toggle-category-tree"
+                >
+                  {showCategoryTree ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  {showCategoryTree ? 'Hide' : 'Show'} Categories
+                </Button>
+              </div>
+
+              {/* All Services Option */}
+              <div 
+                className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-accent/50 transition-colors mb-2 ${
+                  selectedCategory === 'all' ? 'bg-primary/10 border border-primary/20' : ''
+                }`}
+                onClick={() => selectCategory('all')}
+                data-testid="category-all"
+              >
+                <div className="w-6 flex justify-center">
+                  <Home className="h-4 w-4" />
+                </div>
+                <span className="text-lg">🏠</span>
+                <div className="flex-1 flex items-center justify-between">
+                  <span className={`font-medium ${selectedCategory === 'all' ? 'text-primary' : 'text-foreground'}`}>
+                    All Services
+                  </span>
+                  {services && (
+                    <Badge variant="secondary" className="text-xs">
+                      {services.length}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {/* Hierarchical Category Tree */}
+              <AnimatePresence>
+                {showCategoryTree && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-1"
+                  >
+                    {loadingCategories ? (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <div className="h-4 w-4 animate-spin border border-current border-t-transparent rounded-full" />
+                        Loading categories...
+                      </div>
+                    ) : filteredCategoryTree.length > 0 ? (
+                      filteredCategoryTree.map(category => (
+                        <CategoryTreeNode key={category.id} category={category} />
+                      ))
+                    ) : (
+                      <div className="text-muted-foreground text-sm py-4 text-center">
+                        {searchQuery ? 'No categories match your search' : 'No categories available'}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Quick Category Access (Main Categories) */}
+        {mainCategories && mainCategories.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
+            transition={{ delay: 0.15 }}
             className="mb-6"
           >
-            <div className="flex space-x-3 overflow-x-auto pb-2">
-              <Button
-                variant={selectedCategory === 'all' ? 'default' : 'outline'}
-                onClick={() => setSelectedCategory('all')}
-                className="flex-shrink-0"
-                data-testid="category-all"
-              >
-                All Services
-              </Button>
-              {(categories || []).map((category: ServiceCategory) => (
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm font-medium text-muted-foreground">Quick Access:</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {mainCategories.slice(0, 6).map((category) => (
                 <Button
                   key={category.id}
                   variant={selectedCategory === category.id ? 'default' : 'outline'}
-                  onClick={() => setSelectedCategory(category.id)}
-                  className="flex-shrink-0"
-                  data-testid={`category-${category.id}`}
+                  size="sm"
+                  onClick={() => selectCategory(category.id, category.name)}
+                  className="flex items-center gap-2"
+                  data-testid={`quick-category-${category.id}`}
                 >
-                  <span className="mr-2">{category.icon}</span>
+                  <span>{category.icon}</span>
                   {category.name}
-                  <Badge variant="secondary" className="ml-2 text-xs">
-                    {category.serviceCount}
-                  </Badge>
+                  {category.serviceCount && category.serviceCount > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {category.serviceCount}
+                    </Badge>
+                  )}
                 </Button>
               ))}
             </div>

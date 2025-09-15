@@ -58,7 +58,7 @@ interface ProviderJobsData {
   recentJobs: JobRequest[];
 }
 
-export default function ProviderDashboard() {
+export default function ServiceProviderDashboard() {
   const { user } = useAuth();
   const { socket, isConnected } = useSocket();
   const { toast } = useToast();

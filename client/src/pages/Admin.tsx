@@ -1141,6 +1141,26 @@ export default function Admin() {
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [currentImageUrl, setCurrentImageUrl] = useState<string>('');
 
+  // Services management state
+  const [selectedService, setSelectedService] = useState<Service | null>(null);
+  const [isCreateServiceOpen, setIsCreateServiceOpen] = useState(false);
+  const [isEditServiceOpen, setIsEditServiceOpen] = useState(false);
+  const [serviceFormData, setServiceFormData] = useState({
+    name: '',
+    description: '',
+    shortDescription: '',
+    categoryId: '',
+    isActive: true,
+    isPopular: false,
+    isFeatured: false,
+    basePrice: 0,
+    priceType: 'fixed' as 'fixed' | 'hourly' | 'per_item',
+    currency: 'INR',
+    unit: 'service',
+    features: [] as string[],
+    requirements: [] as string[]
+  });
+
   // Check if user is admin
   if (!user || user.role !== 'admin') {
     setLocation('/');
@@ -1215,6 +1235,16 @@ export default function Admin() {
     queryKey: ['/api/v1/admin/categories/main'],
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/v1/admin/categories/main');
+      return response.json();
+    },
+    enabled: !!user,
+  });
+
+  // Fetch services
+  const { data: services } = useQuery<Service[]>({
+    queryKey: ['/api/v1/services'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/services');
       return response.json();
     },
     enabled: !!user,
@@ -1430,6 +1460,60 @@ export default function Admin() {
     }
   };
 
+  // Service mutations
+  const createServiceMutation = useMutation({
+    mutationFn: async (serviceData: any) => {
+      const response = await apiRequest('POST', '/api/v1/admin/services', serviceData);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      setIsCreateServiceOpen(false);
+      resetServiceForm();
+      toast({
+        title: "Service created",
+        description: "New service has been created successfully.",
+      });
+    },
+  });
+
+  const updateServiceMutation = useMutation({
+    mutationFn: async ({ serviceId, data }: { serviceId: string; data: any }) => {
+      const response = await apiRequest('PUT', `/api/v1/admin/services/${serviceId}`, data);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      setIsEditServiceOpen(false);
+      setSelectedService(null);
+      toast({
+        title: "Service updated",
+        description: "Service has been updated successfully.",
+      });
+    },
+  });
+
+  const deleteServiceMutation = useMutation({
+    mutationFn: async (serviceId: string) => {
+      const response = await apiRequest('DELETE', `/api/v1/admin/services/${serviceId}`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      toast({
+        title: "Service deleted",
+        description: "Service has been deleted successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Delete failed",
+        description: error.message || "Failed to delete service",
+        variant: "destructive",
+      });
+    },
+  });
+
   const toggleCategoryExpansion = (categoryId: string) => {
     const newExpanded = new Set(expandedCategories);
     if (newExpanded.has(categoryId)) {
@@ -1443,6 +1527,98 @@ export default function Admin() {
   const resetCategoryForm = () => {
     setCategoryFormData({ name: '', description: '', icon: '', parentId: '', isActive: true });
     setSelectedCategory(null);
+  };
+
+  // Service handler functions
+  const handleCreateService = () => {
+    if (!serviceFormData.name.trim() || !serviceFormData.categoryId) {
+      toast({
+        title: "Validation Error",
+        description: "Service name and category are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const data = {
+      ...serviceFormData,
+      pricing: {
+        basePrice: serviceFormData.basePrice,
+        currency: serviceFormData.currency,
+        unit: serviceFormData.unit,
+        priceType: serviceFormData.priceType
+      }
+    };
+    
+    createServiceMutation.mutate(data);
+  };
+
+  const handleEditService = (service: Service) => {
+    setSelectedService(service);
+    setServiceFormData({
+      name: service.name,
+      description: service.description,
+      shortDescription: service.shortDescription || '',
+      categoryId: service.categoryId,
+      isActive: service.isActive,
+      isPopular: service.isPopular,
+      isFeatured: service.isFeatured,
+      basePrice: service.pricing?.basePrice || 0,
+      priceType: service.pricing?.priceType || 'fixed',
+      currency: service.pricing?.currency || 'INR',
+      unit: service.pricing?.unit || 'service',
+      features: service.features || [],
+      requirements: service.requirements || []
+    });
+    setIsEditServiceOpen(true);
+  };
+
+  const handleUpdateService = () => {
+    if (!selectedService || !serviceFormData.name.trim() || !serviceFormData.categoryId) {
+      toast({
+        title: "Validation Error",
+        description: "Service name and category are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const data = {
+      ...serviceFormData,
+      pricing: {
+        basePrice: serviceFormData.basePrice,
+        currency: serviceFormData.currency,
+        unit: serviceFormData.unit,
+        priceType: serviceFormData.priceType
+      }
+    };
+    
+    updateServiceMutation.mutate({ serviceId: selectedService.id, data });
+  };
+
+  const handleDeleteService = (serviceId: string) => {
+    if (window.confirm('Are you sure you want to delete this service? This action cannot be undone.')) {
+      deleteServiceMutation.mutate(serviceId);
+    }
+  };
+
+  const resetServiceForm = () => {
+    setServiceFormData({
+      name: '',
+      description: '',
+      shortDescription: '',
+      categoryId: '',
+      isActive: true,
+      isPopular: false,
+      isFeatured: false,
+      basePrice: 0,
+      priceType: 'fixed',
+      currency: 'INR',
+      unit: 'service',
+      features: [],
+      requirements: []
+    });
+    setSelectedService(null);
   };
 
   const getUserStatusColor = (status: string) => {
@@ -1486,6 +1662,16 @@ export default function Admin() {
     return matchesSearch && matchesRole;
   });
 
+  // Normalize services data
+  const servicesList = Array.isArray(services) ? services : services?.services || [];
+  
+  const filteredServices = servicesList.filter((service: Service) => {
+    const matchesSearch = !searchQuery || 
+      service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      service.description.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSearch;
+  });
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -1511,13 +1697,16 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-8">
+          <TabsList className="grid w-full grid-cols-9">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
             </TabsTrigger>
             <TabsTrigger value="orders" data-testid="orders-tab">
               Orders ({orders?.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="services" data-testid="services-tab">
+              Services
             </TabsTrigger>
             <TabsTrigger value="categories" data-testid="categories-tab">
               Categories
@@ -2281,6 +2470,211 @@ export default function Admin() {
             </div>
           </TabsContent>
 
+          <TabsContent value="services" className="mt-6">
+            <div className="space-y-6">
+              {/* Services Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold">Services Management</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Manage all services offered on the platform
+                  </p>
+                </div>
+                <Button onClick={() => setIsCreateServiceOpen(true)} data-testid="create-service-button">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Service
+                </Button>
+              </div>
+
+              {/* Services Statistics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Package className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {servicesList?.length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Total Services</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {servicesList?.filter((s: Service) => s.isActive).length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Active Services</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Star className="w-8 h-8 text-orange-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {servicesList?.filter((s: Service) => s.isFeatured).length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Featured Services</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <TrendingUp className="w-8 h-8 text-purple-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">
+                      {servicesList?.filter((s: Service) => s.isPopular).length || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Popular Services</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Search and Filters */}
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <Input
+                    placeholder="Search services..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full"
+                    data-testid="services-search"
+                  />
+                </div>
+                <Select defaultValue="all">
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="Filter by category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {mainCategories?.map((category) => (
+                      <SelectItem key={category.id} value={category.id}>
+                        {category.icon} {category.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Services List */}
+              {servicesList && servicesList.length > 0 ? (
+                <div className="grid gap-4">
+                  {filteredServices.map((service: Service) => {
+                    const category = mainCategories?.find(c => c.id === service.categoryId);
+                    return (
+                      <Card key={service.id} className="transition-all duration-200 hover:shadow-lg">
+                        <CardContent className="p-6">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-3 mb-2">
+                                <h3 className="text-xl font-semibold text-foreground">{service.name}</h3>
+                                <div className="flex space-x-2">
+                                  <Badge variant={service.isActive ? "default" : "secondary"}>
+                                    {service.isActive ? "Active" : "Inactive"}
+                                  </Badge>
+                                  {service.isFeatured && (
+                                    <Badge className="bg-orange-100 text-orange-800">
+                                      <Star className="w-3 h-3 mr-1" />
+                                      Featured
+                                    </Badge>
+                                  )}
+                                  {service.isPopular && (
+                                    <Badge className="bg-purple-100 text-purple-800">
+                                      <TrendingUp className="w-3 h-3 mr-1" />
+                                      Popular
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                <div>
+                                  <Label className="text-sm font-medium text-muted-foreground">Category</Label>
+                                  <p className="flex items-center space-x-1">
+                                    {category?.icon && <span>{category.icon}</span>}
+                                    <span>{category?.name || 'Unknown Category'}</span>
+                                  </p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-medium text-muted-foreground">Price</Label>
+                                  <p className="font-medium">
+                                    ₹{service.pricing?.basePrice || 0} / {service.pricing?.unit || 'service'}
+                                  </p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-medium text-muted-foreground">Bookings</Label>
+                                  <p className="font-medium">{service.stats?.totalBookings || 0}</p>
+                                </div>
+                              </div>
+                              
+                              <p className="text-sm text-muted-foreground leading-6 mb-4">
+                                {service.shortDescription || service.description}
+                              </p>
+                              
+                              {service.features && service.features.length > 0 && (
+                                <div className="mb-4">
+                                  <Label className="text-sm font-medium text-muted-foreground">Features</Label>
+                                  <div className="flex flex-wrap gap-2 mt-1">
+                                    {service.features.slice(0, 3).map((feature, index) => (
+                                      <Badge key={index} variant="outline" className="text-xs">
+                                        {feature}
+                                      </Badge>
+                                    ))}
+                                    {service.features.length > 3 && (
+                                      <Badge variant="outline" className="text-xs">
+                                        +{service.features.length - 3} more
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="flex items-center space-x-2 ml-4">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditService(service)}
+                                data-testid={`edit-service-${service.id}`}
+                              >
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteService(service.id)}
+                                data-testid={`delete-service-${service.id}`}
+                              >
+                                <Trash2 className="w-4 h-4 text-red-500" />
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <h3 className="font-medium text-foreground mb-2">No services found</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {searchQuery ? 'No services match your search criteria' : 'Start by creating your first service'}
+                  </p>
+                  {!searchQuery && (
+                    <Button
+                      className="mt-4"
+                      onClick={() => setIsCreateServiceOpen(true)}
+                      data-testid="create-first-service"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create First Service
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
           <TabsContent value="categories" className="mt-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold">Category Management</h2>
@@ -2557,6 +2951,346 @@ export default function Admin() {
                     <>
                       <Save className="w-4 h-4 mr-2" />
                       Create Category
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Create Service Dialog */}
+        <Dialog open={isCreateServiceOpen} onOpenChange={setIsCreateServiceOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Create New Service</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="serviceName">Service Name *</Label>
+                  <Input
+                    id="serviceName"
+                    value={serviceFormData.name}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, name: e.target.value })}
+                    placeholder="Enter service name"
+                    data-testid="service-name-input"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="serviceCategory">Category *</Label>
+                  <Select 
+                    value={serviceFormData.categoryId} 
+                    onValueChange={(value) => setServiceFormData({ ...serviceFormData, categoryId: value })}
+                  >
+                    <SelectTrigger data-testid="service-category-select">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mainCategories?.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.icon} {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div>
+                <Label htmlFor="serviceDescription">Description *</Label>
+                <Textarea
+                  id="serviceDescription"
+                  value={serviceFormData.description}
+                  onChange={(e) => setServiceFormData({ ...serviceFormData, description: e.target.value })}
+                  placeholder="Enter detailed service description"
+                  rows={3}
+                  data-testid="service-description-input"
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="serviceShortDescription">Short Description</Label>
+                <Input
+                  id="serviceShortDescription"
+                  value={serviceFormData.shortDescription}
+                  onChange={(e) => setServiceFormData({ ...serviceFormData, shortDescription: e.target.value })}
+                  placeholder="Brief description for listings"
+                  data-testid="service-short-description-input"
+                />
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="servicePrice">Base Price (₹) *</Label>
+                  <Input
+                    id="servicePrice"
+                    type="number"
+                    value={serviceFormData.basePrice}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, basePrice: Number(e.target.value) })}
+                    placeholder="0"
+                    min="0"
+                    data-testid="service-price-input"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="servicePriceType">Price Type</Label>
+                  <Select 
+                    value={serviceFormData.priceType} 
+                    onValueChange={(value: 'fixed' | 'hourly' | 'per_item') => setServiceFormData({ ...serviceFormData, priceType: value })}
+                  >
+                    <SelectTrigger data-testid="service-price-type-select">
+                      <SelectValue placeholder="Select price type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Fixed Price</SelectItem>
+                      <SelectItem value="hourly">Per Hour</SelectItem>
+                      <SelectItem value="per_item">Per Item</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="serviceUnit">Unit</Label>
+                  <Input
+                    id="serviceUnit"
+                    value={serviceFormData.unit}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, unit: e.target.value })}
+                    placeholder="service, hour, item"
+                    data-testid="service-unit-input"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-6">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="serviceActive"
+                    checked={serviceFormData.isActive}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isActive: e.target.checked })}
+                    data-testid="service-active-checkbox"
+                  />
+                  <Label htmlFor="serviceActive">Active</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="serviceFeatured"
+                    checked={serviceFormData.isFeatured}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isFeatured: e.target.checked })}
+                    data-testid="service-featured-checkbox"
+                  />
+                  <Label htmlFor="serviceFeatured">Featured</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="servicePopular"
+                    checked={serviceFormData.isPopular}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isPopular: e.target.checked })}
+                    data-testid="service-popular-checkbox"
+                  />
+                  <Label htmlFor="servicePopular">Popular</Label>
+                </div>
+              </div>
+              
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsCreateServiceOpen(false);
+                    resetServiceForm();
+                  }} 
+                  className="flex-1"
+                  data-testid="cancel-create-service"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleCreateService} 
+                  className="flex-1"
+                  disabled={createServiceMutation.isPending}
+                  data-testid="confirm-create-service"
+                >
+                  {createServiceMutation.isPending ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Create Service
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Service Dialog */}
+        <Dialog open={isEditServiceOpen} onOpenChange={setIsEditServiceOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit Service</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="editServiceName">Service Name *</Label>
+                  <Input
+                    id="editServiceName"
+                    value={serviceFormData.name}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, name: e.target.value })}
+                    placeholder="Enter service name"
+                    data-testid="edit-service-name-input"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="editServiceCategory">Category *</Label>
+                  <Select 
+                    value={serviceFormData.categoryId} 
+                    onValueChange={(value) => setServiceFormData({ ...serviceFormData, categoryId: value })}
+                  >
+                    <SelectTrigger data-testid="edit-service-category-select">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mainCategories?.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.icon} {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div>
+                <Label htmlFor="editServiceDescription">Description *</Label>
+                <Textarea
+                  id="editServiceDescription"
+                  value={serviceFormData.description}
+                  onChange={(e) => setServiceFormData({ ...serviceFormData, description: e.target.value })}
+                  placeholder="Enter detailed service description"
+                  rows={3}
+                  data-testid="edit-service-description-input"
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="editServiceShortDescription">Short Description</Label>
+                <Input
+                  id="editServiceShortDescription"
+                  value={serviceFormData.shortDescription}
+                  onChange={(e) => setServiceFormData({ ...serviceFormData, shortDescription: e.target.value })}
+                  placeholder="Brief description for listings"
+                  data-testid="edit-service-short-description-input"
+                />
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="editServicePrice">Base Price (₹) *</Label>
+                  <Input
+                    id="editServicePrice"
+                    type="number"
+                    value={serviceFormData.basePrice}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, basePrice: Number(e.target.value) })}
+                    placeholder="0"
+                    min="0"
+                    data-testid="edit-service-price-input"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="editServicePriceType">Price Type</Label>
+                  <Select 
+                    value={serviceFormData.priceType} 
+                    onValueChange={(value: 'fixed' | 'hourly' | 'per_item') => setServiceFormData({ ...serviceFormData, priceType: value })}
+                  >
+                    <SelectTrigger data-testid="edit-service-price-type-select">
+                      <SelectValue placeholder="Select price type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Fixed Price</SelectItem>
+                      <SelectItem value="hourly">Per Hour</SelectItem>
+                      <SelectItem value="per_item">Per Item</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="editServiceUnit">Unit</Label>
+                  <Input
+                    id="editServiceUnit"
+                    value={serviceFormData.unit}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, unit: e.target.value })}
+                    placeholder="service, hour, item"
+                    data-testid="edit-service-unit-input"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-6">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="editServiceActive"
+                    checked={serviceFormData.isActive}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isActive: e.target.checked })}
+                    data-testid="edit-service-active-checkbox"
+                  />
+                  <Label htmlFor="editServiceActive">Active</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="editServiceFeatured"
+                    checked={serviceFormData.isFeatured}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isFeatured: e.target.checked })}
+                    data-testid="edit-service-featured-checkbox"
+                  />
+                  <Label htmlFor="editServiceFeatured">Featured</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="editServicePopular"
+                    checked={serviceFormData.isPopular}
+                    onChange={(e) => setServiceFormData({ ...serviceFormData, isPopular: e.target.checked })}
+                    data-testid="edit-service-popular-checkbox"
+                  />
+                  <Label htmlFor="editServicePopular">Popular</Label>
+                </div>
+              </div>
+              
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsEditServiceOpen(false);
+                    resetServiceForm();
+                  }} 
+                  className="flex-1"
+                  data-testid="cancel-edit-service"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleUpdateService} 
+                  className="flex-1"
+                  disabled={updateServiceMutation.isPending}
+                  data-testid="confirm-edit-service"
+                >
+                  {updateServiceMutation.isPending ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Update Service
                     </>
                   )}
                 </Button>

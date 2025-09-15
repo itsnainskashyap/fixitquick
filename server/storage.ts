@@ -171,11 +171,31 @@ export interface IStorage {
   reorderCategories(categoryIds: string[], startSortOrder?: number): Promise<void>;
   generateCategorySlug(name: string, parentId?: string): Promise<string>;
 
+  // Enhanced hierarchical category methods
+  getCategoryTree(rootId?: string, maxDepth?: number, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getCategoryPath(categoryId: string): Promise<ServiceCategory[]>;
+  getCategoryBreadcrumbs(categoryId: string): Promise<{ id: string; name: string; slug: string }[]>;
+  getChildCategories(parentId: string, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  getCategoryWithChildren(categoryId: string, activeOnly?: boolean): Promise<ServiceCategory & { children?: ServiceCategory[] }>;
+  moveCategoryToParent(categoryId: string, newParentId: string | null): Promise<ServiceCategory | undefined>;
+  bulkReorderCategories(updates: { categoryId: string; sortOrder: number; parentId?: string }[]): Promise<void>;
+  updateCategoryPaths(startFromCategoryId?: string): Promise<void>;
+  getCategoriesByPath(pathPrefix: string, activeOnly?: boolean): Promise<ServiceCategory[]>;
+  validateCategoryHierarchy(categoryId: string, newParentId: string | null): Promise<{ valid: boolean; reason?: string }>;
+  getMaxDepthForCategory(categoryId: string): Promise<number>;
+  getCategoryStats(categoryId?: string): Promise<{
+    totalCategories: number;
+    maxDepth: number;
+    categoriesAtLevel: { level: number; count: number }[];
+    servicesCount: number;
+  }>;
+
   // Service methods
   getServices(filters?: { categoryId?: string; isActive?: boolean }): Promise<Service[]>;
   getService(id: string): Promise<Service | undefined>;
   createService(service: Omit<Service, 'id' | 'createdAt'>): Promise<Service>;
   updateService(id: string, data: Partial<Omit<Service, 'id' | 'createdAt'>>): Promise<Service | undefined>;
+  deleteService(id: string): Promise<{ success: boolean; message: string }>;
   getServicesByCategory(categoryId: string): Promise<Service[]>;
 
   // Order methods
@@ -937,6 +957,292 @@ export class PostgresStorage implements IStorage {
     return slug;
   }
 
+  // Enhanced hierarchical category methods
+  async getCategoryTree(rootId?: string, maxDepth?: number, activeOnly = true): Promise<ServiceCategory[]> {
+    const conditions: SQL[] = [];
+    if (activeOnly) {
+      conditions.push(eq(serviceCategories.isActive, true));
+    }
+    
+    if (rootId) {
+      // Get tree starting from specific root - include the root and all descendants
+      // This would need path-based filtering for proper subtree selection
+      conditions.push(or(
+        eq(serviceCategories.id, rootId),
+        like(serviceCategories.categoryPath, `%${rootId}%`)
+      ));
+    } else {
+      // Get entire tree - return ALL categories, not just root level
+      // Frontend will handle tree structure building
+    }
+    
+    if (maxDepth !== undefined) {
+      conditions.push(lte(serviceCategories.depth, maxDepth));
+    }
+    
+    const whereClause = combineConditions(conditions);
+    return await db.select().from(serviceCategories)
+      .where(whereClause)
+      .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+  }
+
+  async getCategoryPath(categoryId: string): Promise<ServiceCategory[]> {
+    const category = await this.getServiceCategory(categoryId);
+    if (!category) {
+      return [];
+    }
+    
+    const path: ServiceCategory[] = [category];
+    let currentCategory = category;
+    
+    // Traverse up the hierarchy
+    while (currentCategory.parentId) {
+      const parent = await this.getServiceCategory(currentCategory.parentId);
+      if (!parent) break;
+      
+      path.unshift(parent);
+      currentCategory = parent;
+    }
+    
+    return path;
+  }
+
+  async getCategoryBreadcrumbs(categoryId: string): Promise<{ id: string; name: string; slug: string }[]> {
+    const path = await this.getCategoryPath(categoryId);
+    return path.map(category => ({
+      id: category.id,
+      name: category.name,
+      slug: category.slug || ''
+    }));
+  }
+
+  async getChildCategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
+    return await this.getSubCategories(parentId, activeOnly);
+  }
+
+  async getCategoryWithChildren(categoryId: string, activeOnly = true): Promise<ServiceCategory & { children?: ServiceCategory[] }> {
+    const category = await this.getServiceCategory(categoryId);
+    if (!category) {
+      throw new Error('Category not found');
+    }
+    
+    const children = await this.getChildCategories(categoryId, activeOnly);
+    return {
+      ...category,
+      children
+    };
+  }
+
+  async moveCategoryToParent(categoryId: string, newParentId: string | null): Promise<ServiceCategory | undefined> {
+    // Validate the move is not creating a circular reference
+    const validation = await this.validateCategoryHierarchy(categoryId, newParentId);
+    if (!validation.valid) {
+      throw new Error(validation.reason || 'Invalid category hierarchy move');
+    }
+    
+    // Calculate new level and depth
+    let newLevel = 0;
+    let newDepth = 0;
+    let newCategoryPath = '/';
+    
+    if (newParentId) {
+      const parent = await this.getServiceCategory(newParentId);
+      if (parent) {
+        newLevel = (parent.level || 0) + 1;
+        newDepth = (parent.depth || 0) + 1;
+        newCategoryPath = parent.categoryPath + parent.slug + '/';
+      }
+    }
+    
+    // Update the category
+    const currentCategory = await this.getServiceCategory(categoryId);
+    if (!currentCategory) return undefined;
+    
+    const updatedCategory = await db.update(serviceCategories)
+      .set({
+        parentId: newParentId,
+        level: newLevel,
+        depth: newDepth,
+        categoryPath: newCategoryPath + (currentCategory.slug || '')
+      })
+      .where(eq(serviceCategories.id, categoryId))
+      .returning();
+      
+    // Update paths for all descendants
+    await this.updateCategoryPaths(categoryId);
+    
+    return updatedCategory[0];
+  }
+
+  async bulkReorderCategories(updates: { categoryId: string; sortOrder: number; parentId?: string }[]): Promise<void> {
+    for (const update of updates) {
+      const setData: any = { sortOrder: update.sortOrder };
+      if (update.parentId !== undefined) {
+        setData.parentId = update.parentId;
+      }
+      
+      await db.update(serviceCategories)
+        .set(setData)
+        .where(eq(serviceCategories.id, update.categoryId));
+    }
+  }
+
+  async updateCategoryPaths(startFromCategoryId?: string): Promise<void> {
+    // If specific category provided, update its descendants
+    if (startFromCategoryId) {
+      const category = await this.getServiceCategory(startFromCategoryId);
+      if (!category) return;
+      
+      // Update this category's path first
+      let categoryPath = '/';
+      if (category.parentId) {
+        const parent = await this.getServiceCategory(category.parentId);
+        if (parent && parent.categoryPath) {
+          categoryPath = parent.categoryPath + parent.slug + '/';
+        }
+      }
+      
+      await db.update(serviceCategories)
+        .set({ categoryPath: categoryPath + (category.slug || '') })
+        .where(eq(serviceCategories.id, startFromCategoryId));
+      
+      // Get all descendants and update their paths recursively
+      const descendants = await this.getChildCategories(startFromCategoryId, false);
+      for (const descendant of descendants) {
+        await this.updateCategoryPaths(descendant.id);
+      }
+    } else {
+      // Update all categories starting from root
+      const allCategories = await db.select().from(serviceCategories)
+        .orderBy(asc(serviceCategories.level));
+      
+      for (const category of allCategories) {
+        let categoryPath = '/';
+        if (category.parentId) {
+          const parent = await this.getServiceCategory(category.parentId);
+          if (parent && parent.categoryPath) {
+            categoryPath = parent.categoryPath + parent.slug + '/';
+          }
+        }
+        
+        await db.update(serviceCategories)
+          .set({ categoryPath: categoryPath + (category.slug || '') })
+          .where(eq(serviceCategories.id, category.id));
+      }
+    }
+  }
+
+  async getCategoriesByPath(pathPrefix: string, activeOnly = true): Promise<ServiceCategory[]> {
+    const conditions: SQL[] = [like(serviceCategories.categoryPath, `${pathPrefix}%`)];
+    if (activeOnly) {
+      conditions.push(eq(serviceCategories.isActive, true));
+    }
+    
+    return await db.select().from(serviceCategories)
+      .where(combineConditions(conditions)!)
+      .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder));
+  }
+
+  async validateCategoryHierarchy(categoryId: string, newParentId: string | null): Promise<{ valid: boolean; reason?: string }> {
+    if (!newParentId) {
+      return { valid: true }; // Moving to root is always valid
+    }
+    
+    if (categoryId === newParentId) {
+      return { valid: false, reason: 'Category cannot be its own parent' };
+    }
+    
+    // Check if newParentId is a descendant of categoryId (would create circular reference)
+    const parentPath = await this.getCategoryPath(newParentId);
+    const isDescendant = parentPath.some(cat => cat.id === categoryId);
+    
+    if (isDescendant) {
+      return { valid: false, reason: 'Cannot move category under its own descendant' };
+    }
+    
+    return { valid: true };
+  }
+
+  async getMaxDepthForCategory(categoryId: string): Promise<number> {
+    const result = await db.select({
+      maxDepth: sql<number>`MAX(${serviceCategories.depth})`
+    })
+    .from(serviceCategories)
+    .where(like(serviceCategories.categoryPath, `%/${categoryId}/%`));
+    
+    return result[0]?.maxDepth || 0;
+  }
+
+  async getCategoryStats(categoryId?: string): Promise<{
+    totalCategories: number;
+    maxDepth: number;
+    categoriesAtLevel: { level: number; count: number }[];
+    servicesCount: number;
+  }> {
+    let categoryCondition: SQL | undefined = undefined;
+    
+    if (categoryId) {
+      const category = await this.getServiceCategory(categoryId);
+      if (category && category.categoryPath) {
+        categoryCondition = like(serviceCategories.categoryPath, `${category.categoryPath}%`);
+      }
+    }
+    
+    // Get total categories
+    const totalResult = await db.select({
+      count: sql<number>`COUNT(*)`
+    })
+    .from(serviceCategories)
+    .where(categoryCondition);
+    
+    const totalCategories = totalResult[0]?.count || 0;
+    
+    // Get max depth
+    const depthResult = await db.select({
+      maxDepth: sql<number>`MAX(${serviceCategories.depth})`
+    })
+    .from(serviceCategories)
+    .where(categoryCondition);
+    
+    const maxDepth = depthResult[0]?.maxDepth || 0;
+    
+    // Get categories at each level
+    const levelStats = await db.select({
+      level: serviceCategories.level,
+      count: sql<number>`COUNT(*)`
+    })
+    .from(serviceCategories)
+    .where(categoryCondition)
+    .groupBy(serviceCategories.level)
+    .orderBy(asc(serviceCategories.level));
+    
+    const categoriesAtLevel = levelStats.map(stat => ({
+      level: stat.level || 0,
+      count: stat.count
+    }));
+    
+    // Get services count
+    let servicesCondition: SQL | undefined = undefined;
+    if (categoryId) {
+      servicesCondition = eq(services.categoryId, categoryId);
+    }
+    
+    const servicesResult = await db.select({
+      count: sql<number>`COUNT(*)`
+    })
+    .from(services)
+    .where(servicesCondition);
+    
+    const servicesCount = servicesResult[0]?.count || 0;
+    
+    return {
+      totalCategories,
+      maxDepth,
+      categoriesAtLevel,
+      servicesCount
+    };
+  }
+
   // Service methods
   async getServices(filters?: { categoryId?: string; isActive?: boolean }): Promise<Service[]> {
     let baseQuery = db.select().from(services);
@@ -962,17 +1268,50 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async createService(service: InsertService): Promise<Service> {
+  async createService(service: Omit<Service, 'id' | 'createdAt'>): Promise<Service> {
     const result = await db.insert(services).values([service]).returning();
     return result[0];
   }
 
-  async updateService(id: string, data: Partial<InsertService>): Promise<Service | undefined> {
+  async updateService(id: string, data: Partial<Omit<Service, 'id' | 'createdAt'>>): Promise<Service | undefined> {
     const result = await db.update(services)
       .set(data)
       .where(eq(services.id, id))
       .returning();
     return result[0];
+  }
+
+  async deleteService(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Check if service exists
+      const service = await this.getService(id);
+      if (!service) {
+        return { success: false, message: 'Service not found' };
+      }
+
+      // Check if service has active orders by searching items JSONB
+      const activeOrders = await db.select({ count: count() })
+        .from(orders)
+        .where(and(
+          sql`${orders.items}::jsonb @> ${JSON.stringify([{id}])}::jsonb`,
+          inArray(orders.status, ['pending', 'accepted', 'in_progress'])
+        ));
+      
+      if (activeOrders[0].count > 0) {
+        return { 
+          success: false, 
+          message: `Cannot delete service with ${activeOrders[0].count} active orders. Please complete or cancel them first.` 
+        };
+      }
+
+      // Delete the service
+      await db.delete(services).where(eq(services.id, id));
+      
+      return { success: true, message: 'Service deleted successfully' };
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      return { success: false, message: 'Failed to delete service' };
+    }
   }
 
   async getServicesByCategory(categoryId: string): Promise<Service[]> {
@@ -1722,31 +2061,30 @@ export class PostgresStorage implements IStorage {
       userId: serviceProviders.userId,
       categoryId: serviceProviders.categoryId,
       businessName: serviceProviders.businessName,
-      description: serviceProviders.description,
-      experience: serviceProviders.experience,
+      businessType: serviceProviders.businessType,
+      experienceYears: serviceProviders.experienceYears,
       skills: serviceProviders.skills,
-      hourlyRate: serviceProviders.hourlyRate,
+      serviceIds: serviceProviders.serviceIds,
       isVerified: serviceProviders.isVerified,
       verificationStatus: serviceProviders.verificationStatus,
       verificationNotes: serviceProviders.verificationNotes,
       verifiedBy: serviceProviders.verifiedBy,
-      verifiedAt: serviceProviders.verifiedAt,
+      verificationDate: serviceProviders.verificationDate,
       rejectionReason: serviceProviders.rejectionReason,
       resubmissionReason: serviceProviders.resubmissionReason,
-      portfolioImages: serviceProviders.portfolioImages,
-      certificates: serviceProviders.certificates,
-      identification: serviceProviders.identification,
+      documents: serviceProviders.documents,
       rating: serviceProviders.rating,
-      totalJobs: serviceProviders.totalJobs,
-      completedJobs: serviceProviders.completedJobs,
-      cancelledJobs: serviceProviders.cancelledJobs,
+      totalCompletedOrders: serviceProviders.totalCompletedOrders,
+      totalRatings: serviceProviders.totalRatings,
       responseTime: serviceProviders.responseTime,
       completionRate: serviceProviders.completionRate,
       onTimeRate: serviceProviders.onTimeRate,
       availability: serviceProviders.availability,
-      workingHours: serviceProviders.workingHours,
-      coverageArea: serviceProviders.coverageArea,
-      emergencyAvailable: serviceProviders.emergencyAvailable,
+      currentLocation: serviceProviders.currentLocation,
+      serviceAreas: serviceProviders.serviceAreas,
+      isOnline: serviceProviders.isOnline,
+      isAvailable: serviceProviders.isAvailable,
+      lastActiveAt: serviceProviders.lastActiveAt,
       createdAt: serviceProviders.createdAt,
       updatedAt: serviceProviders.updatedAt,
       userFirstName: users.firstName,

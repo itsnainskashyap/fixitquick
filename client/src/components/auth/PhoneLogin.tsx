@@ -1,58 +1,22 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Search, Phone, Check, ChevronDown, AlertCircle } from 'lucide-react';
+import { Phone, AlertCircle, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import SmartPhoneInput from '@/components/SmartPhoneInput';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
-import { countryCodes, getDefaultCountry, CountryCode } from './countryCodes';
+import { getDefaultCountry } from './countryCodes';
 
-// Phone number validation schema
-const phoneSchema = z.object({
-  countryCode: z.object({
-    name: z.string(),
-    code: z.string(),
-    dialCode: z.string(),
-    flag: z.string(),
-    format: z.string(),
-  }),
-  phoneNumber: z
-    .string()
-    .min(1, 'Phone number is required')
-    .regex(/^\d+$/, 'Phone number should contain only digits')
-    .min(7, 'Phone number is too short')
-    .max(11, 'Phone number is too long'),
-});
-
-type PhoneFormData = z.infer<typeof phoneSchema>;
+// Enhanced phone number validation for E.164 format
+const validatePhoneNumber = (phone: string): boolean => {
+  if (!phone) return false;
+  // Validate E.164 format with enhanced Indian number support
+  return /^\+[1-9]\d{7,14}$/.test(phone) && 
+    (phone.startsWith('+91') ? /^\+91[6-9]\d{9}$/.test(phone) : true);
+};
 
 interface PhoneLoginProps {
   onSuccess: (challengeId: string, phoneNumber: string) => void;
@@ -66,43 +30,40 @@ interface OtpRequestResponse {
 }
 
 export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
-  const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  
-  const form = useForm<PhoneFormData>({
-    resolver: zodResolver(phoneSchema),
-    defaultValues: {
-      countryCode: getDefaultCountry(),
-      phoneNumber: '',
-    },
-  });
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isPhoneValid, setIsPhoneValid] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<string | undefined>();
 
   const otpRequestMutation = useMutation({
-    mutationFn: async (data: PhoneFormData) => {
-      const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
-      
+    mutationFn: async (phone: string) => {
       const response = await apiRequest('POST', '/api/v1/auth/otp/request', {
-        phone: fullPhoneNumber,
+        phone: phone,
       });
       
       return await response.json() as OtpRequestResponse;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data, phoneNumber) => {
       if (data.success) {
-        const fullPhoneNumber = `${variables.countryCode.dialCode}${variables.phoneNumber}`;
         toast({
           title: "OTP Sent Successfully",
-          description: `We've sent a verification code to ${fullPhoneNumber}`,
+          description: `We've sent a verification code to ${phoneNumber}`,
         });
-        onSuccess(data.challengeId, fullPhoneNumber);
+        onSuccess(data.challengeId, phoneNumber);
       } else {
         const errorMessage = data.message || 'Failed to send OTP';
         
-        // Check if this is a rate limiting issue
+        // Enhanced error handling for different scenarios
         if (errorMessage.includes('Too many OTP requests') || errorMessage.includes('Please wait until')) {
           toast({
-            title: "Rate Limit Reached",
+            title: "Rate Limit Reached", 
             description: errorMessage,
+            variant: "destructive",
+          });
+        } else if (errorMessage.includes('Invalid phone number')) {
+          toast({
+            title: "Invalid Phone Number",
+            description: "Please enter a valid Indian mobile number starting with 6, 7, 8, or 9",
             variant: "destructive",
           });
         } else {
@@ -154,13 +115,19 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
     },
   });
 
-  const onSubmit = (data: PhoneFormData) => {
-    const fullPhoneNumber = `${data.countryCode.dialCode}${data.phoneNumber}`;
-    // Phone number submission (sensitive data not logged for security)
-    otpRequestMutation.mutate(data);
+  const handleSubmit = () => {
+    if (!isPhoneValid || !phoneNumber) {
+      toast({
+        title: "Invalid Phone Number",
+        description: validationMessage || "Please enter a valid phone number",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Submit the validated phone number
+    otpRequestMutation.mutate(phoneNumber);
   };
-
-  const selectedCountry = form.watch('countryCode');
   
   return (
     <motion.div
@@ -169,181 +136,89 @@ export default function PhoneLogin({ onSuccess, onError }: PhoneLoginProps) {
       transition={{ duration: 0.3 }}
       className="w-full max-w-sm mx-auto"
     >
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-              <img 
-                src="/fixitquick-logo.jpg" 
-                alt="FixitQuick Logo" 
-                className="w-16 h-16 object-contain"
-              />
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="text-center space-y-2">
+          <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+            <img 
+              src="/fixitquick-logo.jpg" 
+              alt="FixitQuick Logo" 
+              className="w-16 h-16 object-contain"
+            />
+          </div>
+          <h2 className="text-2xl font-bold text-foreground">Enter your phone number</h2>
+          <p className="text-sm text-muted-foreground">
+            We'll send you a verification code to confirm your number
+          </p>
+        </div>
+
+        {/* Smart Phone Input */}
+        <SmartPhoneInput
+          label="Phone Number"
+          placeholder="Enter your mobile number"
+          defaultCountry={getDefaultCountry()}
+          onChange={(formattedNumber, isValid) => {
+            setPhoneNumber(formattedNumber);
+            setIsPhoneValid(isValid && validatePhoneNumber(formattedNumber));
+          }}
+          onValidation={(isValid, message) => {
+            setValidationMessage(message);
+          }}
+          required={true}
+          showValidation={true}
+          focusOnMount={true}
+          autoFormat={true}
+          testId="phone-login"
+        />
+
+        {/* API Error Display */}
+        {otpRequestMutation.isError && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {otpRequestMutation.error?.message?.includes('429') 
+                ? 'Too many requests. Please wait before trying again.'
+                : otpRequestMutation.error?.message?.includes('Invalid phone number')
+                ? 'Please enter a valid Indian mobile number starting with 6, 7, 8, or 9'
+                : 'Failed to send OTP. Please try again.'}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Submit Button */}
+        <Button
+          onClick={handleSubmit}
+          className="w-full h-12 text-base font-medium"
+          disabled={otpRequestMutation.isPending || !isPhoneValid}
+          data-testid="send-otp-button"
+        >
+          {otpRequestMutation.isPending ? (
+            <div className="flex items-center space-x-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Sending OTP...</span>
             </div>
-            <h2 className="text-2xl font-bold text-foreground">Enter your phone number</h2>
-            <p className="text-sm text-muted-foreground">
-              We'll send you a verification code to confirm your number
-            </p>
-          </div>
-
-          {/* Country Code Selection */}
-          <FormField
-            control={form.control}
-            name="countryCode"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-sm font-medium">Country</FormLabel>
-                <FormControl>
-                  <Popover open={open} onOpenChange={setOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={open}
-                        className="w-full justify-between h-12"
-                        data-testid="country-selector"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <span className="text-lg">{field.value.flag}</span>
-                          <span className="text-sm text-muted-foreground">
-                            {field.value.dialCode}
-                          </span>
-                          <span className="text-sm">{field.value.name}</span>
-                        </div>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-full p-0" align="start">
-                      <Command>
-                        <CommandInput 
-                          placeholder="Search countries..." 
-                          data-testid="country-search"
-                        />
-                        <CommandList>
-                          <CommandEmpty>No country found.</CommandEmpty>
-                          <CommandGroup>
-                            {countryCodes.map((country) => (
-                              <CommandItem
-                                key={country.code}
-                                value={`${country.name} ${country.dialCode}`}
-                                onSelect={() => {
-                                  field.onChange(country);
-                                  setOpen(false);
-                                }}
-                                className="flex items-center space-x-2"
-                                data-testid={`country-option-${country.code}`}
-                              >
-                                <span className="text-lg">{country.flag}</span>
-                                <span className="text-sm text-muted-foreground min-w-[3rem]">
-                                  {country.dialCode}
-                                </span>
-                                <span className="flex-1">{country.name}</span>
-                                {field.value.code === country.code && (
-                                  <Check className="h-4 w-4" />
-                                )}
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          {/* Phone Number Input */}
-          <FormField
-            control={form.control}
-            name="phoneNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-sm font-medium">Phone Number</FormLabel>
-                <FormControl>
-                  <div className="relative">
-                    <div className="absolute left-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2 text-sm text-muted-foreground">
-                      <span className="text-lg">{selectedCountry.flag}</span>
-                      <span>{selectedCountry.dialCode}</span>
-                    </div>
-                    <Input
-                      {...field}
-                      type="tel"
-                      placeholder={selectedCountry.format}
-                      className="h-12 pl-20 text-base"
-                      data-testid="phone-input"
-                      autoComplete="tel"
-                    />
-                  </div>
-                </FormControl>
-                <FormMessage />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Example: {selectedCountry.format}
-                </p>
-              </FormItem>
-            )}
-          />
-
-          {/* Form Validation Errors */}
-          {Object.keys(form.formState.errors).length > 0 && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {form.formState.errors.phoneNumber?.message || 
-                 form.formState.errors.countryCode?.message ||
-                 'Please fix the errors above'}
-              </AlertDescription>
-            </Alert>
+          ) : (
+            <div className="flex items-center space-x-2">
+              <Phone className="h-5 w-5" />
+              <span>Send OTP</span>
+            </div>
           )}
+        </Button>
 
-          {/* API Error Display */}
-          {otpRequestMutation.isError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {otpRequestMutation.error?.message?.includes('429') 
-                  ? 'Too many requests. Please wait before trying again.'
-                  : 'Failed to send OTP. Please try again.'}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Submit Button */}
-          <Button
-            type="submit"
-            className="w-full h-12 text-base font-medium"
-            disabled={otpRequestMutation.isPending}
-            data-testid="send-otp-button"
-          >
-            {otpRequestMutation.isPending ? (
-              <div className="flex items-center space-x-2">
-                <div className="loading-spinner w-5 h-5" />
-                <span>Sending OTP...</span>
-              </div>
-            ) : (
-              <div className="flex items-center space-x-2">
-                <Phone className="h-5 w-5" />
-                <span>Send OTP</span>
-              </div>
-            )}
-          </Button>
-
-          {/* Additional Info */}
-          <div className="text-center space-y-2">
-            <p className="text-xs text-muted-foreground">
-              By continuing, you agree to our{' '}
-              <a href="/terms" className="text-primary hover:underline">
-                Terms of Service
-              </a>{' '}
-              and{' '}
-              <a href="/privacy" className="text-primary hover:underline">
-                Privacy Policy
-              </a>
-            </p>
-          </div>
-        </form>
-      </Form>
+        {/* Additional Info */}
+        <div className="text-center space-y-2">
+          <p className="text-xs text-muted-foreground">
+            By continuing, you agree to our{' '}
+            <a href="/terms" className="text-primary hover:underline">
+              Terms of Service
+            </a>{' '}
+            and{' '}
+            <a href="/privacy" className="text-primary hover:underline">
+              Privacy Policy
+            </a>
+          </p>
+        </div>
+      </div>
     </motion.div>
   );
 }

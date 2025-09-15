@@ -65,6 +65,10 @@ class TwilioService {
     if (this.isStubMode) {
       console.log('🔧 Twilio SMS Service: Running in STUB mode - no real SMS will be sent');
       console.log('📱 To enable real SMS: Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER environment variables');
+      console.log('📱 Example environment variables:');
+      console.log('   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+      console.log('   TWILIO_AUTH_TOKEN=your_auth_token_here');
+      console.log('   TWILIO_FROM_NUMBER=+1234567890');
       if (this.isProduction) {
         console.warn('⚠️  PRODUCTION WARNING: Twilio SMS is in stub mode - users cannot receive OTP codes!');
       }
@@ -72,16 +76,40 @@ class TwilioService {
       try {
         this.client = twilio(this.config.accountSid, this.config.authToken);
         console.log(`📱 Twilio SMS Service: Initialized successfully (${this.config.environment} environment)`);
+        console.log(`📱 Using Twilio number: ${this.maskPhoneNumber(this.config.fromNumber || '')}`);
+        
+        // Test connection in development mode
+        if (!this.isProduction) {
+          this.testConnection();
+        }
+        
         if (!this.isProduction && !this.config.devFallbackEnabled) {
           console.log('📱 Development mode: Set TWILIO_DEV_FALLBACK=true to enable fallback logging for unverified numbers');
         }
       } catch (error) {
         console.error('❌ Twilio SMS Service: Failed to initialize with provided credentials');
+        console.error('❌ Error details:', error);
         this.isStubMode = true;
         if (this.isProduction) {
           console.error('❌ PRODUCTION ERROR: Twilio credentials are invalid - SMS authentication is disabled!');
         }
       }
+    }
+  }
+
+  /**
+   * Test Twilio connection in development mode
+   */
+  private async testConnection(): Promise<void> {
+    try {
+      if (this.client && !this.isProduction) {
+        // Test by fetching account info
+        const account = await this.client.api.accounts(this.config.accountSid).fetch();
+        console.log(`📱 Twilio connection test successful - Account: ${account.friendlyName}`);
+      }
+    } catch (error: any) {
+      console.warn('⚠️  Twilio connection test failed:', error.message);
+      console.warn('📱 SMS sending may not work properly');
     }
   }
 
@@ -281,7 +309,7 @@ class TwilioService {
 
   /**
    * Format and validate phone number to E.164 international format
-   * Supports common country formats with intelligent normalization
+   * Enhanced for Indian phone numbers with intelligent normalization
    */
   private formatPhoneNumber(phone: string): string | null {
     if (!phone || typeof phone !== 'string') {
@@ -295,14 +323,14 @@ class TwilioService {
       return null;
     }
 
-    // If it doesn't start with +, add country code based on number pattern
+    // Handle various Indian number input formats first (primary use case)
     if (!cleaned.startsWith('+')) {
       // Remove leading zeros (common in national format)
       if (cleaned.startsWith('0')) {
         cleaned = cleaned.substring(1);
       }
       
-      // Add country codes based on number patterns
+      // Enhanced Indian number detection with multiple patterns
       if (cleaned.length === 10) {
         // Indian mobile numbers: start with 6-9
         if (/^[6-9]\d{9}$/.test(cleaned)) {
@@ -317,22 +345,37 @@ class TwilioService {
           cleaned = '+44' + cleaned;
         }
       }
-      // 11 digits might be US with leading 1
-      else if (cleaned.length === 11 && cleaned.startsWith('1') && /^1[2-9]\d{9}$/.test(cleaned)) {
+      // Handle 11-digit numbers that might include country code
+      else if (cleaned.length === 11) {
+        // US with leading 1
+        if (cleaned.startsWith('1') && /^1[2-9]\d{9}$/.test(cleaned)) {
+          cleaned = '+' + cleaned;
+        }
+        // Indian numbers sometimes written as 91XXXXXXXXXX
+        else if (cleaned.startsWith('91') && /^91[6-9]\d{9}$/.test(cleaned)) {
+          cleaned = '+' + cleaned;
+        }
+      }
+      // Handle 12-digit numbers (91 + 10-digit Indian number without +)
+      else if (cleaned.length === 12 && cleaned.startsWith('91') && /^91[6-9]\d{9}$/.test(cleaned)) {
+        cleaned = '+' + cleaned;
+      }
+      // Handle 13-digit numbers with country codes like +880, +234
+      else if (cleaned.length === 13 && /^(880|234)\d{10}$/.test(cleaned)) {
         cleaned = '+' + cleaned;
       }
       // 8 digits might be Singapore
       else if (cleaned.length === 8 && /^[89]\d{7}$/.test(cleaned)) {
         cleaned = '+65' + cleaned;
       }
-      // If none of the above, assume it needs + prefix for international
+      // If none of the above patterns match, reject
       else if (cleaned.length >= 7 && cleaned.length <= 15) {
         // Don't assume country code for ambiguous lengths
         return null;
       }
     }
 
-    // Remove any duplicate + symbols
+    // Clean up any duplicate + symbols
     cleaned = cleaned.replace(/\++/g, '+');
     
     // Ensure it starts with + and has valid length
@@ -347,19 +390,97 @@ class TwilioService {
       return null;
     }
 
-    // Additional validation for known country patterns
-    const countryCode = cleaned.substring(1, cleaned.startsWith('+1') ? 2 : cleaned.startsWith('+91') ? 3 : cleaned.startsWith('+44') ? 3 : 4);
-    const subscriberNumber = cleaned.substring(countryCode.length + 1);
+    // Enhanced country-specific validation
+    let countryCode: string;
+    let subscriberNumber: string;
     
-    // Country-specific validation
+    // Determine country code more accurately
+    if (cleaned.startsWith('+1')) {
+      countryCode = '1';
+      subscriberNumber = cleaned.substring(2);
+    } else if (cleaned.startsWith('+91')) {
+      countryCode = '91';
+      subscriberNumber = cleaned.substring(3);
+    } else if (cleaned.startsWith('+44')) {
+      countryCode = '44';
+      subscriberNumber = cleaned.substring(3);
+    } else if (cleaned.startsWith('+65')) {
+      countryCode = '65';
+      subscriberNumber = cleaned.substring(3);
+    } else if (cleaned.startsWith('+880')) {
+      countryCode = '880';
+      subscriberNumber = cleaned.substring(4);
+    } else if (cleaned.startsWith('+234')) {
+      countryCode = '234';
+      subscriberNumber = cleaned.substring(4);
+    } else {
+      // Extract country code (1-4 digits)
+      const match = cleaned.match(/^\+(\d{1,4})(.+)$/);
+      if (!match) return null;
+      countryCode = match[1];
+      subscriberNumber = match[2];
+    }
+    
+    // Country-specific validation with enhanced Indian validation
     if (countryCode === '91') {
-      // India: mobile numbers should be 10 digits starting with 6-9
+      // India: mobile numbers should be 10 digits starting with 6,7,8,9
       if (subscriberNumber.length !== 10 || !/^[6-9]\d{9}$/.test(subscriberNumber)) {
         return null;
       }
+      // Additional validation for known Indian mobile network operators
+      const firstThreeDigits = subscriberNumber.substring(0, 3);
+      const validPrefixes = [
+        // Airtel
+        '601', '602', '603', '604', '605', '606', '607', '608', '609',
+        '630', '631', '632', '633', '634', '635', '636', '637', '638', '639',
+        '700', '701', '702', '703', '704', '705', '706', '707', '708', '709',
+        '730', '731', '732', '733', '734', '735', '736', '737', '738', '739',
+        '800', '801', '802', '803', '804', '805', '806', '807', '808', '809',
+        '810', '811', '812', '813', '814', '815', '816', '817', '818', '819',
+        '820', '821', '822', '823', '824', '825', '826', '827', '828', '829',
+        '840', '841', '842', '843', '844', '845', '846', '847', '848', '849',
+        '860', '861', '862', '863', '864', '865', '866', '867', '868', '869',
+        '880', '881', '882', '883', '884', '885', '886', '887', '888', '889',
+        // Jio
+        '600', '610', '611', '612', '613', '614', '615', '616', '617', '618', '619',
+        '620', '621', '622', '623', '624', '625', '626', '627', '628', '629',
+        '630', '631', '632', '633', '634', '635', '636', '637', '638', '639',
+        '760', '761', '762', '763', '764', '765', '766', '767', '768', '769',
+        '870', '871', '872', '873', '874', '875', '876', '877', '878', '879',
+        '890', '891', '892', '893', '894', '895', '896', '897', '898', '899',
+        // Vi (Vodafone Idea)
+        '700', '701', '702', '703', '704', '705', '706', '707', '708', '709',
+        '740', '741', '742', '743', '744', '745', '746', '747', '748', '749',
+        '750', '751', '752', '753', '754', '755', '756', '757', '758', '759',
+        '800', '801', '802', '803', '804', '805', '806', '807', '808', '809',
+        '840', '841', '842', '843', '844', '845', '846', '847', '848', '849',
+        '850', '851', '852', '853', '854', '855', '856', '857', '858', '859',
+        '900', '901', '902', '903', '904', '905', '906', '907', '908', '909',
+        '910', '911', '912', '913', '914', '915', '916', '917', '918', '919',
+        '920', '921', '922', '923', '924', '925', '926', '927', '928', '929',
+        '930', '931', '932', '933', '934', '935', '936', '937', '938', '939',
+        '940', '941', '942', '943', '944', '945', '946', '947', '948', '949',
+        '950', '951', '952', '953', '954', '955', '956', '957', '958', '959',
+        '960', '961', '962', '963', '964', '965', '966', '967', '968', '969',
+        '970', '971', '972', '973', '974', '975', '976', '977', '978', '979',
+        '980', '981', '982', '983', '984', '985', '986', '987', '988', '989',
+        '990', '991', '992', '993', '994', '995', '996', '997', '998', '999'
+      ];
+      // For now, just validate that it starts with 6-9 (basic validation)
+      // We can make the prefix validation more strict if needed
     } else if (countryCode === '1') {
       // US/Canada: should be 10 digits starting with 2-9
       if (subscriberNumber.length !== 10 || !/^[2-9]\d{9}$/.test(subscriberNumber)) {
+        return null;
+      }
+    } else if (countryCode === '44') {
+      // UK: mobile numbers start with 7 and are 10 digits
+      if (subscriberNumber.length !== 10 || !subscriberNumber.startsWith('7')) {
+        return null;
+      }
+    } else if (countryCode === '65') {
+      // Singapore: 8 digits starting with 8 or 9
+      if (subscriberNumber.length !== 8 || !/^[89]\d{7}$/.test(subscriberNumber)) {
         return null;
       }
     }
@@ -670,6 +791,240 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
    */
   isValidPhoneNumber(phone: string): boolean {
     return this.formatPhoneNumber(phone) !== null;
+  }
+
+  /**
+   * Test SMS sending functionality (development/testing)
+   */
+  async testSMSFunctionality(testPhone?: string): Promise<{
+    success: boolean;
+    message: string;
+    results: any[];
+  }> {
+    const results = [];
+    
+    try {
+      // Test 1: Phone number formatting
+      const testNumbers = [
+        '9876543210',
+        '98765 43210', 
+        '+91 9876543210',
+        '91 9876543210',
+        '919876543210',
+        '+919876543210'
+      ];
+      
+      console.log('📱 Testing phone number formatting...');
+      for (const testNumber of testNumbers) {
+        const formatted = this.formatPhoneNumber(testNumber);
+        results.push({
+          test: 'Phone Formatting',
+          input: testNumber,
+          output: formatted,
+          success: formatted === '+919876543210'
+        });
+      }
+      
+      // Test 2: Validation logic
+      console.log('📱 Testing validation logic...');
+      const validNumbers = ['+919876543210', '+919123456789', '+917890123456'];
+      const invalidNumbers = ['+915876543210', '+91123456789', '+91987654321'];
+      
+      for (const number of validNumbers) {
+        const isValid = this.isValidPhoneNumber(number);
+        results.push({
+          test: 'Valid Number Check',
+          input: number,
+          success: isValid,
+          expected: true
+        });
+      }
+      
+      for (const number of invalidNumbers) {
+        const isValid = this.isValidPhoneNumber(number);
+        results.push({
+          test: 'Invalid Number Check', 
+          input: number,
+          success: !isValid,
+          expected: false
+        });
+      }
+      
+      // Test 3: Connection test (if not in stub mode)
+      if (!this.isStubMode && this.client) {
+        console.log('📱 Testing Twilio connection...');
+        try {
+          const account = await this.client.api.accounts(this.config.accountSid).fetch();
+          results.push({
+            test: 'Twilio Connection',
+            success: true,
+            message: `Connected to account: ${account.friendlyName}`
+          });
+        } catch (error: any) {
+          results.push({
+            test: 'Twilio Connection',
+            success: false,
+            error: error.message
+          });
+        }
+      }
+      
+      // Test 4: SMS sending (if test phone provided and not in production)
+      if (testPhone && !this.isProduction && !this.isStubMode) {
+        console.log(`📱 Testing SMS to ${testPhone}...`);
+        const testOtp = this.generateOTP();
+        const smsResult = await this.sendSMS(testPhone, testOtp);
+        results.push({
+          test: 'SMS Sending',
+          phone: this.maskPhoneNumber(testPhone),
+          success: smsResult.success,
+          message: smsResult.message
+        });
+      }
+      
+      const successCount = results.filter(r => r.success).length;
+      const totalTests = results.length;
+      
+      return {
+        success: successCount === totalTests,
+        message: `Twilio integration test completed: ${successCount}/${totalTests} tests passed`,
+        results
+      };
+      
+    } catch (error) {
+      console.error('Error testing Twilio functionality:', error);
+      return {
+        success: false,
+        message: 'Test failed with error: ' + (error as Error).message,
+        results
+      };
+    }
+  }
+
+  /**
+   * Get comprehensive service health status
+   */
+  async getHealthStatus(): Promise<{
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    mode: 'production' | 'development' | 'stub';
+    checks: any[];
+    environment: string;
+    lastChecked: Date;
+  }> {
+    const checks = [];
+    let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+    
+    try {
+      // Check 1: Configuration
+      const configCheck = {
+        name: 'Configuration',
+        status: this.hasValidCredentials ? 'pass' : 'fail',
+        details: {
+          hasAccountSid: !!this.config.accountSid,
+          hasAuthToken: !!this.config.authToken,
+          hasFromNumber: !!this.config.fromNumber,
+          isStubMode: this.isStubMode
+        }
+      };
+      checks.push(configCheck);
+      
+      // Check 2: Twilio API Connection (if not stub mode)
+      if (!this.isStubMode && this.client) {
+        try {
+          await this.client.api.accounts(this.config.accountSid).fetch();
+          checks.push({
+            name: 'Twilio API Connection',
+            status: 'pass',
+            details: { connected: true }
+          });
+        } catch (error: any) {
+          checks.push({
+            name: 'Twilio API Connection',
+            status: 'fail',
+            details: { error: error.message }
+          });
+          overallStatus = 'unhealthy';
+        }
+      } else {
+        checks.push({
+          name: 'Twilio API Connection',
+          status: 'skip',
+          details: { reason: 'Running in stub mode' }
+        });
+        if (this.isProduction) {
+          overallStatus = 'unhealthy';
+        }
+      }
+      
+      // Check 3: Database connectivity (for OTP storage)
+      try {
+        await storage.getOtpStatistics(1); // Test database connection
+        checks.push({
+          name: 'Database Connection',
+          status: 'pass',
+          details: { connected: true }
+        });
+      } catch (error: any) {
+        checks.push({
+          name: 'Database Connection',
+          status: 'fail',
+          details: { error: error.message }
+        });
+        overallStatus = 'unhealthy';
+      }
+      
+      // Check 4: Rate limiting system
+      try {
+        const testPhone = '+919876543210';
+        const rateLimit = await this.checkRateLimit(testPhone);
+        checks.push({
+          name: 'Rate Limiting System',
+          status: 'pass',
+          details: { 
+            allowed: rateLimit.allowed,
+            currentResends: rateLimit.currentResends
+          }
+        });
+      } catch (error: any) {
+        checks.push({
+          name: 'Rate Limiting System',
+          status: 'fail',
+          details: { error: error.message }
+        });
+        overallStatus = 'degraded';
+      }
+      
+      // Determine overall status
+      const failedChecks = checks.filter(c => c.status === 'fail').length;
+      if (failedChecks === 0) {
+        overallStatus = 'healthy';
+      } else if (failedChecks <= 1) {
+        overallStatus = 'degraded';
+      } else {
+        overallStatus = 'unhealthy';
+      }
+      
+      return {
+        status: overallStatus,
+        mode: this.isStubMode ? 'stub' : (this.isProduction ? 'production' : 'development'),
+        checks,
+        environment: this.config.environment,
+        lastChecked: new Date()
+      };
+      
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        mode: 'unknown',
+        checks: [{
+          name: 'Health Check',
+          status: 'fail',
+          details: { error: (error as Error).message }
+        }],
+        environment: this.config.environment,
+        lastChecked: new Date()
+      };
+    }
   }
 }
 

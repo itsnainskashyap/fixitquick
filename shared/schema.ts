@@ -98,12 +98,17 @@ export const serviceCategories = pgTable("service_categories", {
   description: text("description"),
   level: integer("level").default(0), // 0=category, 1=sub-category, 2=service-type
   sortOrder: integer("sort_order").default(0),
+  categoryPath: text("category_path"), // Full hierarchy path (e.g., "/technology/mobile-repair/iphone-repair")
+  depth: integer("depth").default(0), // Alternative to level for nesting depth
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
 }, (table) => ({
   parentIdx: index("sc_parent_idx").on(table.parentId),
   levelIdx: index("sc_level_idx").on(table.level),
   slugIdx: index("sc_slug_idx").on(table.slug),
+  pathIdx: index("sc_path_idx").on(table.categoryPath),
+  depthIdx: index("sc_depth_idx").on(table.depth),
 }));
 
 // Parts provider business information

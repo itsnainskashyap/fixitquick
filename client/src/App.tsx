@@ -42,13 +42,14 @@ import Subcategories from "@/pages/Subcategories";
 import NotFound from "@/pages/not-found";
 import ProviderRegistration from "@/pages/ProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
-import ProviderDashboard from "@/pages/ProviderDashboard";
+import ServiceProviderDashboard from "@/pages/ProviderDashboard";
+import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
 
 // Dashboard routing based on user role
 const getDashboardRoute = (role: string) => {
   switch(role) {
-    case 'service_provider': return '/provider';
-    case 'parts_provider': return '/parts-provider';  
+    case 'service_provider': return '/service-provider-dashboard';
+    case 'parts_provider': return '/parts-provider-dashboard';  
     case 'admin': return '/admin';
     default: return '/orders'; // Regular user
   }
@@ -64,9 +65,9 @@ function SmartHome() {
       // Only redirect specific role users to their dashboards
       // Regular users (role: 'user' or undefined) stay on home page
       if (user.role === 'service_provider') {
-        setLocation('/provider');
+        setLocation('/service-provider-dashboard');
       } else if (user.role === 'parts_provider') {
-        setLocation('/parts-provider');
+        setLocation('/parts-provider-dashboard');
       } else if (user.role === 'admin') {
         setLocation('/admin');
       }
@@ -174,21 +175,21 @@ function Router() {
       {/* Service Provider Routes */}
       <Route 
         path="/provider" 
-        component={() => <ProtectedRoute component={ServiceProvider} allowedRoles={['service_provider']} />} 
+        component={() => <ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} />} 
       />
       <Route 
-        path="/provider/dashboard" 
-        component={() => <ProtectedRoute component={ProviderDashboard} allowedRoles={['service_provider']} />} 
+        path="/service-provider-dashboard" 
+        component={() => <ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} />} 
       />
       
       {/* Parts Provider Routes */}
       <Route 
         path="/parts-provider" 
-        component={() => <ProtectedRoute component={PartsProvider} allowedRoles={['parts_provider']} />} 
+        component={() => <ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} />} 
       />
       <Route 
-        path="/parts-provider/dashboard" 
-        component={() => <ProtectedRoute component={PartsProvider} allowedRoles={['parts_provider']} />} 
+        path="/parts-provider-dashboard" 
+        component={() => <ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} />} 
       />
       
       {/* Admin Routes */}
