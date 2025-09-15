@@ -8,11 +8,12 @@ import { BottomNavigation } from '@/components/BottomNavigation';
 import { PWAInstallPrompt } from '@/components/PWAInstallPrompt';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
+import { useHorizontalScroll } from '@/hooks/useHorizontalScroll';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
-import { Sparkles, TrendingUp, Clock, Star } from 'lucide-react';
+import { Sparkles, TrendingUp, Clock, Star, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ServiceCategory {
   id: string;
@@ -49,6 +50,20 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
+  
+  // Horizontal scrolling for service categories
+  const {
+    scrollContainerRef,
+    scrollLeft,
+    scrollRight,
+    showLeftIndicator,
+    showRightIndicator,
+  } = useHorizontalScroll({
+    itemWidth: 150,
+    scrollAmount: 300,
+    enableKeyboard: true,
+    enableTouch: true,
+  });
 
   // Fetch main categories (level 0) from backend for home page
   const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
@@ -198,24 +213,79 @@ export default function Home() {
           </div>
           
           {serviceCategories.length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-              {serviceCategories.map((category, index) => (
-                <motion.div
-                  key={category.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: index * 0.1 }}
-                  onClick={() => handleCategoryClick(category.id)}
-                  className="service-card"
-                  data-testid={`category-${category.id}`}
+            <div className="horizontal-scroll-container relative">
+              {/* Navigation buttons */}
+              {showLeftIndicator && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={scrollLeft}
+                  className="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-background/80 backdrop-blur-sm hover:bg-background/90 shadow-md"
+                  data-testid="scroll-left-button"
                 >
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
-                    <span className="text-2xl">{category.icon || '🔧'}</span>
-                  </div>
-                  <h3 className="font-medium text-sm text-foreground">{category.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-1">{category.description || 'Professional service'}</p>
-                </motion.div>
-              ))}
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+              )}
+              
+              {showRightIndicator && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={scrollRight}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-background/80 backdrop-blur-sm hover:bg-background/90 shadow-md"
+                  data-testid="scroll-right-button"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              )}
+              
+              <div 
+                ref={scrollContainerRef}
+                className="horizontal-service-cards"
+                role="region"
+                aria-label="Service categories"
+                tabIndex={0}
+              >
+                {serviceCategories.map((category, index) => (
+                  <motion.div
+                    key={category.id}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: index * 0.05 }}
+                    onClick={() => handleCategoryClick(category.id)}
+                    className="service-card-horizontal"
+                    data-testid={`category-${category.id}`}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleCategoryClick(category.id);
+                      }
+                    }}
+                  >
+                    <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
+                      <span className="text-2xl" role="img" aria-label={category.name}>{category.icon || '🔧'}</span>
+                    </div>
+                    <h3 className="font-medium text-sm text-foreground text-center leading-tight">{category.name}</h3>
+                    <p className="text-xs text-muted-foreground mt-1 text-center line-clamp-2 leading-tight">
+                      {category.description || 'Professional service'}
+                    </p>
+                  </motion.div>
+                ))}
+              </div>
+              
+              {/* Edge fade indicators */}
+              <div 
+                className={`scroll-indicator-left transition-opacity duration-300 ${
+                  showLeftIndicator ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              <div 
+                className={`scroll-indicator-right transition-opacity duration-300 ${
+                  showRightIndicator ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
             </div>
           ) : (
             <div className="text-center py-12" data-testid="empty-services-state">
