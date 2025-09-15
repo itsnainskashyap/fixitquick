@@ -61,6 +61,10 @@ import {
   type InsertSupportCallbackRequest,
   type SupportAgent,
   type InsertSupportAgent,
+  type ServiceBooking,
+  type InsertServiceBooking,
+  type ProviderJobRequest,
+  type InsertProviderJobRequest,
   serviceBookings,
   providerJobRequests,
   users,
@@ -296,6 +300,11 @@ export interface IStorage {
   getChatMessages(orderId: string): Promise<ChatMessage[]>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
   markMessagesAsRead(orderId: string, userId: string): Promise<void>;
+  
+  // Enhanced conversation methods
+  getChatMessagesByConversation(conversationId: string, userId: string): Promise<ChatMessage[]>;
+  getUserConversations(userId: string, limit?: number): Promise<any[]>;
+  updateChatMessage(messageId: string, data: Partial<ChatMessage>): Promise<ChatMessage | undefined>;
 
   // Notification methods
   getNotifications(userId: string, limit?: number): Promise<Notification[]>;
@@ -386,7 +395,7 @@ export interface IStorage {
 
   getSearchSuggestions(query: string, userId?: string): Promise<string[]>;
 
-  trackSearchQuery(userId: string | null, query: string, results: number, category?: string): Promise<void>;
+  trackSearchQuery(userId: string | null | undefined, query: string, results: number, category?: string): Promise<void>;
 
   getUserSearchHistory(userId: string, limit?: number): Promise<{
     query: string;
@@ -771,7 +780,7 @@ export class PostgresStorage implements IStorage {
   async createServiceCategory(category: InsertServiceCategory): Promise<ServiceCategory> {
     // Auto-generate slug if not provided
     if (!category.slug) {
-      category.slug = await this.generateCategorySlug(category.name, category.parentId);
+      category.slug = await this.generateCategorySlug(category.name, category.parentId || undefined);
     }
     
     // Set level based on parent
@@ -799,7 +808,7 @@ export class PostgresStorage implements IStorage {
     if (data.name && !data.slug) {
       const currentCategory = await this.getServiceCategory(id);
       if (currentCategory) {
-        data.slug = await this.generateCategorySlug(data.name, currentCategory.parentId);
+        data.slug = await this.generateCategorySlug(data.name, currentCategory.parentId || undefined);
       }
     }
     
@@ -896,8 +905,8 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async createService(service: InsertService): Promise<Service> {
-    const result = await db.insert(services).values([service]).returning();
+  async createService(service: Omit<Service, 'id' | 'createdAt'>): Promise<Service> {
+    const result = await db.insert(services).values(service).returning();
     return result[0];
   }
 
@@ -947,13 +956,29 @@ export class PostgresStorage implements IStorage {
   }
 
   async createOrder(order: InsertOrder): Promise<Order> {
-    const result = await db.insert(orders).values([order]).returning();
+    // Handle location field type properly
+    const orderData = {
+      ...order,
+      location: order.location ? {
+        ...order.location,
+        instructions: typeof order.location.instructions === 'string' ? order.location.instructions : undefined
+      } : order.location
+    };
+    const result = await db.insert(orders).values(orderData).returning();
     return result[0];
   }
 
   async updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined> {
+    // Handle location field type properly
+    const updateData = {
+      ...data,
+      location: data.location ? {
+        ...data.location,
+        instructions: typeof data.location.instructions === 'string' ? data.location.instructions : undefined
+      } : data.location
+    };
     const result = await db.update(orders)
-      .set(data)
+      .set(updateData)
       .where(eq(orders.id, id))
       .returning();
     return result[0];
@@ -1293,7 +1318,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPart(part: InsertPart): Promise<Part> {
-    const result = await db.insert(parts).values([part]).returning();
+    const result = await db.insert(parts).values(part).returning();
     return result[0];
   }
 
@@ -1477,7 +1502,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
-    const result = await db.insert(walletTransactions).values([transaction]).returning();
+    const result = await db.insert(walletTransactions).values(transaction).returning();
     return result[0];
   }
 
@@ -1538,7 +1563,7 @@ export class PostgresStorage implements IStorage {
           reference: idempotencyKey
         };
         
-        const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
+        const transactionResults = await trx.insert(walletTransactions).values(transactionData).returning();
         const transaction = transactionResults[0];
         
         // Step 3: Update wallet balance
@@ -1586,7 +1611,8 @@ export class PostgresStorage implements IStorage {
       
     } catch (error) {
       console.error('❌ Atomic wallet payment failed:', error);
-      errors.push(error.message || 'Payment processing failed');
+      const errorMessage = error instanceof Error ? error.message : 'Payment processing failed';
+      errors.push(errorMessage);
       return { success: false, errors };
     }
   }
@@ -1620,7 +1646,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider> {
-    const result = await db.insert(serviceProviders).values([provider]).returning();
+    const result = await db.insert(serviceProviders).values(provider).returning();
     return result[0];
   }
 
@@ -1902,7 +1928,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
-    const result = await db.insert(chatMessages).values([message]).returning();
+    const result = await db.insert(chatMessages).values(message).returning();
     return result[0];
   }
 
@@ -1910,6 +1936,59 @@ export class PostgresStorage implements IStorage {
     await db.update(chatMessages)
       .set({ isRead: true })
       .where(and(eq(chatMessages.orderId, orderId), eq(chatMessages.receiverId, userId)));
+  }
+  
+  // Enhanced conversation methods
+  async getChatMessagesByConversation(conversationId: string, userId: string): Promise<ChatMessage[]> {
+    return await db.select().from(chatMessages)
+      .where(and(
+        eq(chatMessages.conversationId, conversationId),
+        or(
+          eq(chatMessages.senderId, userId),
+          eq(chatMessages.receiverId, userId),
+          eq(chatMessages.senderId, 'ai_assistant')
+        )
+      ))
+      .orderBy(asc(chatMessages.createdAt));
+  }
+  
+  async getUserConversations(userId: string, limit = 10): Promise<any[]> {
+    const conversations = await db.select({
+      conversationId: chatMessages.conversationId,
+      content: chatMessages.content,
+      timestamp: chatMessages.createdAt,
+      messageType: chatMessages.messageType,
+      metadata: chatMessages.metadata,
+      messageCount: sql<number>`count(*) over (partition by ${chatMessages.conversationId})`
+    })
+    .from(chatMessages)
+    .where(or(
+      eq(chatMessages.senderId, userId),
+      eq(chatMessages.receiverId, userId)
+    ))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(limit * 10); // Get more messages to find latest per conversation
+    
+    // Group by conversation and get the latest message for each
+    const conversationMap = new Map();
+    conversations.forEach(msg => {
+      if (!conversationMap.has(msg.conversationId) || 
+          conversationMap.get(msg.conversationId).timestamp < msg.timestamp) {
+        conversationMap.set(msg.conversationId, msg);
+      }
+    });
+    
+    return Array.from(conversationMap.values())
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limit);
+  }
+  
+  async updateChatMessage(messageId: string, data: Partial<ChatMessage>): Promise<ChatMessage | undefined> {
+    const result = await db.update(chatMessages)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(chatMessages.id, messageId))
+      .returning();
+    return result[0];
   }
 
   // Notification methods
@@ -1921,7 +2000,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createNotification(notification: InsertNotification): Promise<Notification> {
-    const result = await db.insert(notifications).values([notification]).returning();
+    const result = await db.insert(notifications).values(notification).returning();
     return result[0];
   }
 
@@ -1952,7 +2031,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createReview(review: InsertReview): Promise<Review> {
-    const result = await db.insert(reviews).values([review]).returning();
+    const result = await db.insert(reviews).values(review).returning();
     return result[0];
   }
 
@@ -1970,7 +2049,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createCoupon(coupon: InsertCoupon): Promise<Coupon> {
-    const result = await db.insert(coupons).values([coupon]).returning();
+    const result = await db.insert(coupons).values(coupon).returning();
     return result[0];
   }
 
@@ -2507,7 +2586,7 @@ export class PostgresStorage implements IStorage {
     return [...new Set(suggestions)]; // Remove duplicates
   }
 
-  async trackSearchQuery(userId: string | null, query: string, results: number, category?: string): Promise<void> {
+  async trackSearchQuery(userId: string | null | undefined, query: string, results: number, category?: string): Promise<void> {
     // Store search tracking in app settings as JSON for analytics
     const key = `search_log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     await this.setSetting(key, {
@@ -2834,7 +2913,7 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async createPaymentMethod(paymentMethod: InsertPaymentMethod): Promise<PaymentMethod> {
-    const result = await db.insert(paymentMethods).values([paymentMethod]).returning();
+    const result = await db.insert(paymentMethods).values(paymentMethod).returning();
     return result[0];
   }
 
@@ -2881,7 +2960,7 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async createStripeCustomer(customer: InsertStripeCustomer): Promise<StripeCustomer> {
-    const result = await db.insert(stripeCustomers).values([customer]).returning();
+    const result = await db.insert(stripeCustomers).values(customer).returning();
     return result[0];
   }
 
@@ -2912,7 +2991,7 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async createPaymentIntent(paymentIntent: InsertPaymentIntent): Promise<PaymentIntent> {
-    const result = await db.insert(paymentIntents).values([paymentIntent]).returning();
+    const result = await db.insert(paymentIntents).values(paymentIntent).returning();
     return result[0];
   }
 
@@ -2993,7 +3072,7 @@ export class PostgresStorage implements IStorage {
         .where(eq(userAddresses.userId, address.userId));
     }
 
-    const result = await db.insert(userAddresses).values([address]).returning();
+    const result = await db.insert(userAddresses).values(address).returning();
     return result[0];
   }
 
@@ -3063,7 +3142,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createUserNotificationPreferences(preferences: InsertUserNotificationPreferences): Promise<UserNotificationPreferences> {
-    const result = await db.insert(userNotificationPreferences).values([preferences]).returning();
+    const result = await db.insert(userNotificationPreferences).values(preferences).returning();
     return result[0];
   }
 
@@ -3616,7 +3695,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo> {
-    const result = await db.insert(partsProviderBusinessInfo).values([businessInfo]).returning();
+    const result = await db.insert(partsProviderBusinessInfo).values(businessInfo).returning();
     return result[0];
   }
 
@@ -3685,7 +3764,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPartsInventoryMovement(movement: InsertPartsInventoryMovement): Promise<PartsInventoryMovement> {
-    const result = await db.insert(partsInventoryMovements).values([movement]).returning();
+    const result = await db.insert(partsInventoryMovements).values(movement).returning();
     return result[0];
   }
 
@@ -3881,7 +3960,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPartsBulkUpload(upload: InsertPartsBulkUpload): Promise<PartsBulkUpload> {
-    const result = await db.insert(partsBulkUploads).values([upload]).returning();
+    const result = await db.insert(partsBulkUploads).values(upload).returning();
     return result[0];
   }
 
@@ -3980,7 +4059,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPartsSupplier(supplier: InsertPartsSupplier): Promise<PartsSupplier> {
-    const result = await db.insert(partsSuppliers).values([supplier]).returning();
+    const result = await db.insert(partsSuppliers).values(supplier).returning();
     return result[0];
   }
 

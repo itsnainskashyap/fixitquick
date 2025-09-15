@@ -4,6 +4,61 @@ console.log('🤖 AI Service: Initialized with OpenRouter');
 import { storage } from '../storage';
 import { openRouterService } from './openrouter';
 
+// Enhanced conversation interfaces
+interface ConversationMessage {
+  id: string;
+  type: 'user' | 'ai' | 'system' | 'booking_suggestion';
+  content: string;
+  timestamp: Date;
+  metadata?: {
+    services?: ServiceSuggestion[];
+    extractedInfo?: Record<string, any>;
+    bookingData?: any;
+    confidence?: number;
+  };
+}
+
+interface ConversationContext {
+  userId?: string;
+  conversationId?: string;
+  problemCategory?: string;
+  extractedInfo: {
+    location?: { latitude: number; longitude: number; address?: string };
+    urgency?: 'low' | 'medium' | 'high';
+    budget?: { min?: number; max?: number };
+    timeframe?: string;
+    specificRequirements?: string[];
+    problemDescription?: string;
+    affectedArea?: string;
+    whenDidItStart?: string;
+    previousAttempts?: string;
+  };
+  conversationStage: 'initial' | 'diagnosis' | 'clarification' | 'service_suggestion' | 'booking_ready';
+  nextQuestions?: string[];
+  recommendedServices?: ServiceSuggestion[];
+}
+
+interface ConversationFlow {
+  currentStage: string;
+  extractedInfo: Record<string, any>;
+  missingInfo: string[];
+  nextAction: 'ask_question' | 'suggest_services' | 'create_booking';
+  confidence: number;
+}
+
+interface BookingPreparation {
+  serviceId: string;
+  prefilledData: {
+    description: string;
+    urgency: 'low' | 'medium' | 'high';
+    preferredTime?: string;
+    budget?: number;
+    location?: any;
+    additionalNotes: string;
+  };
+  conversationSummary: string;
+}
+
 interface AISearchFilters {
   category?: string;
   priceRange?: { min: number; max: number };
@@ -332,6 +387,284 @@ class ServerAIService {
           cleanQuery: parsed.cleanQuery
         }
       };
+    }
+  }
+
+  // Enhanced conversation management with sophisticated problem-solving flows
+  async generateConversationResponse(
+    message: string, 
+    context: ConversationContext
+  ): Promise<{
+    response: string;
+    suggestedServices?: ServiceSuggestion[];
+    extractedInfo: Record<string, any>;
+    nextStage: string;
+    quickReplies?: string[];
+    bookingReady?: boolean;
+    bookingData?: BookingPreparation;
+  }> {
+    console.log('🤖 Enhanced AI: Generating conversation response for:', message, 'Stage:', context.conversationStage);
+    
+    try {
+      // Analyze the conversation flow
+      const flow = await this.analyzeConversationFlow(message, context);
+      
+      let response = '';
+      let suggestedServices: ServiceSuggestion[] = [];
+      let quickReplies: string[] = [];
+      let bookingData: BookingPreparation | undefined;
+      
+      switch (flow.nextAction) {
+        case 'ask_question':
+          response = await this.generateDiagnosticQuestions(message, context, flow);
+          quickReplies = await this.generateQuickReplies(context, flow);
+          break;
+          
+        case 'suggest_services':
+          const serviceResult = await this.generateServiceSuggestions(message, context, flow);
+          response = serviceResult.response;
+          suggestedServices = serviceResult.services;
+          quickReplies = ['Book a service', 'Need more info', 'Different problem'];
+          break;
+          
+        case 'create_booking':
+          const bookingResult = await this.prepareBookingData(context, flow);
+          response = bookingResult.response;
+          bookingData = bookingResult.bookingData;
+          break;
+      }
+      
+      return {
+        response,
+        suggestedServices,
+        extractedInfo: flow.extractedInfo,
+        nextStage: this.determineNextStage(flow),
+        quickReplies,
+        bookingReady: flow.nextAction === 'create_booking',
+        bookingData
+      };
+      
+    } catch (error) {
+      console.error('❌ Error in enhanced conversation response:', error);
+      return this.generateFallbackResponse(message, context);
+    }
+  }
+  
+  // Analyze conversation flow and determine next action
+  private async analyzeConversationFlow(
+    message: string, 
+    context: ConversationContext
+  ): Promise<ConversationFlow> {
+    const prompt = `You are analyzing a conversation about home service needs. 
+    Current stage: ${context.conversationStage}
+    User message: "${message}"
+    Extracted info so far: ${JSON.stringify(context.extractedInfo)}
+    
+    Determine:
+    1. What new information can be extracted from this message?
+    2. What critical information is still missing for service recommendation?
+    3. What should be the next action: ask_question, suggest_services, or create_booking?
+    4. Rate confidence level (0-1) in current understanding.
+    
+    Return JSON: {
+      "extractedInfo": {},
+      "missingInfo": [],
+      "nextAction": "ask_question|suggest_services|create_booking",
+      "confidence": 0.8
+    }`;
+    
+    try {
+      const result = await openRouterService.generateChatResponse(message, prompt);
+      return JSON.parse(result);
+    } catch (error) {
+      console.error('Error analyzing conversation flow:', error);
+      return this.fallbackFlowAnalysis(message, context);
+    }
+  }
+  
+  // Generate diagnostic questions based on the conversation stage
+  private async generateDiagnosticQuestions(
+    message: string, 
+    context: ConversationContext, 
+    flow: ConversationFlow
+  ): Promise<string> {
+    const prompt = `You are a helpful AI assistant helping diagnose a home service problem.
+    Problem category: ${context.problemCategory || 'unknown'}
+    Current understanding: ${JSON.stringify(flow.extractedInfo)}
+    Missing info: ${flow.missingInfo.join(', ')}
+    User just said: "${message}"
+    
+    Generate a helpful, empathetic response that:
+    1. Acknowledges what they've shared
+    2. Asks 1-2 specific questions to understand the problem better
+    3. Keeps tone friendly and supportive
+    4. Under 80 words for good UX
+    
+    Focus on the most important missing information first.`;
+    
+    try {
+      return await openRouterService.generateChatResponse(message, prompt);
+    } catch (error) {
+      return this.generateFallbackDiagnosticQuestion(context, flow);
+    }
+  }
+  
+  // Generate service suggestions with explanations
+  private async generateServiceSuggestions(
+    message: string,
+    context: ConversationContext,
+    flow: ConversationFlow
+  ): Promise<{ response: string; services: ServiceSuggestion[] }> {
+    // Search for relevant services
+    const searchFilters = {
+      query: context.extractedInfo.problemDescription || message,
+      categories: context.problemCategory ? [context.problemCategory] : undefined,
+      priceRange: context.extractedInfo.budget,
+      location: context.extractedInfo.location,
+      urgency: context.extractedInfo.urgency || 'medium',
+      limit: 3
+    };
+    
+    const services = await this.searchServices(searchFilters.query, searchFilters);
+    
+    const prompt = `Based on the conversation, suggest 1-3 most relevant services.
+    Problem: ${context.extractedInfo.problemDescription || message}
+    Budget: ${context.extractedInfo.budget ? `₹${context.extractedInfo.budget.min}-${context.extractedInfo.budget.max}` : 'Not specified'}
+    Urgency: ${context.extractedInfo.urgency || 'medium'}
+    
+    Write a helpful response that:
+    1. Summarizes the problem understanding
+    2. Explains why these services are recommended
+    3. Encourages booking or asking questions
+    4. Keep under 100 words`;
+    
+    try {
+      const response = await openRouterService.generateChatResponse(message, prompt);
+      return { response, services };
+    } catch (error) {
+      return {
+        response: "Based on your description, here are some services that could help solve your problem:",
+        services
+      };
+    }
+  }
+  
+  // Prepare booking data from conversation context
+  private async prepareBookingData(
+    context: ConversationContext,
+    flow: ConversationFlow
+  ): Promise<{ response: string; bookingData: BookingPreparation }> {
+    const service = context.recommendedServices?.[0];
+    if (!service) {
+      throw new Error('No service selected for booking');
+    }
+    
+    const conversationSummary = `User needs: ${context.extractedInfo.problemDescription}. 
+    Location: ${context.extractedInfo.location?.address || 'To be confirmed'}. 
+    Urgency: ${context.extractedInfo.urgency}. 
+    Budget: ${context.extractedInfo.budget ? `₹${context.extractedInfo.budget.min}-${context.extractedInfo.budget.max}` : 'Flexible'}.`;
+    
+    const bookingData: BookingPreparation = {
+      serviceId: service.id,
+      prefilledData: {
+        description: context.extractedInfo.problemDescription || 'Issue described in chat',
+        urgency: context.extractedInfo.urgency || 'medium',
+        preferredTime: context.extractedInfo.timeframe,
+        budget: context.extractedInfo.budget?.max,
+        location: context.extractedInfo.location,
+        additionalNotes: `Conversation context: ${conversationSummary}`
+      },
+      conversationSummary
+    };
+    
+    const response = `Perfect! I have all the details needed to book ${service.name}. 
+    I'll pre-fill the booking form with our conversation details. You can review and confirm the booking.`;
+    
+    return { response, bookingData };
+  }
+  
+  // Generate quick reply suggestions
+  private async generateQuickReplies(
+    context: ConversationContext,
+    flow: ConversationFlow
+  ): Promise<string[]> {
+    const stage = context.conversationStage;
+    const category = context.problemCategory;
+    
+    switch (stage) {
+      case 'initial':
+        return ['It\'s urgent', 'Can wait a few days', 'Need cost estimate'];
+      case 'diagnosis':
+        if (category === 'electrician') {
+          return ['Power is completely out', 'Just one outlet/switch', 'Lights flickering'];
+        } else if (category === 'plumber') {
+          return ['Water is leaking', 'Completely blocked', 'No hot water'];
+        }
+        return ['Yes, exactly', 'Not quite right', 'Let me explain more'];
+      case 'clarification':
+        return ['That sounds right', 'I need something different', 'What are the options?'];
+      default:
+        return ['Yes', 'No', 'Tell me more'];
+    }
+  }
+  
+  // Determine next conversation stage
+  private determineNextStage(flow: ConversationFlow): string {
+    if (flow.confidence > 0.8 && flow.missingInfo.length === 0) {
+      return 'booking_ready';
+    } else if (flow.confidence > 0.6 && flow.missingInfo.length <= 2) {
+      return 'service_suggestion';
+    } else if (flow.confidence > 0.4) {
+      return 'clarification';
+    } else {
+      return 'diagnosis';
+    }
+  }
+  
+  // Fallback methods for error handling
+  private generateFallbackResponse(
+    message: string, 
+    context: ConversationContext
+  ): {
+    response: string;
+    suggestedServices?: ServiceSuggestion[];
+    extractedInfo: Record<string, any>;
+    nextStage: string;
+    quickReplies?: string[];
+    bookingReady?: boolean;
+  } {
+    return {
+      response: "I understand you need help with something. Could you describe the problem you're having? For example, is it related to electrical work, plumbing, cleaning, or something else?",
+      extractedInfo: context.extractedInfo,
+      nextStage: 'diagnosis',
+      quickReplies: ['Electrical problem', 'Plumbing issue', 'Cleaning needed', 'Something else']
+    };
+  }
+  
+  private fallbackFlowAnalysis(message: string, context: ConversationContext): ConversationFlow {
+    const intent = this.parseSearchIntent(message);
+    
+    return {
+      currentStage: context.conversationStage,
+      extractedInfo: {
+        ...context.extractedInfo,
+        detectedKeywords: intent.keywords,
+        detectedCategories: intent.categories,
+        urgency: intent.urgency
+      },
+      missingInfo: ['location', 'specific_problem', 'timeframe'],
+      nextAction: 'ask_question',
+      confidence: 0.5
+    };
+  }
+  
+  private generateFallbackDiagnosticQuestion(context: ConversationContext, flow: ConversationFlow): string {
+    if (!context.extractedInfo.location) {
+      return "I'd like to help! First, could you tell me what area or city you're located in?";
+    } else if (!context.extractedInfo.problemDescription) {
+      return "Could you describe the specific problem you're experiencing? The more details you provide, the better I can help.";
+    } else {
+      return "Is this something that needs immediate attention, or can it wait a few days?";
     }
   }
 

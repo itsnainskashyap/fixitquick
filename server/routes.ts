@@ -148,6 +148,19 @@ const searchSchema = z.object({
   }).optional(),
 });
 
+// Enhanced conversation schema
+const conversationMessageSchema = z.object({
+  message: z.string().min(1, 'Message is required'),
+  conversationId: z.string().optional(),
+  conversationContext: z.object({
+    extractedInfo: z.record(z.any()).optional(),
+    conversationStage: z.enum(['initial', 'diagnosis', 'clarification', 'service_suggestion', 'booking_ready']).optional(),
+    problemCategory: z.string().optional(),
+    nextQuestions: z.array(z.string()).optional(),
+    recommendedServices: z.array(z.any()).optional(),
+  }).optional(),
+});
+
 const walletTopupSchema = z.object({
   amount: z.number().min(1, 'Amount must be greater than 0').max(50000, 'Amount cannot exceed ₹50,000'),
 });
@@ -2005,6 +2018,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enhanced search suggestions with contextual AI (replaces the simpler version)
+  // Validate conversation messages
+  const validateConversationMessage = validateBody(conversationMessageSchema);
+  
   app.post('/api/v1/ai/enhanced-search-suggestions', validateBody(searchSuggestionsSchema), async (req, res) => {
     try {
       const { query, limit = 5, userContext } = req.body;
@@ -2029,10 +2045,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI Chat endpoint for conversational assistance
+  // Enhanced AI Chat endpoint with sophisticated conversation flows
   app.post('/api/v1/ai/chat', optionalAuth, async (req: AuthenticatedRequest, res) => {
+    // Always ensure JSON response
+    res.type('application/json');
+    
     try {
-      const { message, context } = req.body;
+      const { message, conversationContext, conversationId, context } = req.body;
 
       if (!message || typeof message !== 'string' || message.trim().length === 0) {
         return res.status(400).json({
@@ -2041,96 +2060,208 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Handle backward compatibility: accept both 'conversationContext' and 'context'
+      const effectiveContext = conversationContext || context || {};
+
       const userId = req.user?.id;
-      console.log(`💬 AI Chat request from user ${userId || 'anonymous'}: "${message.substring(0, 50)}..."`);
+      console.log(`💬 Enhanced AI Chat from user ${userId || 'anonymous'}: "${message.substring(0, 50)}..."`);
+      console.log(`💬 Conversation context:`, conversationContext);
 
-      // Build context for AI
-      let systemContext = `You are a helpful AI assistant for FixitQuick, a home service marketplace. 
-      Help users find the right services like electricians, plumbers, cleaners, carpenters, pest control, etc.
-      Be friendly, concise, and practical. Focus on understanding their problem and suggesting 1-3 relevant search queries.
-      
-      When responding:
-      1. Acknowledge their problem empathetically 
-      2. Ask clarifying questions if needed
-      3. Suggest specific search terms they can use
-      4. Keep responses under 100 words for better UX`;
+      // Build sophisticated conversation context with backward compatibility
+      const enhancedContext = {
+        userId,
+        conversationId: conversationId || `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        extractedInfo: effectiveContext?.extractedInfo || effectiveContext?.conversationHistory || {},
+        conversationStage: effectiveContext?.conversationStage || 'initial',
+        problemCategory: effectiveContext?.problemCategory,
+        nextQuestions: effectiveContext?.nextQuestions || [],
+        recommendedServices: effectiveContext?.recommendedServices || []
+      };
 
-      if (context?.userId) {
-        systemContext += `\n\nUser ID: ${context.userId}`;
-      }
-
-      if (context?.conversationHistory && context.conversationHistory.length > 0) {
-        const recentHistory = context.conversationHistory.slice(-3)
-          .map((msg: any) => `${msg.type}: ${msg.content}`)
-          .join('\n');
-        systemContext += `\n\nRecent conversation:\n${recentHistory}`;
-      }
-
-      // Generate AI response using OpenRouter
-      const aiResponse = await openRouterService.generateChatResponse(
+      // Use the enhanced conversation method
+      const conversationResult = await aiService.generateConversationResponse(
         message.trim(),
-        systemContext
+        enhancedContext
       );
 
-      // Extract potential search suggestions from the AI response
-      const suggestedSearches: string[] = [];
-      
-      // Simple extraction of quoted terms or service names from AI response
-      const searchPatterns = [
-        /["']([^"']{3,30})["']/g,  // Text in quotes
-        /\b(electrician|plumber|cleaner|carpenter|pest control|ac repair|appliance repair|drain cleaning|electrical work|plumbing repair)\b/gi,  // Service keywords
-        /\b(fix|repair|install|clean|maintenance)\s+[\w\s]{2,20}/gi  // Action + object patterns
-      ];
-
-      for (const pattern of searchPatterns) {
-        let match;
-        while ((match = pattern.exec(aiResponse)) !== null && suggestedSearches.length < 3) {
-          const suggestion = match[1] || match[0];
-          if (suggestion && suggestion.length >= 3 && suggestion.length <= 50) {
-            const cleanSuggestion = suggestion.trim().toLowerCase();
-            if (!suggestedSearches.some(s => s.toLowerCase().includes(cleanSuggestion) || cleanSuggestion.includes(s.toLowerCase()))) {
-              suggestedSearches.push(suggestion.trim());
+      // Save conversation to database if user is authenticated
+      let savedMessage = null;
+      if (userId && conversationId) {
+        try {
+          savedMessage = await storage.createChatMessage({
+            conversationId,
+            senderId: userId,
+            content: message.trim(),
+            messageType: 'user',
+            timestamp: new Date()
+          });
+          
+          // Save AI response
+          await storage.createChatMessage({
+            conversationId,
+            senderId: 'ai_assistant',
+            content: conversationResult.response,
+            messageType: 'ai',
+            timestamp: new Date(),
+            metadata: {
+              suggestedServices: conversationResult.suggestedServices,
+              extractedInfo: conversationResult.extractedInfo,
+              nextStage: conversationResult.nextStage,
+              quickReplies: conversationResult.quickReplies
             }
-          }
+          });
+        } catch (dbError) {
+          console.warn('Failed to save conversation to database:', dbError);
         }
       }
 
-      // If no good suggestions found, create some based on the message
-      if (suggestedSearches.length === 0) {
-        const userMessage = message.toLowerCase();
-        if (userMessage.includes('electric') || userMessage.includes('power') || userMessage.includes('light')) {
-          suggestedSearches.push('electrician');
-        } else if (userMessage.includes('water') || userMessage.includes('pipe') || userMessage.includes('leak')) {
-          suggestedSearches.push('plumber');
-        } else if (userMessage.includes('clean') || userMessage.includes('dirty')) {
-          suggestedSearches.push('cleaning service');
-        } else if (userMessage.includes('pest') || userMessage.includes('bug') || userMessage.includes('rat')) {
-          suggestedSearches.push('pest control');
-        } else {
-          suggestedSearches.push('home repair');
-        }
-      }
-
-      res.json({
+      // Prepare response with backward compatibility
+      const responseData = {
+        // New format
         success: true,
-        response: aiResponse,
-        suggestedSearches: suggestedSearches.slice(0, 3),
-        timestamp: new Date().toISOString()
-      });
+        conversationId: enhancedContext.conversationId,
+        response: conversationResult.response,
+        suggestedServices: conversationResult.suggestedServices || [],
+        extractedInfo: conversationResult.extractedInfo,
+        conversationStage: conversationResult.nextStage,
+        quickReplies: conversationResult.quickReplies || [],
+        bookingReady: conversationResult.bookingReady || false,
+        bookingData: conversationResult.bookingData,
+        timestamp: new Date().toISOString(),
+        messageId: savedMessage?.id,
+        // Backward compatibility - map to old format
+        suggestedSearches: (conversationResult.quickReplies || []).map((reply: string) => reply)
+      };
+      
+      res.json(responseData);
 
     } catch (error) {
-      console.error('Error in AI chat endpoint:', error);
+      console.error('Error in enhanced AI chat endpoint:', error);
       
-      // Provide helpful fallback response
-      const fallbackResponse = "I'm having trouble connecting right now, but I'd love to help! " +
-        "Can you describe what needs to be fixed? For example, you could search for 'electrician', 'plumber', 'cleaner', or the specific problem you're having.";
+      // Enhanced fallback response
+      const fallbackResponse = "I'm here to help you find the right home services! " +
+        "Could you tell me what specific problem you're having? For example: \"My kitchen tap is leaking\" or \"The lights in my bedroom aren't working\"";
       
       res.status(200).json({
         success: true,
+        conversationId: req.body.conversationId || `conv_${Date.now()}_fallback`,
         response: fallbackResponse,
-        suggestedSearches: ['electrician', 'plumber', 'cleaning service'],
+        suggestedServices: [],
+        extractedInfo: {},
+        conversationStage: 'initial',
+        quickReplies: ['Electrical problem', 'Plumbing issue', 'Cleaning needed', 'Something else'],
+        bookingReady: false,
         timestamp: new Date().toISOString(),
-        fallback: true
+        fallback: true,
+        // Backward compatibility
+        suggestedSearches: ['Electrical problem', 'Plumbing issue', 'Cleaning needed', 'Something else']
+      });
+    }
+  });
+  
+  // Get conversation history
+  app.get('/api/v1/ai/conversations/:conversationId', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { conversationId } = req.params;
+      const userId = req.user!.id;
+      
+      const messages = await storage.getChatMessagesByConversation(conversationId, userId);
+      
+      res.json({
+        success: true,
+        conversationId,
+        messages: messages.map(msg => ({
+          id: msg.id,
+          type: msg.messageType,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          metadata: msg.metadata
+        })),
+        messageCount: messages.length
+      });
+    } catch (error) {
+      console.error('Error fetching conversation history:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch conversation history'
+      });
+    }
+  });
+  
+  // Get user's recent conversations
+  app.get('/api/v1/ai/conversations', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const limit = parseInt(req.query.limit as string) || 10;
+      
+      const conversations = await storage.getUserConversations(userId, limit);
+      
+      res.json({
+        success: true,
+        conversations: conversations.map(conv => ({
+          conversationId: conv.conversationId,
+          lastMessage: conv.content,
+          lastMessageTime: conv.timestamp,
+          messageCount: conv.messageCount,
+          hasBooking: conv.metadata?.bookingData ? true : false
+        })),
+        total: conversations.length
+      });
+    } catch (error) {
+      console.error('Error fetching user conversations:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch conversations'
+      });
+    }
+  });
+  
+  // Create booking from conversation
+  app.post('/api/v1/ai/conversations/:conversationId/booking', authMiddleware, validateBody(insertServiceBookingSchema), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { conversationId } = req.params;
+      const userId = req.user!.id;
+      const bookingData = req.body;
+      
+      // Get conversation context
+      const messages = await storage.getChatMessagesByConversation(conversationId, userId);
+      const lastAIMessage = messages.filter(m => m.messageType === 'ai').pop();
+      
+      // Create booking with conversation context
+      const booking = await storage.createServiceBooking({
+        ...bookingData,
+        customerId: userId,
+        conversationId,
+        notes: `${bookingData.notes || ''} \n\nFrom AI conversation: ${lastAIMessage?.metadata?.extractedInfo?.problemDescription || 'Discussed via chat'}`
+      });
+      
+      // Update conversation with booking reference
+      if (lastAIMessage) {
+        await storage.updateChatMessage(lastAIMessage.id, {
+          metadata: {
+            ...lastAIMessage.metadata,
+            bookingId: booking.id,
+            bookingCreated: true
+          }
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Booking created successfully from conversation',
+        booking: {
+          id: booking.id,
+          serviceId: booking.serviceId,
+          scheduledFor: booking.scheduledFor,
+          status: booking.status
+        },
+        conversationId
+      });
+    } catch (error) {
+      console.error('Error creating booking from conversation:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create booking from conversation'
       });
     }
   });

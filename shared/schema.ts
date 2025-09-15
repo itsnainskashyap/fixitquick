@@ -650,14 +650,23 @@ export const coupons = pgTable("coupons", {
 export const chatMessages = pgTable("chat_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").references(() => orders.id),
+  conversationId: varchar("conversation_id"), // For AI conversations
   senderId: varchar("sender_id").references(() => users.id),
   receiverId: varchar("receiver_id").references(() => users.id),
-  message: text("message").notNull(),
-  messageType: varchar("message_type", { enum: ["text", "image", "location"] }).default("text"),
+  content: text("content").notNull(), // Renamed from message for consistency
+  message: text("message").notNull(), // Keep for backward compatibility
+  messageType: varchar("message_type", { enum: ["text", "image", "location", "user", "ai", "system"] }).default("text"),
   attachments: jsonb("attachments").$type<string[]>(),
+  metadata: jsonb("metadata").$type<Record<string, any>>(), // For AI conversation context
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+  timestamp: timestamp("timestamp").defaultNow(), // For AI conversations
+}, (table) => ({
+  conversationIdx: index("cm_conversation_idx").on(table.conversationId),
+  senderIdx: index("cm_sender_idx").on(table.senderId),
+  typeIdx: index("cm_type_idx").on(table.messageType),
+}));
 
 // Notifications
 export const notifications = pgTable("notifications", {
@@ -987,6 +996,9 @@ export const serviceBookings = pgTable("service_bookings", {
     workflowSteps: string[];
     specialRequirements?: string[];
   }>(),
+  
+  // Conversation integration
+  conversationId: varchar("conversation_id"), // Link to AI conversation that led to booking
   
   // Customer inputs
   notes: text("notes"),
@@ -1398,7 +1410,7 @@ export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, cre
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
 export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
 export const insertCouponSchema = createInsertSchema(coupons).omit({ id: true, createdAt: true });
-export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, updatedAt: true, timestamp: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true });
 export const insertServiceProviderSchema = createInsertSchema(serviceProviders).omit({ id: true, createdAt: true });

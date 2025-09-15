@@ -95,6 +95,82 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
+// Security: Response redaction function to prevent logging sensitive data
+function redactSensitiveResponse(response: any, path: string): any {
+  if (!response || typeof response !== 'object') {
+    return response;
+  }
+
+  // Define sensitive endpoints that should have their responses redacted
+  const sensitiveEndpoints = [
+    '/api/auth/',
+    '/api/v1/auth/',
+    '/api/login',
+    '/api/register',
+    '/api/otp',
+    '/api/dev/login',
+    '/api/payment/',
+    '/api/v1/payment/',
+    '/api/stripe/',
+    '/api/webhook/',
+  ];
+
+  // Define sensitive keys that should always be redacted
+  const sensitiveKeys = [
+    'token',
+    'access_token', 
+    'refresh_token',
+    'jwt',
+    'secret',
+    'key',
+    'password',
+    'otp',
+    'clientSecret',
+    'client_secret',
+    'paymentIntent',
+    'stripe',
+    'sessionSecret'
+  ];
+
+  // Check if path contains sensitive endpoints
+  const isSensitiveEndpoint = sensitiveEndpoints.some(endpoint => 
+    path.toLowerCase().includes(endpoint.toLowerCase())
+  );
+
+  // If it's a sensitive endpoint, redact the entire response for security
+  if (isSensitiveEndpoint) {
+    return { 
+      message: '[REDACTED: Authentication/Payment Response]',
+      status: response.status || 'success'
+    };
+  }
+
+  // For non-sensitive endpoints, still check for sensitive keys and redact them
+  const redacted = { ...response };
+  
+  function redactObject(obj: any): any {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => redactObject(item));
+    }
+    
+    const result = { ...obj };
+    for (const key in result) {
+      if (sensitiveKeys.some(sensitiveKey => 
+        key.toLowerCase().includes(sensitiveKey.toLowerCase())
+      )) {
+        result[key] = '[REDACTED]';
+      } else if (typeof result[key] === 'object' && result[key] !== null) {
+        result[key] = redactObject(result[key]);
+      }
+    }
+    return result;
+  }
+
+  return redactObject(redacted);
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -111,7 +187,9 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        // SECURITY FIX: Use redaction to prevent logging sensitive data like JWT tokens
+        const redactedResponse = redactSensitiveResponse(capturedJsonResponse, path);
+        logLine += ` :: ${JSON.stringify(redactedResponse)}`;
       }
 
       if (logLine.length > 80) {
