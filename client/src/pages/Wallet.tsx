@@ -32,10 +32,10 @@ import {
 } from 'lucide-react';
 
 // Initialize Stripe
-if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
-  console.warn('⚠️ VITE_STRIPE_PUBLIC_KEY not found - Stripe payments may not work');
+if (!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) {
+  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments may not work');
 }
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
 
 // Stripe Payment Form Component
 const StripePaymentForm = ({ amount, onSuccess, onCancel }: { 

@@ -28,8 +28,11 @@ import {
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
 
-// Initialize Stripe (replace with your publishable key)
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_demo');
+// Initialize Stripe
+if (!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) {
+  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments may not work');
+}
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
 
 const addPaymentMethodSchema = z.object({
   nickname: z.string().optional(),
