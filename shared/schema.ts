@@ -14,6 +14,75 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Service Provider verification status (main table)
+export const ServiceProviderVerificationStatus = z.enum([
+  'pending', 
+  'under_review', 
+  'approved', 
+  'rejected', 
+  'suspended', 
+  'resubmission_required'
+]);
+export type ServiceProviderVerificationStatusType = z.infer<typeof ServiceProviderVerificationStatus>;
+
+// Document type schemas with proper validation
+export const DocumentSchema = z.object({
+  url: z.string().url(),
+  filename: z.string().min(1),
+  uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString()),
+  verified: z.boolean().optional().default(false)
+});
+
+export const DocumentsSchema = z.object({
+  businessLicense: DocumentSchema.optional(),
+  idProof: DocumentSchema.optional(),
+  certifications: z.array(DocumentSchema.extend({
+    title: z.string().min(1)
+  })).optional().default([]),
+  aadhar: z.object({
+    front: z.string().url().optional(),
+    back: z.string().url().optional(),
+    uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString()).optional(),
+    verified: z.boolean().optional().default(false)
+  }).optional(),
+  photo: z.object({
+    url: z.string().url().optional(),
+    uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString()).optional(),
+    verified: z.boolean().optional().default(false)
+  }).optional(),
+  licenses: z.array(z.object({
+    url: z.string().url(),
+    name: z.string().min(1),
+    type: z.string().min(1),
+    licenseNumber: z.string().optional(),
+    expiryDate: z.string().optional(),
+    uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString()),
+    verified: z.boolean().optional().default(false)
+  })).optional().default([]),
+  insurance: z.object({
+    url: z.string().url().optional(),
+    policyNumber: z.string().optional(),
+    expiryDate: z.string().optional(),
+    uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString()).optional(),
+    verified: z.boolean().optional().default(false)
+  }).optional(),
+  portfolio: z.array(z.object({
+    url: z.string().url(),
+    caption: z.string(),
+    uploadedAt: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? val : val.toISOString())
+  })).optional().default([])
+});
+export type DocumentsType = z.infer<typeof DocumentsSchema>;
+
+// Status transition validation schema
+export const StatusTransitionSchema = z.object({
+  fromStatus: ServiceProviderVerificationStatus,
+  toStatus: ServiceProviderVerificationStatus,
+  reason: z.string().optional(),
+  verifiedBy: z.string().optional()
+});
+export type StatusTransition = z.infer<typeof StatusTransitionSchema>;
+
 // Session storage table for Replit Auth
 // This table is mandatory for Replit Auth, don't drop it.
 export const sessions = pgTable(
@@ -459,6 +528,54 @@ export const serviceProviders = pgTable("service_providers", {
   onlineIdx: index("sp_online_idx").on(table.isOnline),
   locationIdx: index("sp_location_idx").on(table.serviceRadius),
   ratingIdx: index("sp_rating_idx").on(table.rating),
+}));
+
+// Service Provider Profiles for onboarding system
+export const serviceProviderProfiles = pgTable("service_provider_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
+  
+  // Business Information
+  businessName: varchar("business_name").notNull(),
+  businessType: varchar("business_type", { enum: ["individual", "company"] }).notNull(),
+  contactName: varchar("contact_name").notNull(),
+  phone: varchar("phone").notNull(),
+  email: varchar("email"),
+  
+  // Service Details
+  serviceCategories: jsonb("service_categories").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  serviceAreas: jsonb("service_areas").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  
+  // Address Information
+  address: jsonb("address").$type<{
+    street: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    coordinates?: { lat: number; lng: number };
+  }>(),
+  
+  // Document Management
+  documents: jsonb("documents").$type<{
+    businessLicense?: { url: string; filename: string; uploadedAt: string };
+    idProof?: { url: string; filename: string; uploadedAt: string };
+    certifications?: Array<{ url: string; filename: string; title: string; uploadedAt: string }>;
+  }>().notNull().default(sql`'{}'::jsonb`),
+  
+  // Verification Status
+  verificationStatus: varchar("verification_status", {
+    enum: ["draft", "documents_submitted", "under_review", "approved", "rejected"]
+  }).notNull().default("draft"),
+  rejectionReason: text("rejection_reason"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow().$onUpdate(() => sql`now()`),
+}, (table) => ({
+  userIdIdx: index("spp_user_id_idx").on(table.userId),
+  verificationStatusIdx: index("spp_verification_status_idx").on(table.verificationStatus),
+  businessTypeIdx: index("spp_business_type_idx").on(table.businessType),
+  createdAtIdx: index("spp_created_at_idx").on(table.createdAt),
 }));
 
 // Enhanced parts categories with hierarchy support
@@ -1419,6 +1536,7 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ i
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true });
 export const insertServiceProviderSchema = createInsertSchema(serviceProviders).omit({ id: true, createdAt: true });
+export const insertServiceProviderProfileSchema = createInsertSchema(serviceProviderProfiles).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOtpChallengeSchema = createInsertSchema(otpChallenges).omit({ id: true, createdAt: true });
 export const insertUserSessionSchema = createInsertSchema(userSessions).omit({ id: true, createdAt: true });
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true, createdAt: true, updatedAt: true });
@@ -1685,3 +1803,71 @@ export type SupportCallbackPriority = z.infer<typeof supportCallbackPriorityEnum
 export type SupportCallbackStatus = z.infer<typeof supportCallbackStatusEnum>;
 export type SupportAgentStatus = z.infer<typeof supportAgentStatusEnum>;
 export type SupportAgentDepartment = z.infer<typeof supportAgentDepartmentEnum>;
+
+// Service Provider Profile schemas and types
+export type ServiceProviderProfile = typeof serviceProviderProfiles.$inferSelect;
+export type InsertServiceProviderProfile = z.infer<typeof insertServiceProviderProfileSchema>;
+
+// Service Provider Profile validation enums
+export const serviceProviderBusinessTypeEnum = z.enum(['individual', 'company']);
+
+// Profile update validation schema
+export const serviceProviderProfileUpdateSchema = z.object({
+  businessName: z.string().min(1, 'Business name is required').max(200, 'Business name cannot exceed 200 characters').optional(),
+  businessType: serviceProviderBusinessTypeEnum.optional(),
+  contactName: z.string().min(1, 'Contact name is required').max(100, 'Contact name cannot exceed 100 characters').optional(),
+  phone: z.string().min(10, 'Phone number must be at least 10 digits').max(15, 'Phone number cannot exceed 15 digits').optional(),
+  email: z.string().email('Invalid email format').optional(),
+  serviceCategories: z.array(z.string().uuid('Invalid service category ID')).min(1, 'At least one service category is required').optional(),
+  serviceAreas: z.array(z.string().min(1, 'Service area cannot be empty')).min(1, 'At least one service area is required').optional(),
+  address: z.object({
+    street: z.string().min(1, 'Street address is required').max(200, 'Street address too long'),
+    city: z.string().min(1, 'City is required').max(100, 'City name too long'),
+    state: z.string().min(1, 'State is required').max(100, 'State name too long'),
+    postalCode: z.string().min(5, 'Postal code is required').max(10, 'Invalid postal code'),
+    coordinates: z.object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    }).optional(),
+  }).optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+// Document submission validation schema
+export const serviceProviderDocumentSubmissionSchema = z.object({
+  documentType: z.enum(['businessLicense', 'idProof', 'certifications']),
+  url: z.string().url('Invalid document URL'),
+  filename: z.string().min(1, 'Filename is required').max(255, 'Filename too long'),
+  title: z.string().min(1, 'Document title is required').max(100, 'Title too long').optional(), // Required for certifications
+}).refine(data => {
+  if (data.documentType === 'certifications' && !data.title) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Title is required for certifications',
+  path: ['title'],
+});
+
+// Status update validation schema (for admin use)
+export const serviceProviderStatusUpdateSchema = z.object({
+  verificationStatus: ServiceProviderVerificationStatus,
+  rejectionReason: z.string().max(500, 'Rejection reason cannot exceed 500 characters').optional(),
+}).refine(data => {
+  if (data.verificationStatus === 'rejected' && !data.rejectionReason) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Rejection reason is required when status is rejected',
+  path: ['rejectionReason'],
+});
+
+// API operation types for Service Provider Profiles
+export type ServiceProviderProfileUpdateData = z.infer<typeof serviceProviderProfileUpdateSchema>;
+export type ServiceProviderDocumentSubmissionData = z.infer<typeof serviceProviderDocumentSubmissionSchema>;
+export type ServiceProviderStatusUpdateData = z.infer<typeof serviceProviderStatusUpdateSchema>;
+
+// Enum types for consistent usage
+export type ServiceProviderBusinessType = z.infer<typeof serviceProviderBusinessTypeEnum>;

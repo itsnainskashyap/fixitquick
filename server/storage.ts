@@ -65,6 +65,15 @@ import {
   type InsertServiceBooking,
   type ProviderJobRequest,
   type InsertProviderJobRequest,
+  type ServiceProviderProfile,
+  type InsertServiceProviderProfile,
+  // Import new strongly typed schemas
+  ServiceProviderVerificationStatus,
+  type ServiceProviderVerificationStatusType,
+  DocumentsSchema,
+  type DocumentsType,
+  StatusTransitionSchema,
+  type StatusTransition,
   serviceBookings,
   providerJobRequests,
   users,
@@ -124,11 +133,13 @@ import {
   faq,
   supportCallbackRequests,
   supportAgents,
+  serviceProviderProfiles,
   insertSupportTicketSchema,
   insertSupportTicketMessageSchema,
   insertFaqSchema,
   insertSupportCallbackRequestSchema,
   insertSupportAgentSchema,
+  insertServiceProviderProfileSchema,
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
@@ -301,20 +312,42 @@ export interface IStorage {
   createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider>;
   updateServiceProvider(userId: string, data: Partial<InsertServiceProvider>): Promise<ServiceProvider | undefined>;
   
-  // Enhanced verification methods
+  // Enhanced verification methods with strong typing
   getPendingVerifications(limit?: number): Promise<ServiceProvider[]>;
   updateVerificationStatus(userId: string, params: {
-    verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended' | 'resubmission_required';
+    verificationStatus: ServiceProviderVerificationStatusType;
     verifiedBy?: string;
     rejectionReason?: string;
     verificationNotes?: string;
     resubmissionReason?: string;
   }): Promise<ServiceProvider | undefined>;
   getVerificationHistory(userId: string): Promise<any[]>;
+
+  // Atomic operations to fix approval atomicity issue
+  approveProviderAtomic(userId: string, params: {
+    verifiedBy: string;
+    verificationNotes?: string;
+  }): Promise<{ success: boolean; error?: string }>;
+  rejectProviderAtomic(userId: string, params: {
+    rejectionReason: string;
+    verifiedBy: string;
+    verificationNotes?: string;
+  }): Promise<{ success: boolean; error?: string }>;
+
+  // Status transition validation
+  validateStatusTransition(
+    fromStatus: ServiceProviderVerificationStatusType,
+    toStatus: ServiceProviderVerificationStatusType,
+    userId: string
+  ): Promise<{ valid: boolean; errors: string[] }>;
   
-  // Document management
+  // Document management with strong typing
   validateDocumentUpload(fileData: { filename: string; size: number; mimetype: string; documentType: string }): Promise<{ valid: boolean; errors: string[] }>;
-  storeProviderDocument(userId: string, documentType: string, documentData: any): Promise<{ success: boolean; url?: string; error?: string }>;
+  storeProviderDocument(
+    userId: string, 
+    documentType: string, 
+    documentData: DocumentsType[keyof DocumentsType]
+  ): Promise<{ success: boolean; url?: string; error?: string }>;
 
   // Chat methods
   getChatMessages(orderId: string): Promise<ChatMessage[]>;
@@ -640,6 +673,20 @@ export interface IStorage {
     resolutionRate: number;
     satisfactionScore: number;
   }>;
+
+  // Service Provider Profile Management methods
+  upsertServiceProviderProfile(data: InsertServiceProviderProfile): Promise<ServiceProviderProfile | null>;
+  getProviderProfileByUserId(userId: string): Promise<ServiceProviderProfile | null>;
+
+  // Document Management  
+  submitProviderDocuments(userId: string, documents: DocumentsType): Promise<ServiceProviderProfile | null>;
+
+  // Verification Workflow
+  setProviderVerificationStatus(userId: string, status: ServiceProviderVerificationStatusType, rejectionReason?: string): Promise<ServiceProviderProfile | null>;
+  listProviderSubmissions(status?: ServiceProviderVerificationStatusType): Promise<ServiceProviderProfile[]>;
+
+  // Role Management
+  upgradeUserRoleToProvider(userId: string): Promise<boolean>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -2170,6 +2217,215 @@ export class PostgresStorage implements IStorage {
     });
 
     return history.reverse(); // Show chronological order
+  }
+
+  // STATUS TRANSITION VALIDATION
+  async validateStatusTransition(
+    fromStatus: ServiceProviderVerificationStatusType,
+    toStatus: ServiceProviderVerificationStatusType,
+    userId: string
+  ): Promise<{ valid: boolean; errors: string[] }> {
+    console.log(`🔍 validateStatusTransition: From "${fromStatus}" to "${toStatus}" for user ${userId}`);
+    
+    const errors: string[] = [];
+    
+    // Status validation using Zod
+    try {
+      ServiceProviderVerificationStatus.parse(fromStatus);
+      ServiceProviderVerificationStatus.parse(toStatus);
+    } catch (error) {
+      errors.push('Invalid status value provided');
+      return { valid: false, errors };
+    }
+
+    // Define valid transitions
+    const validTransitions: Record<ServiceProviderVerificationStatusType, ServiceProviderVerificationStatusType[]> = {
+      'pending': ['under_review', 'rejected'],
+      'under_review': ['approved', 'rejected', 'resubmission_required'],
+      'resubmission_required': ['under_review', 'rejected'],
+      'approved': ['suspended'], // Once approved, can only be suspended
+      'rejected': ['under_review'], // Can be reconsidered
+      'suspended': ['under_review', 'approved'] // Can be reinstated or reviewed again
+    };
+
+    if (!validTransitions[fromStatus]?.includes(toStatus)) {
+      errors.push(`Invalid transition from "${fromStatus}" to "${toStatus}"`);
+    }
+
+    // Additional validation for specific transitions
+    if (toStatus === 'approved') {
+      const provider = await this.getServiceProvider(userId);
+      if (!provider) {
+        errors.push('Provider not found');
+      } else if (!provider.documents) {
+        errors.push('No documents uploaded');
+      }
+    }
+
+    console.log(`${errors.length === 0 ? '✅' : '❌'} validateStatusTransition: ${errors.length === 0 ? 'Valid' : 'Invalid'} transition`);
+    return { valid: errors.length === 0, errors };
+  }
+
+  // ATOMIC APPROVAL OPERATION WITH TRANSACTION
+  async approveProviderAtomic(userId: string, params: {
+    verifiedBy: string;
+    verificationNotes?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    console.log(`🔄 approveProviderAtomic: Starting atomic approval for userId: ${userId}`);
+    
+    try {
+      const result = await db.transaction(async (tx) => {
+        console.log(`🔄 Transaction started for provider approval: ${userId}`);
+        
+        // 1. Get current provider to validate transition
+        const currentProvider = await tx.select().from(serviceProviders)
+          .where(eq(serviceProviders.userId, userId))
+          .limit(1);
+        
+        if (currentProvider.length === 0) {
+          throw new Error('Service provider profile not found');
+        }
+
+        const currentStatus = currentProvider[0].verificationStatus as ServiceProviderVerificationStatusType;
+        
+        // 2. Validate status transition
+        const transitionValidation = await this.validateStatusTransition(
+          currentStatus,
+          'approved',
+          userId
+        );
+        
+        if (!transitionValidation.valid) {
+          throw new Error(`Invalid status transition: ${transitionValidation.errors.join(', ')}`);
+        }
+
+        // 3. Update service provider profile atomically
+        const providerUpdateResult = await tx.update(serviceProviders)
+          .set({
+            verificationStatus: 'approved',
+            isVerified: true,
+            verificationLevel: 'verified',
+            verificationDate: sql`NOW()`,
+            verifiedBy: params.verifiedBy,
+            verificationNotes: params.verificationNotes,
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(serviceProviders.userId, userId))
+          .returning();
+
+        if (providerUpdateResult.length === 0) {
+          throw new Error('Failed to update service provider profile');
+        }
+
+        // 4. Upgrade user role atomically
+        const userUpdateResult = await tx.update(users)
+          .set({
+            role: 'service_provider',
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(users.id, userId))
+          .returning();
+
+        if (userUpdateResult.length === 0) {
+          throw new Error('Failed to upgrade user role');
+        }
+
+        console.log(`✅ Transaction completed successfully for provider approval: ${userId}`);
+        return { success: true };
+      });
+
+      console.log(`✅ approveProviderAtomic: Atomic approval completed successfully for userId: ${userId}`);
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ approveProviderAtomic: Error during atomic approval for userId: ${userId}:`, error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error during approval' 
+      };
+    }
+  }
+
+  // ATOMIC REJECTION OPERATION WITH TRANSACTION
+  async rejectProviderAtomic(userId: string, params: {
+    rejectionReason: string;
+    verifiedBy: string;
+    verificationNotes?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    console.log(`🔄 rejectProviderAtomic: Starting atomic rejection for userId: ${userId}`);
+    
+    try {
+      const result = await db.transaction(async (tx) => {
+        console.log(`🔄 Transaction started for provider rejection: ${userId}`);
+        
+        // 1. Get current provider to validate transition
+        const currentProvider = await tx.select().from(serviceProviders)
+          .where(eq(serviceProviders.userId, userId))
+          .limit(1);
+        
+        if (currentProvider.length === 0) {
+          throw new Error('Service provider profile not found');
+        }
+
+        const currentStatus = currentProvider[0].verificationStatus as ServiceProviderVerificationStatusType;
+        
+        // 2. Validate status transition
+        const transitionValidation = await this.validateStatusTransition(
+          currentStatus,
+          'rejected',
+          userId
+        );
+        
+        if (!transitionValidation.valid) {
+          throw new Error(`Invalid status transition: ${transitionValidation.errors.join(', ')}`);
+        }
+
+        // 3. Update service provider profile atomically
+        const providerUpdateResult = await tx.update(serviceProviders)
+          .set({
+            verificationStatus: 'rejected',
+            isVerified: false,
+            verificationLevel: 'none',
+            verificationDate: sql`NOW()`,
+            verifiedBy: params.verifiedBy,
+            rejectionReason: params.rejectionReason,
+            verificationNotes: params.verificationNotes,
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(serviceProviders.userId, userId))
+          .returning();
+
+        if (providerUpdateResult.length === 0) {
+          throw new Error('Failed to update service provider profile');
+        }
+
+        // 4. Ensure user role remains as 'user' (do not upgrade for rejected providers)
+        const userUpdateResult = await tx.update(users)
+          .set({
+            role: 'user', // Keep as regular user
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(users.id, userId))
+          .returning();
+
+        if (userUpdateResult.length === 0) {
+          throw new Error('Failed to update user role');
+        }
+
+        console.log(`✅ Transaction completed successfully for provider rejection: ${userId}`);
+        return { success: true };
+      });
+
+      console.log(`✅ rejectProviderAtomic: Atomic rejection completed successfully for userId: ${userId}`);
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ rejectProviderAtomic: Error during atomic rejection for userId: ${userId}:`, error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error during rejection' 
+      };
+    }
   }
 
   async validateDocumentUpload(fileData: { filename: string; size: number; mimetype: string; documentType: string }): Promise<{ valid: boolean; errors: string[] }> {
@@ -5258,6 +5514,169 @@ export class PostgresStorage implements IStorage {
       resolutionRate: Math.round(resolutionRate * 100) / 100,
       satisfactionScore: Math.round(satisfactionScore * 100) / 100,
     };
+  }
+
+  // ========================================
+  // SERVICE PROVIDER ONBOARDING OPERATIONS
+  // ========================================
+
+  // Provider Profile Management
+  async upsertServiceProviderProfile(data: InsertServiceProviderProfile): Promise<ServiceProviderProfile | null> {
+    try {
+      console.log(`🔧 storage.upsertServiceProviderProfile: Upserting profile for userId: ${data.userId}`);
+      
+      const validatedData = insertServiceProviderProfileSchema.parse(data);
+      
+      const result = await db.insert(serviceProviderProfiles)
+        .values({
+          ...validatedData,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: serviceProviderProfiles.userId,
+          set: {
+            ...validatedData,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+
+      const profile = result[0];
+      console.log(`✅ storage.upsertServiceProviderProfile: Profile ${profile ? 'upserted' : 'failed'} for userId: ${data.userId}`);
+      return profile || null;
+    } catch (error) {
+      console.error(`❌ storage.upsertServiceProviderProfile: Error upserting profile for userId: ${data.userId}:`, error);
+      return null;
+    }
+  }
+
+  async getProviderProfileByUserId(userId: string): Promise<ServiceProviderProfile | null> {
+    try {
+      console.log(`🔍 storage.getProviderProfileByUserId: Fetching profile for userId: ${userId}`);
+      
+      const result = await db.select()
+        .from(serviceProviderProfiles)
+        .where(eq(serviceProviderProfiles.userId, userId))
+        .limit(1);
+
+      const profile = result[0] || null;
+      console.log(`${profile ? '✅' : '❌'} storage.getProviderProfileByUserId: Profile ${profile ? 'found' : 'not found'} for userId: ${userId}`);
+      return profile;
+    } catch (error) {
+      console.error(`❌ storage.getProviderProfileByUserId: Error fetching profile for userId: ${userId}:`, error);
+      return null;
+    }
+  }
+
+  // Document Management
+  async submitProviderDocuments(userId: string, documents: DocumentsType): Promise<ServiceProviderProfile | null> {
+    try {
+      console.log(`📄 storage.submitProviderDocuments: Submitting documents for userId: ${userId}`);
+      
+      const result = await db.update(serviceProviderProfiles)
+        .set({
+          documents,
+          verificationStatus: 'documents_submitted',
+          updatedAt: new Date(),
+        })
+        .where(eq(serviceProviderProfiles.userId, userId))
+        .returning();
+
+      const profile = result[0] || null;
+      console.log(`${profile ? '✅' : '❌'} storage.submitProviderDocuments: Documents ${profile ? 'submitted' : 'failed'} for userId: ${userId}`);
+      return profile;
+    } catch (error) {
+      console.error(`❌ storage.submitProviderDocuments: Error submitting documents for userId: ${userId}:`, error);
+      return null;
+    }
+  }
+
+  // Verification Workflow
+  async setProviderVerificationStatus(userId: string, status: ServiceProviderVerificationStatusType, rejectionReason?: string): Promise<ServiceProviderProfile | null> {
+    try {
+      console.log(`⚖️ storage.setProviderVerificationStatus: Setting status '${status}' for userId: ${userId}`);
+      
+      const updateData: any = {
+        verificationStatus: status,
+        updatedAt: new Date(),
+      };
+
+      // Add rejection reason if status is rejected
+      if (status === 'rejected' && rejectionReason) {
+        updateData.rejectionReason = rejectionReason;
+      }
+
+      // Clear rejection reason if status is not rejected
+      if (status !== 'rejected') {
+        updateData.rejectionReason = null;
+      }
+
+      const result = await db.update(serviceProviderProfiles)
+        .set(updateData)
+        .where(eq(serviceProviderProfiles.userId, userId))
+        .returning();
+
+      const profile = result[0] || null;
+      
+      // If approved, upgrade user role to service_provider
+      if (profile && status === 'approved') {
+        console.log(`🔧 storage.setProviderVerificationStatus: Upgrading role for userId: ${userId}`);
+        await this.upgradeUserRoleToProvider(userId);
+      }
+
+      console.log(`${profile ? '✅' : '❌'} storage.setProviderVerificationStatus: Status ${profile ? 'updated' : 'failed'} for userId: ${userId}`);
+      return profile;
+    } catch (error) {
+      console.error(`❌ storage.setProviderVerificationStatus: Error setting status for userId: ${userId}:`, error);
+      return null;
+    }
+  }
+
+  async listProviderSubmissions(status?: ServiceProviderVerificationStatusType): Promise<ServiceProviderProfile[]> {
+    try {
+      console.log(`📋 storage.listProviderSubmissions: Listing submissions${status ? ` with status: ${status}` : ''}`);
+      
+      const conditions = [];
+      
+      if (status) {
+        conditions.push(eq(serviceProviderProfiles.verificationStatus, status));
+      }
+
+      const whereClause = combineConditions(conditions);
+
+      const result = await db.select()
+        .from(serviceProviderProfiles)
+        .where(whereClause)
+        .orderBy(desc(serviceProviderProfiles.updatedAt));
+
+      console.log(`✅ storage.listProviderSubmissions: Found ${result.length} submissions`);
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.listProviderSubmissions: Error listing submissions:`, error);
+      return [];
+    }
+  }
+
+  // Role Management
+  async upgradeUserRoleToProvider(userId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 storage.upgradeUserRoleToProvider: Upgrading role for userId: ${userId}`);
+      
+      const result = await db.update(users)
+        .set({
+          role: 'service_provider',
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId))
+        .returning();
+
+      const success = result.length > 0;
+      console.log(`${success ? '✅' : '❌'} storage.upgradeUserRoleToProvider: Role upgrade ${success ? 'successful' : 'failed'} for userId: ${userId}`);
+      return success;
+    } catch (error) {
+      console.error(`❌ storage.upgradeUserRoleToProvider: Error upgrading role for userId: ${userId}:`, error);
+      return false;
+    }
   }
 
 }
