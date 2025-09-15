@@ -575,3 +575,180 @@ html {
     --primary: hsl(262, 83%, 40%);
   }
 }
+
+/* Floating Cart Widget Styles */
+.floating-cart-widget {
+  @apply fixed bottom-20 left-4 right-4 z-50;
+  max-width: calc(100vw - 2rem);
+}
+
+@media (min-width: 640px) {
+  .floating-cart-widget {
+    @apply left-6 right-6 bottom-24;
+    max-width: calc(100vw - 3rem);
+  }
+}
+
+@media (min-width: 768px) {
+  .floating-cart-widget {
+    @apply left-8 right-8;
+    max-width: calc(100vw - 4rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .floating-cart-widget {
+    @apply left-auto right-8;
+    max-width: 400px;
+    width: 400px;
+  }
+}
+
+.floating-cart-content {
+  @apply relative rounded-xl p-4 shadow-2xl border backdrop-blur-md;
+  background: linear-gradient(135deg, 
+    rgba(147, 51, 234, 0.95) 0%, 
+    rgba(79, 70, 229, 0.95) 50%, 
+    rgba(99, 102, 241, 0.95) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.dark .floating-cart-content {
+  background: linear-gradient(135deg, 
+    rgba(147, 51, 234, 0.9) 0%, 
+    rgba(79, 70, 229, 0.9) 50%, 
+    rgba(99, 102, 241, 0.9) 100%
+  );
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.floating-cart-close {
+  @apply absolute top-2 right-2 w-8 h-8 p-0 hover:bg-white/20 text-white/80 hover:text-white;
+  border-radius: 6px;
+}
+
+.floating-cart-summary {
+  @apply space-y-3;
+}
+
+.floating-cart-icon {
+  @apply w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center text-white backdrop-blur-sm;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.floating-cart-badge {
+  @apply absolute -top-1 -right-1 bg-white text-primary text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  animation: badgePulse 2s ease-in-out infinite;
+}
+
+.floating-cart-total {
+  @apply text-lg font-bold text-white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.floating-cart-items-text {
+  @apply text-sm text-white/80;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.floating-cart-view-button {
+  @apply bg-white text-primary hover:bg-white/90 font-medium transition-all duration-200;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  text-shadow: none;
+}
+
+.floating-cart-view-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.floating-cart-items-preview {
+  @apply space-y-2 mt-3 pt-3 border-t border-white/20;
+}
+
+.floating-cart-item-mini {
+  @apply flex items-center space-x-2;
+}
+
+.floating-cart-indicator {
+  @apply absolute bottom-0 left-1/2 transform -translate-x-1/2 w-8 h-1 bg-white/40 rounded-full;
+}
+
+/* Animation for floating cart appearance */
+@keyframes floatingCartSlideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes floatingCartSlideDown {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+/* Enhanced badge pulse for floating cart */
+@keyframes floatingCartBadgePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  .floating-cart-widget {
+    @apply left-2 right-2 bottom-18;
+  }
+  
+  .floating-cart-content {
+    @apply p-3;
+  }
+  
+  .floating-cart-view-button {
+    @apply text-sm px-3 py-1;
+  }
+  
+  .floating-cart-total {
+    @apply text-base;
+  }
+}
+
+/* Accessibility improvements for floating cart */
+.floating-cart-widget:focus-within {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-cart-badge {
+    animation: none;
+  }
+  
+  .floating-cart-view-button:hover {
+    transform: none;
+  }
+}

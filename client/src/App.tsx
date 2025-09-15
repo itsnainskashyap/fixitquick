@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
-import { useEffect, lazy, Suspense } from "react";
+import { useEffect, lazy, Suspense, useState } from "react";
 // Feature flag for i18n functionality
 const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
 
@@ -45,6 +45,9 @@ import ProviderRegistration from "@/pages/ProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
 import ServiceProviderDashboard from "@/pages/ProviderDashboard";
 import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
+
+// Import components
+import { FloatingCartWidget } from "@/components/FloatingCartWidget";
 
 // Dashboard routing based on user role
 const getDashboardRoute = (role: string) => {
@@ -252,6 +255,7 @@ function App() {
       <TooltipProvider>
         <Toaster />
         <Router />
+        <FloatingCartWidget />
       </TooltipProvider>
     </CartProvider>
   );
