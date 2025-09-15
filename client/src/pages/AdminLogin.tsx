@@ -43,8 +43,9 @@ export default function AdminLogin() {
   const [, setLocation] = useLocation();
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [isAuthRefreshing, setIsAuthRefreshing] = useState(false);
   const { toast } = useToast();
-  const { refreshUser } = useAuth();
+  const { refreshUser, user, isLoading } = useAuth();
 
   const form = useForm<AdminLoginForm>({
     resolver: zodResolver(adminLoginSchema),
@@ -54,34 +55,73 @@ export default function AdminLogin() {
     },
   });
 
+  // Helper function to verify admin authentication
+  const verifyAdminAuth = async (maxAttempts = 10, delay = 200): Promise<boolean> => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      await refreshUser();
+      
+      // Check if user is loaded and has admin role
+      if (user && user.role === 'admin') {
+        console.log('✅ Admin auth verified:', user.role);
+        return true;
+      }
+      
+      console.log(`🔄 Admin auth check ${attempt + 1}/${maxAttempts}, user:`, user);
+    }
+    
+    console.log('❌ Admin auth verification failed after', maxAttempts, 'attempts');
+    return false;
+  };
+
   // Admin login mutation
   const loginMutation = useMutation({
     mutationFn: async (credentials: AdminLoginForm) => {
-      return apiRequest('/api/admin/login', {
-        method: 'POST',
-        data: credentials
-      });
+      return apiRequest('POST', '/api/admin/login', credentials);
     },
     onSuccess: async (data) => {
       console.log('🔐 Admin login successful:', data);
+      setIsAuthRefreshing(true);
       
-      // Token is now stored in secure HttpOnly cookie by the server
-      console.log('🔐 Admin authenticated via secure cookie');
-      
-      // Refresh user state to get admin user data
-      await refreshUser();
-      
-      toast({
-        title: 'Welcome, Administrator',
-        description: 'You have successfully logged in to the admin panel.',
-        duration: 3000,
-      });
-      
-      // Redirect to admin panel
-      setLocation('/admin');
+      try {
+        // Token is now stored in secure HttpOnly cookie by the server
+        console.log('🔐 Admin authenticated via secure cookie');
+        
+        // Wait for auth state to be properly updated with admin role
+        const isAdminVerified = await verifyAdminAuth();
+        
+        if (isAdminVerified) {
+          toast({
+            title: 'Welcome, Administrator',
+            description: 'You have successfully logged in to the admin panel.',
+            duration: 3000,
+          });
+          
+          // Small delay to ensure UI updates before redirect
+          setTimeout(() => {
+            console.log('🔄 Redirecting to admin panel...');
+            setLocation('/admin');
+          }, 100);
+        } else {
+          throw new Error('Failed to verify admin authentication. Please try again.');
+        }
+      } catch (error) {
+        console.error('❌ Admin auth verification error:', error);
+        setLoginError(error instanceof Error ? error.message : 'Authentication verification failed');
+        
+        toast({
+          title: 'Authentication Error',
+          description: 'Failed to verify admin credentials. Please try again.',
+          variant: 'destructive',
+          duration: 5000,
+        });
+      } finally {
+        setIsAuthRefreshing(false);
+      }
     },
     onError: (error: any) => {
       console.error('❌ Admin login error:', error);
+      setIsAuthRefreshing(false);
       
       const errorMessage = error?.message || 'Login failed. Please check your credentials.';
       setLoginError(errorMessage);
@@ -175,7 +215,7 @@ export default function AdminLogin() {
                               type="text"
                               placeholder="Enter admin email or username"
                               className="pl-10 h-12 bg-gray-50 dark:bg-slate-700 border-gray-200 dark:border-slate-600 focus:border-blue-500 focus:ring-blue-500"
-                              disabled={loginMutation.isPending}
+                              disabled={loginMutation.isPending || isAuthRefreshing}
                               data-testid="input-admin-email"
                             />
                           </div>
@@ -202,14 +242,14 @@ export default function AdminLogin() {
                               type={showPassword ? 'text' : 'password'}
                               placeholder="Enter admin password"
                               className="pl-10 pr-12 h-12 bg-gray-50 dark:bg-slate-700 border-gray-200 dark:border-slate-600 focus:border-blue-500 focus:ring-blue-500"
-                              disabled={loginMutation.isPending}
+                              disabled={loginMutation.isPending || isAuthRefreshing}
                               data-testid="input-admin-password"
                             />
                             <button
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
                               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                              disabled={loginMutation.isPending}
+                              disabled={loginMutation.isPending || isAuthRefreshing}
                               data-testid="button-toggle-password"
                             >
                               {showPassword ? (
@@ -229,13 +269,13 @@ export default function AdminLogin() {
                   <Button
                     type="submit"
                     className="w-full h-12 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                    disabled={loginMutation.isPending}
+                    disabled={loginMutation.isPending || isAuthRefreshing}
                     data-testid="button-admin-login"
                   >
-                    {loginMutation.isPending ? (
+                    {loginMutation.isPending || isAuthRefreshing ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Authenticating...
+                        {isAuthRefreshing ? 'Verifying Admin Access...' : 'Authenticating...'}
                       </>
                     ) : (
                       <>
