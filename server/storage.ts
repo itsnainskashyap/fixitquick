@@ -321,6 +321,63 @@ export interface IStorage {
   createCoupon(coupon: InsertCoupon): Promise<Coupon>;
   useCoupon(code: string): Promise<void>;
 
+  // Smart Assignment System methods
+  findEligibleProviders(bookingId: string): Promise<Array<{
+    userId: string;
+    firstName: string;
+    lastName: string;
+    profileImageUrl?: string;
+    rating: number;
+    totalJobs: number;
+    distanceKm: number;
+    estimatedTravelTime: number;
+    isOnline: boolean;
+    responseRate: number;
+    assignmentScore: number;
+    skills: string[];
+    currentLocation?: { latitude: number; longitude: number };
+  }>>;
+  calculateProviderScore(provider: any, booking: any): number;
+  autoAssignProvider(bookingId: string, options?: {
+    retryCount?: number;
+    timeoutMs?: number;
+  }): Promise<{
+    success: boolean;
+    assignedProviderId?: string;
+    jobRequestIds?: string[];
+    error?: string;
+    retryAfter?: number;
+  }>;
+  sendJobOffers(bookingId: string, providerIds: string[]): Promise<{
+    success: boolean;
+    sentOffers: number;
+    errors: string[];
+  }>;
+  getJobRequestsWithDetails(providerId: string, options?: {
+    status?: string;
+    limit?: number;
+  }): Promise<Array<{
+    id: string;
+    bookingId: string;
+    status: string;
+    expiresAt: Date;
+    sentAt: Date;
+    distanceKm?: number;
+    booking: {
+      id: string;
+      serviceId: string;
+      userId: string;
+      serviceLocation: any;
+      totalAmount: string;
+      urgency: string;
+      status: string;
+      customerName: string;
+      serviceType: string;
+    };
+  }>>;
+  expireJobRequests(): Promise<void>;
+  reassignExpiredBookings(): Promise<void>;
+
   // Settings methods
   getSetting(key: string): Promise<unknown>;
   setSetting(key: string, value: unknown, description?: string): Promise<void>;
@@ -905,8 +962,8 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async createService(service: Omit<Service, 'id' | 'createdAt'>): Promise<Service> {
-    const result = await db.insert(services).values(service).returning();
+  async createService(service: InsertService): Promise<Service> {
+    const result = await db.insert(services).values([service]).returning();
     return result[0];
   }
 
@@ -926,7 +983,7 @@ export class PostgresStorage implements IStorage {
 
   // Order methods
   async getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]> {
-    let baseQuery = db.select().from(orders);
+    let query = db.select().from(orders);
     
     const conditions: SQL[] = [];
     if (filters?.userId) {
@@ -938,16 +995,16 @@ export class PostgresStorage implements IStorage {
     
     const whereClause = combineConditions(conditions);
     if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
+      query = query.where(whereClause);
     }
     
-    baseQuery = baseQuery.orderBy(desc(orders.createdAt));
+    query = query.orderBy(desc(orders.createdAt));
     
     if (filters?.limit) {
-      baseQuery = baseQuery.limit(filters.limit);
+      query = query.limit(filters.limit);
     }
     
-    return await baseQuery.execute();
+    return await query;
   }
 
   async getOrder(id: string): Promise<Order | undefined> {
@@ -964,7 +1021,7 @@ export class PostgresStorage implements IStorage {
         instructions: typeof order.location.instructions === 'string' ? order.location.instructions : undefined
       } : order.location
     };
-    const result = await db.insert(orders).values(orderData).returning();
+    const result = await db.insert(orders).values([orderData]).returning();
     return result[0];
   }
 
@@ -1291,7 +1348,7 @@ export class PostgresStorage implements IStorage {
     // FIXED: Reliable sorting with proper fallbacks
     let sortedQuery = baseQuery;
     if (whereClause) {
-      sortedQuery = baseQuery.where(whereClause);
+      sortedQuery = sortedQuery.where(whereClause);
     }
     
     // Apply sorting (default to newest first)
@@ -1318,7 +1375,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPart(part: InsertPart): Promise<Part> {
-    const result = await db.insert(parts).values(part).returning();
+    const result = await db.insert(parts).values([part]).returning();
     return result[0];
   }
 
@@ -1502,7 +1559,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
-    const result = await db.insert(walletTransactions).values(transaction).returning();
+    const result = await db.insert(walletTransactions).values([transaction]).returning();
     return result[0];
   }
 
@@ -1563,7 +1620,7 @@ export class PostgresStorage implements IStorage {
           reference: idempotencyKey
         };
         
-        const transactionResults = await trx.insert(walletTransactions).values(transactionData).returning();
+        const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
         const transaction = transactionResults[0];
         
         // Step 3: Update wallet balance
@@ -1646,7 +1703,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider> {
-    const result = await db.insert(serviceProviders).values(provider).returning();
+    const result = await db.insert(serviceProviders).values([provider]).returning();
     return result[0];
   }
 
@@ -1661,7 +1718,37 @@ export class PostgresStorage implements IStorage {
   // Enhanced verification methods
   async getPendingVerifications(limit?: number): Promise<ServiceProvider[]> {
     let query = db.select({
-      ...serviceProviders,
+      id: serviceProviders.id,
+      userId: serviceProviders.userId,
+      categoryId: serviceProviders.categoryId,
+      businessName: serviceProviders.businessName,
+      description: serviceProviders.description,
+      experience: serviceProviders.experience,
+      skills: serviceProviders.skills,
+      hourlyRate: serviceProviders.hourlyRate,
+      isVerified: serviceProviders.isVerified,
+      verificationStatus: serviceProviders.verificationStatus,
+      verificationNotes: serviceProviders.verificationNotes,
+      verifiedBy: serviceProviders.verifiedBy,
+      verifiedAt: serviceProviders.verifiedAt,
+      rejectionReason: serviceProviders.rejectionReason,
+      resubmissionReason: serviceProviders.resubmissionReason,
+      portfolioImages: serviceProviders.portfolioImages,
+      certificates: serviceProviders.certificates,
+      identification: serviceProviders.identification,
+      rating: serviceProviders.rating,
+      totalJobs: serviceProviders.totalJobs,
+      completedJobs: serviceProviders.completedJobs,
+      cancelledJobs: serviceProviders.cancelledJobs,
+      responseTime: serviceProviders.responseTime,
+      completionRate: serviceProviders.completionRate,
+      onTimeRate: serviceProviders.onTimeRate,
+      availability: serviceProviders.availability,
+      workingHours: serviceProviders.workingHours,
+      coverageArea: serviceProviders.coverageArea,
+      emergencyAvailable: serviceProviders.emergencyAvailable,
+      createdAt: serviceProviders.createdAt,
+      updatedAt: serviceProviders.updatedAt,
       userFirstName: users.firstName,
       userLastName: users.lastName,
       userEmail: users.email,
@@ -3681,6 +3768,361 @@ export class PostgresStorage implements IStorage {
       Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+  }
+
+  // ========================================
+  // SMART ASSIGNMENT SYSTEM OPERATIONS
+  // ========================================
+
+  async findEligibleProviders(bookingId: string): Promise<Array<{
+    userId: string;
+    firstName: string;
+    lastName: string;
+    profileImageUrl?: string;
+    rating: number;
+    totalJobs: number;
+    distanceKm: number;
+    estimatedTravelTime: number;
+    isOnline: boolean;
+    responseRate: number;
+    assignmentScore: number;
+    skills: string[];
+    currentLocation?: { latitude: number; longitude: number };
+  }>> {
+    const booking = await this.getServiceBooking(bookingId);
+    if (!booking) {
+      console.log(`❌ Smart Assignment: Booking ${bookingId} not found`);
+      return [];
+    }
+
+    const service = await this.getService(booking.serviceId);
+    if (!service) {
+      console.log(`❌ Smart Assignment: Service ${booking.serviceId} not found`);
+      return [];
+    }
+
+    console.log(`🔍 Smart Assignment: Finding providers for booking ${bookingId} (service: ${service.name})`);
+    
+    // Find eligible providers using existing logic
+    const matchingProviders = await this.findMatchingProviders({
+      serviceId: booking.serviceId,
+      location: {
+        latitude: booking.serviceLocation.latitude,
+        longitude: booking.serviceLocation.longitude
+      },
+      urgency: booking.urgency,
+      bookingType: booking.bookingType,
+      scheduledAt: booking.scheduledAt || undefined,
+      maxDistance: 25,
+      maxProviders: 10
+    });
+
+    // Calculate assignment scores and sort providers
+    const scoredProviders = matchingProviders.map(provider => {
+      const score = this.calculateProviderScore(provider, booking);
+      return {
+        ...provider,
+        profileImageUrl: provider.profileImage,
+        assignmentScore: score
+      };
+    })
+    .sort((a, b) => b.assignmentScore - a.assignmentScore)
+    .slice(0, 5); // Top 5 providers
+
+    console.log(`✅ Smart Assignment: Found ${scoredProviders.length} eligible providers for booking ${bookingId}`);
+    return scoredProviders;
+  }
+
+  calculateProviderScore(provider: any, booking: any): number {
+    let score = 0;
+    
+    // Distance scoring (max 30 points) - closer is better
+    const distanceKm = provider.distanceKm || 50;
+    const distanceScore = Math.max(0, 30 - (distanceKm * 1.5));
+    score += distanceScore;
+    
+    // Rating scoring (max 25 points)
+    const ratingScore = (provider.rating || 0) * 5;
+    score += ratingScore;
+    
+    // Response rate scoring (max 20 points)
+    const responseScore = (provider.responseRate || 0) * 20;
+    score += responseScore;
+    
+    // Online status bonus (15 points)
+    if (provider.isOnline) {
+      score += 15;
+    }
+    
+    // Experience scoring (max 10 points)
+    const experienceScore = Math.min(10, (provider.totalJobs || 0) * 0.1);
+    score += experienceScore;
+    
+    // Urgency bonus for instant bookings
+    if (booking.urgency === 'urgent' && provider.isOnline) {
+      score += 10;
+    }
+    
+    return Math.round(score * 100) / 100;
+  }
+
+  async autoAssignProvider(bookingId: string, options?: {
+    retryCount?: number;
+    timeoutMs?: number;
+  }): Promise<{
+    success: boolean;
+    assignedProviderId?: string;
+    jobRequestIds?: string[];
+    error?: string;
+    retryAfter?: number;
+  }> {
+    const retryCount = options?.retryCount || 0;
+    const timeoutMs = options?.timeoutMs || 300000; // 5 minutes default
+    
+    console.log(`🤖 Smart Assignment: Starting auto-assignment for booking ${bookingId} (retry: ${retryCount})`);
+    
+    try {
+      // Check if booking is still assignable
+      const booking = await this.getServiceBooking(bookingId);
+      if (!booking) {
+        return { success: false, error: 'Booking not found' };
+      }
+      
+      if (booking.assignedProviderId) {
+        return { 
+          success: true, 
+          assignedProviderId: booking.assignedProviderId,
+          error: 'Already assigned'
+        };
+      }
+      
+      if (booking.status !== 'provider_search') {
+        await this.updateServiceBooking(bookingId, { status: 'provider_search' });
+      }
+      
+      // Find eligible providers
+      const eligibleProviders = await this.findEligibleProviders(bookingId);
+      
+      if (eligibleProviders.length === 0) {
+        console.log(`⚠️ Smart Assignment: No providers found for booking ${bookingId}`);
+        return { 
+          success: false, 
+          error: 'No eligible providers found',
+          retryAfter: 60000 // Retry after 1 minute
+        };
+      }
+      
+      // Send job offers to top 3 providers
+      const topProviders = eligibleProviders.slice(0, 3);
+      const providerIds = topProviders.map(p => p.userId);
+      
+      console.log(`📤 Smart Assignment: Sending job offers to ${providerIds.length} providers`);
+      const offerResult = await this.sendJobOffers(bookingId, providerIds);
+      
+      if (!offerResult.success) {
+        return {
+          success: false,
+          error: `Failed to send job offers: ${offerResult.errors.join(', ')}`
+        };
+      }
+      
+      return {
+        success: true,
+        jobRequestIds: providerIds, // For tracking purposes
+        error: 'Job offers sent, waiting for provider response'
+      };
+      
+    } catch (error) {
+      console.error(`❌ Smart Assignment: Error in auto-assignment for booking ${bookingId}:`, error);
+      return {
+        success: false,
+        error: `Assignment failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
+  async sendJobOffers(bookingId: string, providerIds: string[]): Promise<{
+    success: boolean;
+    sentOffers: number;
+    errors: string[];
+  }> {
+    const errors: string[] = [];
+    let sentOffers = 0;
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+    
+    console.log(`📨 Smart Assignment: Sending job offers for booking ${bookingId} to ${providerIds.length} providers`);
+    
+    for (const providerId of providerIds) {
+      try {
+        // Check if provider is still eligible
+        const provider = await this.getServiceProvider(providerId);
+        if (!provider || !provider.isVerified || provider.verificationStatus !== 'approved') {
+          errors.push(`Provider ${providerId} is not eligible`);
+          continue;
+        }
+        
+        // Check if job request already exists
+        const existingRequest = await this.getProviderJobRequest(bookingId, providerId);
+        if (existingRequest) {
+          console.log(`⚠️ Smart Assignment: Job request already exists for provider ${providerId}`);
+          continue;
+        }
+        
+        // Calculate distance for this provider
+        const booking = await this.getServiceBooking(bookingId);
+        let distanceKm = 0;
+        let estimatedTravelTime = 0;
+        
+        if (booking && provider.currentLocation) {
+          distanceKm = this.calculateDistance(
+            booking.serviceLocation.latitude,
+            booking.serviceLocation.longitude,
+            provider.currentLocation.latitude,
+            provider.currentLocation.longitude
+          );
+          estimatedTravelTime = Math.ceil(distanceKm / 25 * 60); // 25 km/h average
+        }
+        
+        // Create job request
+        await this.createProviderJobRequest({
+          bookingId,
+          providerId,
+          expiresAt,
+          distanceKm: distanceKm.toString(),
+          estimatedTravelTime
+        });
+        
+        sentOffers++;
+        console.log(`✅ Smart Assignment: Job offer sent to provider ${providerId}`);
+        
+      } catch (error) {
+        console.error(`❌ Smart Assignment: Failed to send job offer to provider ${providerId}:`, error);
+        errors.push(`Failed to send offer to provider ${providerId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    console.log(`📊 Smart Assignment: Sent ${sentOffers} job offers for booking ${bookingId}`);
+    return {
+      success: sentOffers > 0,
+      sentOffers,
+      errors
+    };
+  }
+
+  async getJobRequestsWithDetails(providerId: string, options?: {
+    status?: string;
+    limit?: number;
+  }): Promise<Array<{
+    id: string;
+    bookingId: string;
+    status: string;
+    expiresAt: Date;
+    sentAt: Date;
+    distanceKm?: number;
+    booking: {
+      id: string;
+      serviceId: string;
+      userId: string;
+      serviceLocation: any;
+      totalAmount: string;
+      urgency: string;
+      status: string;
+      customerName: string;
+      serviceType: string;
+    };
+  }>> {
+    const jobRequests = await this.getProviderJobRequests(providerId, {
+      status: options?.status,
+      limit: options?.limit || 10
+    });
+    
+    const detailedRequests = [];
+    
+    for (const request of jobRequests) {
+      const booking = await this.getServiceBooking(request.bookingId);
+      if (!booking) continue;
+      
+      const service = await this.getService(booking.serviceId);
+      const customer = await this.getUser(booking.userId);
+      
+      detailedRequests.push({
+        id: request.id,
+        bookingId: request.bookingId,
+        status: request.status,
+        expiresAt: request.expiresAt,
+        sentAt: request.sentAt,
+        distanceKm: request.distanceKm ? parseFloat(request.distanceKm) : undefined,
+        booking: {
+          id: booking.id,
+          serviceId: booking.serviceId,
+          userId: booking.userId,
+          serviceLocation: booking.serviceLocation,
+          totalAmount: booking.totalAmount,
+          urgency: booking.urgency,
+          status: booking.status,
+          customerName: `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim(),
+          serviceType: service?.name || 'Unknown Service'
+        }
+      });
+    }
+    
+    return detailedRequests;
+  }
+
+  async expireJobRequests(): Promise<void> {
+    console.log('🕒 Smart Assignment: Checking for expired job requests');
+    
+    const expiredRequests = await db.select()
+      .from(providerJobRequests)
+      .where(and(
+        eq(providerJobRequests.status, 'sent'),
+        sql`${providerJobRequests.expiresAt} < NOW()`
+      ));
+    
+    if (expiredRequests.length > 0) {
+      console.log(`⏰ Smart Assignment: Found ${expiredRequests.length} expired job requests`);
+      
+      await db.update(providerJobRequests)
+        .set({ status: 'expired' })
+        .where(and(
+          eq(providerJobRequests.status, 'sent'),
+          sql`${providerJobRequests.expiresAt} < NOW()`
+        ));
+        
+      console.log(`✅ Smart Assignment: Marked ${expiredRequests.length} job requests as expired`);
+    }
+  }
+
+  async reassignExpiredBookings(): Promise<void> {
+    console.log('🔄 Smart Assignment: Checking for bookings needing reassignment');
+    
+    // Find bookings in provider_search status with no active job requests
+    const bookingsNeedingReassignment = await db.select({
+      id: serviceBookings.id,
+      createdAt: serviceBookings.createdAt
+    })
+    .from(serviceBookings)
+    .leftJoin(
+      providerJobRequests, 
+      and(
+        eq(serviceBookings.id, providerJobRequests.bookingId),
+        eq(providerJobRequests.status, 'sent')
+      )
+    )
+    .where(and(
+      eq(serviceBookings.status, 'provider_search'),
+      sql`${providerJobRequests.bookingId} IS NULL`, // No active job requests
+      sql`${serviceBookings.createdAt} < NOW() - INTERVAL '10 minutes'` // Older than 10 minutes
+    ));
+    
+    if (bookingsNeedingReassignment.length > 0) {
+      console.log(`🔄 Smart Assignment: Found ${bookingsNeedingReassignment.length} bookings needing reassignment`);
+      
+      for (const booking of bookingsNeedingReassignment) {
+        console.log(`🔄 Smart Assignment: Reassigning booking ${booking.id}`);
+        await this.autoAssignProvider(booking.id, { retryCount: 1 });
+      }
+    }
   }
 
   // ========================================

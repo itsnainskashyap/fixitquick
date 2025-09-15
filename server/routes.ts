@@ -3879,6 +3879,361 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
+  // SMART ASSIGNMENT SYSTEM ENDPOINTS  
+  // ========================================
+
+  // Rate limiter for assignment operations
+  const assignmentLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 20, // 20 assignment requests per 5 minutes
+    message: 'Too many assignment requests. Please wait before trying again.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // Trigger auto-assignment for an order
+  app.post('/api/v1/orders/:id/auto-assign', authMiddleware, assignmentLimiter, async (req, res) => {
+    try {
+      const { id: orderId } = req.params;
+      const user = req.user;
+      
+      if (!user) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Check if user has permission to trigger assignment (admin or order owner)
+      if (user.role !== 'admin') {
+        const order = await storage.getOrder(orderId);
+        if (!order || order.userId !== user.id) {
+          return res.status(403).json({ message: 'Not authorized to assign this order' });
+        }
+      }
+
+      console.log(`🤖 Smart Assignment: Auto-assignment triggered for order ${orderId} by user ${user.id}`);
+      
+      // Convert old order to service booking if needed
+      let bookingId = orderId;
+      const serviceBooking = await storage.getServiceBooking(orderId);
+      
+      if (!serviceBooking) {
+        // Check if it's an old order format
+        const order = await storage.getOrder(orderId);
+        if (order && order.type === 'service') {
+          // Convert order to service booking
+          const newBooking = await storage.createServiceBooking({
+            userId: order.userId,
+            serviceId: order.items?.[0]?.id || '',
+            bookingType: 'instant',
+            serviceLocation: order.location || {
+              type: 'current',
+              address: 'Unknown',
+              latitude: 0,
+              longitude: 0
+            },
+            totalAmount: order.totalAmount.toString(),
+            status: 'provider_search'
+          });
+          bookingId = newBooking.id;
+        } else {
+          return res.status(404).json({ message: 'Order or booking not found' });
+        }
+      }
+      
+      const result = await storage.autoAssignProvider(bookingId);
+      
+      if (result.success) {
+        // Send WebSocket notification about assignment process
+        if (webSocketManager) {
+          webSocketManager.broadcastToRoom(`order-${bookingId}`, {
+            type: 'order.assignment_started',
+            data: {
+              orderId: bookingId,
+              jobRequestIds: result.jobRequestIds,
+              message: 'Finding providers for your order...'
+            }
+          });
+        }
+        
+        res.json({
+          success: true,
+          message: 'Auto-assignment initiated successfully',
+          orderId: bookingId,
+          assignedProviderId: result.assignedProviderId,
+          status: result.assignedProviderId ? 'assigned' : 'searching'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: result.error || 'Failed to initiate assignment',
+          retryAfter: result.retryAfter
+        });
+      }
+    } catch (error) {
+      console.error('❌ Smart Assignment: Error in auto-assignment:', error);
+      res.status(500).json({ message: 'Assignment system error' });
+    }
+  });
+
+  // Get provider's job queue and assignments
+  app.get('/api/v1/providers/me/jobs', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const providerId = req.user?.id;
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      const status = req.query.status as string;
+      const limit = parseInt(req.query.limit as string) || 20;
+      
+      console.log(`📋 Smart Assignment: Fetching jobs for provider ${providerId} (status: ${status || 'all'})`);
+      
+      const jobRequests = await storage.getJobRequestsWithDetails(providerId, {
+        status,
+        limit
+      });
+      
+      // Get provider's current assignments
+      const activeBookings = await storage.getServiceBookings({
+        providerId,
+        statuses: ['provider_assigned', 'provider_on_way', 'work_in_progress'],
+        limit: 10
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          pendingOffers: jobRequests.filter(job => job.status === 'sent'),
+          activeJobs: activeBookings || [],
+          recentJobs: jobRequests.filter(job => ['accepted', 'declined', 'expired'].includes(job.status))
+        },
+        meta: {
+          totalPending: jobRequests.filter(job => job.status === 'sent').length,
+          totalActive: activeBookings?.length || 0
+        }
+      });
+    } catch (error) {
+      console.error('❌ Smart Assignment: Error fetching provider jobs:', error);
+      res.status(500).json({ message: 'Failed to fetch job queue' });
+    }
+  });
+
+  // Provider accepts a job request
+  app.post('/api/v1/job-requests/:id/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { id: jobRequestId } = req.params;
+      const providerId = req.user?.id;
+      const { estimatedArrival, quotedPrice, notes } = req.body;
+      
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      // Get job request details first
+      const jobRequest = await storage.getProviderJobRequest(jobRequestId, providerId);
+      if (!jobRequest) {
+        return res.status(404).json({ message: 'Job request not found' });
+      }
+      
+      console.log(`✅ Smart Assignment: Provider ${providerId} accepting job request ${jobRequestId}`);
+      
+      const result = await storage.acceptProviderJobRequest(jobRequest.bookingId, providerId, {
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined,
+        quotedPrice: quotedPrice ? parseFloat(quotedPrice) : undefined,
+        notes
+      });
+      
+      if (!result.success) {
+        return res.status(400).json({ 
+          message: result.message || 'Failed to accept job request'
+        });
+      }
+      
+      // Cancel other pending job requests for this booking
+      await storage.cancelOtherJobRequests(jobRequest.bookingId, providerId);
+      
+      // Send WebSocket notifications
+      if (webSocketManager) {
+        // Notify customer
+        webSocketManager.broadcastToRoom(`order-${jobRequest.bookingId}`, {
+          type: 'order.provider_assigned',
+          data: {
+            orderId: jobRequest.bookingId,
+            providerId,
+            estimatedArrival,
+            message: 'A provider has been assigned to your order!'
+          }
+        });
+        
+        // Notify provider
+        webSocketManager.sendToUser(providerId, {
+          type: 'job.accepted',
+          data: {
+            jobRequestId,
+            bookingId: jobRequest.bookingId,
+            message: 'Job accepted successfully!'
+          }
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Job accepted successfully',
+        booking: result.booking
+      });
+    } catch (error) {
+      console.error('❌ Smart Assignment: Error accepting job:', error);
+      res.status(500).json({ message: 'Failed to accept job request' });
+    }
+  });
+
+  // Provider declines a job request
+  app.post('/api/v1/job-requests/:id/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { id: jobRequestId } = req.params;
+      const providerId = req.user?.id;
+      const { reason } = req.body;
+      
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      // Get job request details first
+      const jobRequest = await storage.getProviderJobRequest(jobRequestId, providerId);
+      if (!jobRequest) {
+        return res.status(404).json({ message: 'Job request not found' });
+      }
+      
+      console.log(`❌ Smart Assignment: Provider ${providerId} declining job request ${jobRequestId}`);
+      
+      const result = await storage.declineProviderJobRequest(jobRequest.bookingId, providerId, reason);
+      
+      if (!result.success) {
+        return res.status(400).json({ 
+          message: result.message || 'Failed to decline job request'
+        });
+      }
+      
+      // Send WebSocket notifications
+      if (webSocketManager) {
+        // Notify provider
+        webSocketManager.sendToUser(providerId, {
+          type: 'job.declined',
+          data: {
+            jobRequestId,
+            bookingId: jobRequest.bookingId,
+            message: 'Job declined successfully'
+          }
+        });
+        
+        // Check if we need to trigger reassignment
+        const remainingOffers = await storage.getProviderJobRequests(providerId, {
+          status: 'sent'
+        });
+        
+        if (remainingOffers.length === 0) {
+          // No more offers for this booking, trigger reassignment
+          setTimeout(async () => {
+            console.log(`🔄 Smart Assignment: No providers responded, triggering reassignment for booking ${jobRequest.bookingId}`);
+            await storage.autoAssignProvider(jobRequest.bookingId, { retryCount: 1 });
+          }, 30000); // Wait 30 seconds before reassigning
+        }
+      }
+      
+      res.json({
+        success: true,
+        message: 'Job declined successfully'
+      });
+    } catch (error) {
+      console.error('❌ Smart Assignment: Error declining job:', error);
+      res.status(500).json({ message: 'Failed to decline job request' });
+    }
+  });
+
+  // Check order assignment status
+  app.get('/api/v1/orders/:id/provider-status', authMiddleware, async (req, res) => {
+    try {
+      const { id: orderId } = req.params;
+      const user = req.user;
+      
+      if (!user) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      // Get booking (try both service booking and order)
+      let booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        const order = await storage.getOrder(orderId);
+        if (order) {
+          // Convert order info to booking-like format
+          booking = {
+            id: order.id,
+            userId: order.userId,
+            status: order.status,
+            assignedProviderId: order.serviceProviderId,
+            totalAmount: order.totalAmount.toString()
+          } as any;
+        }
+      }
+      
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Check access permissions
+      if (user.role !== 'admin' && booking.userId !== user.id && booking.assignedProviderId !== user.id) {
+        return res.status(403).json({ message: 'Not authorized to view this order status' });
+      }
+      
+      const statusData: any = {
+        orderId,
+        status: booking.status,
+        assignedProviderId: booking.assignedProviderId,
+        assignedAt: booking.assignedAt
+      };
+      
+      // Get provider details if assigned
+      if (booking.assignedProviderId) {
+        const provider = await storage.getServiceProvider(booking.assignedProviderId);
+        const providerUser = await storage.getUser(booking.assignedProviderId);
+        
+        if (provider && providerUser) {
+          statusData.provider = {
+            id: provider.userId,
+            name: `${providerUser.firstName} ${providerUser.lastName}`.trim(),
+            profileImage: providerUser.profileImageUrl,
+            rating: provider.rating,
+            isOnline: provider.isOnline,
+            currentLocation: provider.currentLocation,
+            phone: providerUser.phone
+          };
+        }
+      }
+      
+      // Get active job requests for unassigned orders
+      if (!booking.assignedProviderId) {
+        const activeOffers = await db.select({
+          count: sql`COUNT(*)`
+        })
+        .from(providerJobRequests)
+        .where(and(
+          eq(providerJobRequests.bookingId, orderId),
+          eq(providerJobRequests.status, 'sent')
+        ));
+        
+        statusData.pendingOffers = parseInt(activeOffers[0]?.count || '0');
+      }
+      
+      res.json({
+        success: true,
+        data: statusData
+      });
+    } catch (error) {
+      console.error('❌ Smart Assignment: Error fetching provider status:', error);
+      res.status(500).json({ message: 'Failed to fetch provider status' });
+    }
+  });
+
+  // ========================================
   // PAYMENT METHODS ENDPOINTS
   // ========================================
 
