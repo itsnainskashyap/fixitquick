@@ -124,6 +124,7 @@ function AdminProtectedRoute({ component: Component }: {
   component: React.ComponentType; 
 }) {
   const { user, isLoading } = useAuth();
+  const [, setLocation] = useLocation();
 
   if (isLoading) {
     return (
@@ -134,7 +135,8 @@ function AdminProtectedRoute({ component: Component }: {
   }
 
   if (!user) {
-    return <AdminLogin />;
+    setLocation('/admin/login');
+    return null;
   }
 
   if (user.role !== 'admin') {
