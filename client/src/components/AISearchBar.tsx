@@ -116,6 +116,26 @@ export function AISearchBar({
   // AI Service instance
   const aiService = useState(() => new AIService())[0];
 
+  // Rotating placeholder functionality
+  const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0);
+  const [isPlaceholderRotating, setIsPlaceholderRotating] = useState(true);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const placeholderTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Service placeholder texts for rotation
+  const placeholderTexts = [
+    "Search for plumbing services...",
+    "Search for electrician help...", 
+    "Search for cleaning services...",
+    "Search for carpentry work...",
+    "Search for pest control...",
+    "Search for beauty & wellness...",
+    "Search for AC repair...",
+    "Search for appliance fixing...",
+    "Search for painting services...",
+    "Search for home security..."
+  ];
+
   // Built-in search suggestions - fallback when AI is unavailable
   const builtInSuggestions: SearchSuggestion[] = [
     { id: '1', text: 'Plumbing repair', category: 'Home Services', type: 'service', icon: '🔧' },
@@ -234,6 +254,47 @@ export function AISearchBar({
 
     return () => clearTimeout(timer);
   }, [messages, generateServiceSuggestions]);
+
+  // Rotating placeholder effect - only when in search mode and no query
+  useEffect(() => {
+    const startPlaceholderRotation = () => {
+      if (placeholderTimerRef.current) {
+        clearInterval(placeholderTimerRef.current);
+      }
+
+      placeholderTimerRef.current = setInterval(() => {
+        setCurrentPlaceholderIndex(prev => 
+          (prev + 1) % placeholderTexts.length
+        );
+      }, 3500); // Rotate every 3.5 seconds
+    };
+
+    const stopPlaceholderRotation = () => {
+      if (placeholderTimerRef.current) {
+        clearInterval(placeholderTimerRef.current);
+        placeholderTimerRef.current = null;
+      }
+    };
+
+    // Only rotate when in search mode, not focused, no query, and rotation is enabled
+    if (mode === 'search' && !isInputFocused && !query.trim() && isPlaceholderRotating) {
+      startPlaceholderRotation();
+    } else {
+      stopPlaceholderRotation();
+    }
+
+    // Cleanup on unmount
+    return () => stopPlaceholderRotation();
+  }, [mode, isInputFocused, query, isPlaceholderRotating, placeholderTexts.length]);
+
+  // Cleanup placeholder timer on component unmount
+  useEffect(() => {
+    return () => {
+      if (placeholderTimerRef.current) {
+        clearInterval(placeholderTimerRef.current);
+      }
+    };
+  }, []);
 
   // Mode toggle functionality
   const toggleMode = useCallback(() => {
@@ -536,11 +597,19 @@ export function AISearchBar({
   };
 
   const handleInputFocus = () => {
+    // Track focus state for placeholder rotation
+    setIsInputFocused(true);
+    
     // Only show suggestions if we have query content or recent searches
     // Do NOT set hasOpenedChat here - button should only appear after chat is opened
     if (mode === 'search' && (query.length > 1 || recentSearches.length > 0)) {
       setShowSuggestions(true);
     }
+  };
+
+  const handleInputBlur = () => {
+    // Track blur state for placeholder rotation
+    setIsInputFocused(false);
   };
 
   // Voice search controls
@@ -672,9 +741,10 @@ export function AISearchBar({
                 value={query}
                 onChange={handleInputChange}
                 onFocus={handleInputFocus}
+                onBlur={handleInputBlur}
                 onKeyDown={handleKeyDown}
-                placeholder={placeholder}
-                className="pl-12 pr-32 h-12 text-base rounded-2xl border-2 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all duration-200 bg-gradient-to-r from-background via-background to-primary/5"
+                placeholder={query.trim() || isInputFocused ? placeholder : placeholderTexts[currentPlaceholderIndex]}
+                className="pl-12 pr-32 h-12 text-base rounded-2xl border-2 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all duration-200 bg-gradient-to-r from-background via-background to-primary/5 placeholder-transition"
                 autoFocus={autoFocus}
                 data-testid="search-input"
               />
