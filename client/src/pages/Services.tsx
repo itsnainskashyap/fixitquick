@@ -172,6 +172,11 @@ export default function Services() {
     setLocation(`/services?category=${categoryId}`);
   };
 
+  const handleQuickAccessClick = (categoryId: string) => {
+    // Navigate to subcategories page for main categories
+    setLocation(`/categories/${categoryId}/subcategories`);
+  };
+
   // Build hierarchical tree structure from flat category array
   const buildCategoryTree = (categories: ServiceCategory[]): CategoryTreeNode[] => {
     const categoryMap = new Map<string, CategoryTreeNode>();
@@ -437,29 +442,6 @@ export default function Services() {
                 </Button>
               </div>
 
-              {/* All Services Option */}
-              <div 
-                className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-accent/50 transition-colors mb-2 ${
-                  selectedCategory === 'all' ? 'bg-primary/10 border border-primary/20' : ''
-                }`}
-                onClick={() => selectCategory('all')}
-                data-testid="category-all"
-              >
-                <div className="w-6 flex justify-center">
-                  <Home className="h-4 w-4" />
-                </div>
-                <span className="text-lg">🏠</span>
-                <div className="flex-1 flex items-center justify-between">
-                  <span className={`font-medium ${selectedCategory === 'all' ? 'text-primary' : 'text-foreground'}`}>
-                    All Services
-                  </span>
-                  {services && (
-                    <Badge variant="secondary" className="text-xs">
-                      {services.length}
-                    </Badge>
-                  )}
-                </div>
-              </div>
 
               {/* Hierarchical Category Tree */}
               <AnimatePresence>
@@ -542,7 +524,7 @@ export default function Services() {
                     key={category.id}
                     variant={selectedCategory === category.id ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => selectCategory(category.id, category.name)}
+                    onClick={() => handleQuickAccessClick(category.id)}
                     className="flex items-center gap-2 flex-shrink-0 scroll-snap-align-start"
                     data-testid={`quick-category-${category.id}`}
                     style={{ scrollSnapAlign: 'start' }}
@@ -561,7 +543,7 @@ export default function Services() {
           </motion.div>
         )}
 
-        {/* Filters and Search */}
+        {/* Filters */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -570,20 +552,15 @@ export default function Services() {
         >
           <Card>
             <CardContent className="p-4">
-              <div className="flex flex-col md:flex-row gap-4">
-                {/* Search */}
-                <div className="flex-1">
-                  <Input
-                    placeholder="Search services..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    data-testid="search-services"
-                  />
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Filter className="w-4 h-4" />
+                  <span className="text-sm font-medium">Filters:</span>
                 </div>
-
+                
                 {/* Sort */}
                 <Select value={sortBy} onValueChange={setSortBy}>
-                  <SelectTrigger className="w-full md:w-40">
+                  <SelectTrigger className="w-36">
                     <SelectValue placeholder="Sort by" />
                   </SelectTrigger>
                   <SelectContent>
@@ -596,7 +573,7 @@ export default function Services() {
 
                 {/* Price Range */}
                 <Select value={priceRange} onValueChange={setPriceRange}>
-                  <SelectTrigger className="w-full md:w-40">
+                  <SelectTrigger className="w-32">
                     <SelectValue placeholder="Price range" />
                   </SelectTrigger>
                   <SelectContent>
@@ -608,12 +585,14 @@ export default function Services() {
                 </Select>
 
                 {/* View Mode */}
-                <div className="flex space-x-2">
+                <div className="flex items-center gap-1 ml-auto">
+                  <span className="text-sm text-muted-foreground mr-2">View:</span>
                   <Button
                     variant={viewMode === 'list' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setViewMode('list')}
                     data-testid="list-view"
+                    className="px-3"
                   >
                     <List className="w-4 h-4" />
                   </Button>
@@ -622,6 +601,7 @@ export default function Services() {
                     size="sm"
                     onClick={() => setViewMode('grid')}
                     data-testid="grid-view"
+                    className="px-3"
                   >
                     <Grid className="w-4 h-4" />
                   </Button>
