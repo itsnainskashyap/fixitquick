@@ -1015,7 +1015,7 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
     } catch (error) {
       return {
         status: 'unhealthy',
-        mode: 'unknown',
+        mode: this.isStubMode ? 'stub' : (this.isProduction ? 'production' : 'development'),
         checks: [{
           name: 'Health Check',
           status: 'fail',

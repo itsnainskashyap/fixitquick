@@ -786,7 +786,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Development helper routes (only in development)
   if (process.env.NODE_ENV === 'development') {
-    // GET /api/dev/otp-status - Development helper for OTP system status
+    // GET /api/dev/twilio-test - Comprehensive Twilio integration test
+    app.get('/api/dev/twilio-test', async (req, res) => {
+      try {
+        const testResult = await twilioService.testSMSFunctionality();
+        const healthStatus = await twilioService.getHealthStatus();
+        const stats = await twilioService.getStatistics(24);
+        
+        const envVars = {
+          TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
+          TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN, 
+          TWILIO_FROM_NUMBER: !!process.env.TWILIO_FROM_NUMBER,
+          TWILIO_DEV_FALLBACK: process.env.TWILIO_DEV_FALLBACK,
+          SKIP_OTP_RATE_LIMIT: process.env.SKIP_OTP_RATE_LIMIT,
+          NODE_ENV: process.env.NODE_ENV
+        };
+
+        const setupComplete = !!(process.env.TWILIO_ACCOUNT_SID && 
+                                 process.env.TWILIO_AUTH_TOKEN && 
+                                 process.env.TWILIO_FROM_NUMBER);
+
+        res.json({
+          success: true,
+          twilioStatus: {
+            configured: setupComplete,
+            mode: setupComplete ? 'live' : 'stub',
+            health: healthStatus,
+            testResults: testResult
+          },
+          statistics: stats,
+          environment: envVars,
+          setupInstructions: setupComplete ? 
+            'Twilio is properly configured! ✅' : 
+            {
+              step1: 'Go to https://twilio.com/console and create an account',
+              step2: 'Get your Account SID (starts with AC...) and Auth Token',  
+              step3: 'Buy a Twilio phone number with SMS capability',
+              step4: 'Add these to Replit Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER',
+              step5: 'Restart the application to load new environment variables'
+            },
+          recommendations: {
+            forTrialAccounts: 'Set TWILIO_DEV_FALLBACK=true to enable console fallback',
+            forRateLimiting: 'Set SKIP_OTP_RATE_LIMIT=true to skip rate limits in development',
+            phoneFormat: 'Use E.164 format: +[country code][number] (e.g., +919876543210)',
+            testing: 'Use /api/dev/twilio-test-sms?phone=+919876543210 to test SMS sending'
+          }
+        });
+      } catch (error) {
+        console.error('Error testing Twilio integration:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to test Twilio integration',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // GET /api/dev/twilio-test-sms - Test SMS sending to a specific number
+    app.get('/api/dev/twilio-test-sms', async (req, res) => {
+      try {
+        const { phone } = req.query;
+        if (!phone || typeof phone !== 'string') {
+          return res.status(400).json({
+            success: false,
+            message: 'Phone parameter required. Example: ?phone=+919876543210'
+          });
+        }
+
+        console.log(`🧪 Testing SMS sending to ${phone}...`);
+        const result = await twilioService.sendOTP(phone, req.ip, req.get('User-Agent'));
+        
+        res.json({
+          success: result.success,
+          message: result.message,
+          challengeId: result.challengeId,
+          testNote: 'This is a development test. Check your phone for the OTP!',
+          nextSteps: result.success ? 
+            `Use /api/dev/twilio-verify-sms?phone=${phone}&code=XXXXXX to test verification` :
+            'Fix Twilio configuration first'
+        });
+      } catch (error) {
+        console.error('Error testing SMS sending:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to test SMS sending',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // GET /api/dev/twilio-verify-sms - Test SMS verification
+    app.get('/api/dev/twilio-verify-sms', async (req, res) => {
+      try {
+        const { phone, code } = req.query;
+        if (!phone || !code || typeof phone !== 'string' || typeof code !== 'string') {
+          return res.status(400).json({
+            success: false,
+            message: 'Phone and code parameters required. Example: ?phone=+919876543210&code=123456'
+          });
+        }
+
+        console.log(`🧪 Testing OTP verification for ${phone}...`);
+        const result = await twilioService.verifyOTP(phone, code, req.ip);
+        
+        res.json({
+          success: result.success,
+          message: result.message,
+          remainingAttempts: result.remainingAttempts,
+          testNote: 'Development verification test completed'
+        });
+      } catch (error) {
+        console.error('Error testing OTP verification:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to test OTP verification',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // GET /api/dev/otp-status - Development helper for OTP system status  
     app.get('/api/dev/otp-status', async (req, res) => {
       try {
         const stats = await twilioService.getStatistics(24);
@@ -2216,8 +2335,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             conversationId,
             senderId: userId,
             content: message.trim(),
-            messageType: 'user',
-            timestamp: new Date()
+            message: message.trim(),
+            messageType: 'user'
           });
           
           // Save AI response
@@ -2225,13 +2344,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             conversationId,
             senderId: 'ai_assistant',
             content: conversationResult.response,
+            message: conversationResult.response,
             messageType: 'ai',
-            timestamp: new Date(),
             metadata: {
-              suggestedServices: conversationResult.suggestedServices,
-              extractedInfo: conversationResult.extractedInfo,
-              nextStage: conversationResult.nextStage,
-              quickReplies: conversationResult.quickReplies
+              suggestedServices: conversationResult.suggestedServices || [],
+              extractedInfo: conversationResult.extractedInfo || {},
+              nextStage: conversationResult.nextStage || '',
+              quickReplies: conversationResult.quickReplies || []
             }
           });
         } catch (dbError) {
@@ -2376,7 +2495,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         booking: {
           id: booking.id,
           serviceId: booking.serviceId,
-          scheduledFor: booking.scheduledFor,
+          scheduledFor: booking.scheduledAt || null,
           status: booking.status
         },
         conversationId
@@ -3509,7 +3628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Send booking notifications
-      await notificationService.notifyOrderUpdate(booking);
+      await notificationService.notifyOrderUpdate(booking.userId, booking.id, booking.status);
 
       res.status(201).json(booking);
     } catch (error) {
@@ -3603,8 +3722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updatedBooking = await storage.updateServiceBooking(bookingId, {
         status,
-        notes: notes || undefined,
-        updatedAt: new Date(),
+        notes: notes || undefined
       });
 
       // Send status change notifications
@@ -3667,7 +3785,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.cancelOtherJobRequests(bookingId, providerId);
 
       // Send notifications
-      await notificationService.notifyProviderAssignment(booking.userId, bookingId, providerId);
+      const customerUser = await storage.getUser(booking.userId);
+      const serviceData = await storage.getService(booking.serviceId);
+      await notificationService.notifyProviderAssignment(
+        providerId, 
+        bookingId, 
+        `${customerUser?.firstName} ${customerUser?.lastName}`.trim() || 'Customer',
+        serviceData?.name || 'Service'
+      );
 
       res.json({
         success: true,
@@ -3822,16 +3947,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedProviderId: providerId,
         assignedAt: new Date(),
         assignmentMethod: userRole === 'admin' ? 'manual' : 'auto',
-        status: 'provider_assigned',
-        updatedAt: new Date(),
+        status: 'provider_assigned'
       });
 
       // Cancel other pending job requests
       await storage.cancelOtherJobRequests(bookingId, providerId);
 
-      // Send notifications
-      await notificationService.notifyProviderAssignment(providerId, bookingId);
-      await notificationService.notifyProviderAssignment(booking.userId, bookingId, providerId);
+      // Send notifications  
+      const customerUser = await storage.getUser(booking.userId);
+      const serviceData = await storage.getService(booking.serviceId);
+      const customerName = `${customerUser?.firstName} ${customerUser?.lastName}`.trim() || 'Customer';
+      const serviceType = serviceData?.name || 'Service';
+      
+      await notificationService.notifyProviderAssignment(providerId, bookingId, customerName, serviceType);
+      await notificationService.notifyOrderUpdate(booking.userId, bookingId, 'provider_assigned', customerName);
 
       res.json({
         success: true,
@@ -3947,7 +4076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Send push notification to provider
-        await notificationService.notifyOrderUpdate(provider.userId, booking.id);
+        await notificationService.notifyOrderUpdate(provider.userId, booking.id, 'provider_search');
       }
 
       // Set up timeout to handle no provider response
@@ -4008,7 +4137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get booking details for notification
       const booking = await storage.getServiceBooking(bookingId);
       if (booking) {
-        await notificationService.notifyOrderUpdate(booking.userId, bookingId);
+        await notificationService.notifyOrderUpdate(booking.userId, bookingId, 'cancelled', 'System');
       }
     } catch (error) {
       console.error('Error handling no provider response:', error);
@@ -4201,11 +4330,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             userId: order.userId,
             serviceId: order.items?.[0]?.id || '',
             bookingType: 'instant',
-            serviceLocation: order.location || {
+            serviceLocation: order.location ? {
               type: 'current',
-              address: 'Unknown',
+              latitude: order.location.latitude || 0,
+              longitude: order.location.longitude || 0,
+              address: order.location.address || 'Unknown'
+            } : {
+              type: 'current',
               latitude: 0,
-              longitude: 0
+              longitude: 0,
+              address: 'Unknown'
             },
             totalAmount: order.totalAmount.toString(),
             status: 'provider_search'
@@ -4270,8 +4404,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Get provider's current assignments
-      const activeBookings = await storage.getServiceBookings({
-        providerId,
+      const activeBookings = await storage.getUserServiceBookings(providerId, {
         statuses: ['provider_assigned', 'provider_on_way', 'work_in_progress'],
         limit: 10
       });
@@ -4497,7 +4630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(providerJobRequests.status, 'sent')
         ));
         
-        statusData.pendingOffers = parseInt(activeOffers[0]?.count || '0');
+        statusData.pendingOffers = parseInt(String(activeOffers[0]?.count || 0));
       }
       
       res.json({
@@ -5260,7 +5393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         storage.getPartsByProvider(userId),
         storage.getOrdersByProvider(userId),
         storage.getPartsProviderBusinessInfo(userId),
-        storage.getPartsInventoryMovements({ providerId: userId, limit: 10 }),
+        storage.getPartsInventoryMovements(userId, 10),
         storage.getPartsSuppliers(userId),
         storage.getLowStockParts(userId, 10)
       ]);
@@ -5676,6 +5809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderId,
         senderId: userId ?? '',
         receiverId,
+        content: message.trim(),
         message: message.trim(),
         messageType,
         attachments,
@@ -7100,7 +7234,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        if (order.userId !== userId && order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+        const hasOrderAccess = order.userId === userId || 
+                            order.serviceProviderId === userId || 
+                            order.partsProviderId === userId;
+        
+        if (!hasOrderAccess) {
           return res.status(403).json({
             success: false,
             message: 'Access denied to this order'
@@ -7120,7 +7258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               `chat-${Date.now()}-${fileName}`
             );
             fileUrl = uploadResult.url;
-            fileName = uploadResult.fileName;
+            fileName = uploadResult.fileName || uploadResult.filename || fileName;
           } catch (error) {
             console.error('Object storage upload failed:', error);
             return res.status(500).json({
@@ -7206,7 +7344,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        if (order.userId !== userId && order.serviceProviderId !== userId && order.partsProviderId !== userId) {
+        const hasOrderAccess = order.userId === userId || 
+                            order.serviceProviderId === userId || 
+                            order.partsProviderId === userId;
+        
+        if (!hasOrderAccess) {
           return res.status(403).json({
             success: false,
             message: 'Access denied to this order'
@@ -7381,8 +7523,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const ticket = await storage.createSupportTicket(ticketData);
       
-      // Send notification to support team
-      await notificationService.sendPushNotification(ticket.id, ticket.subject, ticket.category);
+      // Send notification to support team (admin notification system)
+      const adminUsers = await storage.getUsersByRole('admin');
+      for (const admin of adminUsers) {
+        await notificationService.sendPushNotification(admin.id, {
+          title: 'New Support Ticket',
+          body: `${ticket.category}: ${ticket.subject}`,
+          data: { type: 'support_ticket', ticketId: ticket.id }
+        });
+      }
       
       res.status(201).json({
         success: true,
@@ -7523,9 +7672,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Notify relevant parties
       if (req.user?.role !== 'admin') {
-        await notificationService.sendBulkNotifications(ticketId, message.message);
+        // Send notification to admin about new customer message
+        const adminUsers = await storage.getUsersByRole('admin');
+        for (const admin of adminUsers) {
+          await notificationService.sendPushNotification(admin.id, {
+            title: 'Support Ticket Update',
+            body: `New message on ticket #${ticket.ticketNumber}`,
+            data: { type: 'support_message', ticketId }
+          });
+        }
       } else {
-        await notificationService.sendPushNotification(ticket.userId, `New message on ticket #${ticket.ticketNumber}`);
+        // Send notification to customer about admin response
+        await notificationService.sendPushNotification(ticket.userId || '', {
+          title: 'Support Response',
+          body: `New message on ticket #${ticket.ticketNumber}`,
+          data: { type: 'support_response', ticketId }
+        });
       }
       
       res.status(201).json({
@@ -7636,8 +7798,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const callback = await storage.createSupportCallbackRequest(callbackData);
       
-      // Notify support team
-      await notificationService.sendPushNotification(callback.id, callback.reason, callback.priority);
+      // Notify support team (admin notification system)
+      const adminUsers = await storage.getUsersByRole('admin');
+      for (const admin of adminUsers) {
+        await notificationService.sendPushNotification(admin.id, {
+          title: 'Callback Request',
+          body: `${callback.priority} priority: ${callback.reason}`,
+          data: { type: 'callback_request', requestId: callback.id }
+        });
+      }
       
       res.status(201).json({
         success: true,
