@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
-import { DocumentUpload, type UploadedDocument, type DocumentType } from '@/components/DocumentUpload';
+import DocumentUpload, { type UploadedDocument, type DocumentType } from '@/components/DocumentUpload';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

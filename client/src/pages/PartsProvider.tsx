@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
-import { ImageGallery } from '@/components/ImageGallery';
+import ImageGallery from '@/components/ImageGallery';
 import { 
   Package, 
   Plus, 

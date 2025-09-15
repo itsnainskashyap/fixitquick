@@ -4,7 +4,7 @@ import { useLocation } from 'wouter';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
-import { AvatarUpload } from '@/components/AvatarUpload';
+import AvatarUpload from '@/components/AvatarUpload';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { RegionSelector } from '@/components/RegionSelector';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
