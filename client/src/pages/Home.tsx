@@ -99,9 +99,6 @@ export default function Home() {
     setLocation(`/categories/${categoryId}/subcategories`);
   };
 
-  const handleEmergencyClick = () => {
-    setLocation('/emergency');
-  };
 
   const handleLocationClick = () => {
     setLocation('/location');
@@ -131,7 +128,6 @@ export default function Home() {
       <Header
         onCartClick={() => setIsCartOpen(true)}
         onLocationClick={handleLocationClick}
-        onEmergencyClick={handleEmergencyClick}
         cartItemsCount={getItemCount()}
       />
 

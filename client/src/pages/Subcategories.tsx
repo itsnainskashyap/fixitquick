@@ -59,9 +59,6 @@ export default function Subcategories() {
     setLocation('/location');
   };
 
-  const handleEmergencyClick = () => {
-    setLocation('/emergency');
-  };
 
   // Auth is handled by the ProtectedRoute wrapper in App.tsx
   if (!user) {
@@ -77,7 +74,6 @@ export default function Subcategories() {
       <Header
         onCartClick={() => setIsCartOpen(true)}
         onLocationClick={handleLocationClick}
-        onEmergencyClick={handleEmergencyClick}
         cartItemsCount={getItemCount()}
       />
 

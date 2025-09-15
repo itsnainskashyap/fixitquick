@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, ShoppingCart, Bell, Menu, AlertTriangle, Wallet, Plus, BarChart3, Package, Users, Settings, Home, Calendar } from 'lucide-react';
+import { MapPin, ShoppingCart, Bell, Menu, Wallet, Plus, BarChart3, Package, Users, Settings, Home, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,7 +17,6 @@ import { Link } from 'wouter';
 interface HeaderProps {
   onCartClick?: () => void;
   onLocationClick?: () => void;
-  onEmergencyClick?: () => void;
   cartItemsCount?: number;
 }
 
@@ -29,7 +28,6 @@ interface WalletData {
 export function Header({
   onCartClick,
   onLocationClick,
-  onEmergencyClick,
   cartItemsCount = 0,
 }: HeaderProps) {
   const { user, isAuthenticated } = useAuth();
@@ -261,18 +259,6 @@ export function Header({
           />
         </div>
       </motion.header>
-
-      {/* Emergency SOS Button */}
-      <motion.button
-        initial={{ scale: 0 }}
-        animate={{ scale: 1 }}
-        transition={{ delay: 0.5, type: 'spring', stiffness: 300 }}
-        onClick={onEmergencyClick}
-        className="emergency-button"
-        data-testid="emergency-button"
-      >
-        <AlertTriangle className="w-6 h-6" />
-      </motion.button>
 
 
       {/* Click outside handlers */}
