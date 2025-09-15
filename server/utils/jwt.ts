@@ -44,6 +44,26 @@ class JWTService {
   }
 
   /**
+   * Generate standalone access token for admin users
+   */
+  async generateAccessToken(
+    userId: string,
+    role: string = 'user'
+  ): Promise<string> {
+    const now = Math.floor(Date.now() / 1000);
+    
+    const accessPayload: AccessTokenPayload = {
+      userId,
+      phone: '', // Admin users don't need phone numbers
+      role,
+      iat: now,
+      exp: now + this.ACCESS_TOKEN_EXPIRY
+    };
+    
+    return jwt.sign(accessPayload, this.SECRET, { algorithm: 'HS256' });
+  }
+
+  /**
    * Generate access and refresh token pair for a user
    */
   async generateTokenPair(

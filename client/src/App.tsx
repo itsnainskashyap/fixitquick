@@ -20,6 +20,7 @@ const LocalizationProvider = I18N_ENABLED ? lazy(() =>
 // Import pages
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
+import AdminLogin from "@/pages/AdminLogin";
 import Services from "@/pages/Services";
 import ServiceBooking from "@/pages/ServiceBooking";
 import Parts from "@/pages/Parts";
@@ -139,6 +140,7 @@ function Router() {
     <Switch>
       {/* Public Routes */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
+      <Route path="/admin/login" component={AdminLogin} />
       
       {/* Smart Home Route - Redirects authenticated users to their role-based dashboard */}
       <Route path="/" component={SmartHome} />

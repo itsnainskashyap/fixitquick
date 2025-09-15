@@ -38,7 +38,55 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
-    // Handle Replit session authentication first
+    // PRIORITY 1: Check for admin token in cookies first (takes precedence over all other auth)
+    if (req.cookies?.adminToken) {
+      console.log('🍪 authMiddleware: Found admin token in secure cookie, processing with highest priority');
+      try {
+        const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
+        if (jwtPayload) {
+          console.log(`🔑 authMiddleware: Admin JWT token verified for userId: ${jwtPayload.userId}`);
+          // Get user data from database
+          const user = await storage.getUser(jwtPayload.userId);
+          if (!user || !user.isActive) {
+            console.error(`❌ authMiddleware: Admin user ${jwtPayload.userId} not found or inactive`);
+            return res.status(404).json({ 
+              message: 'Admin user not found or inactive' 
+            });
+          }
+
+          // Attach admin user data to request in compatible format
+          req.user = {
+            id: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: user.role || 'admin', // Ensure admin role
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          };
+
+          console.log(`✅ authMiddleware: Admin user ${user.id} authenticated with role: ${user.role}`);
+          return next();
+        }
+      } catch (adminAuthError) {
+        console.error('❌ authMiddleware: Admin cookie token invalid:', adminAuthError);
+        // Clear invalid admin cookie
+        res.clearCookie('adminToken', { path: '/', httpOnly: true });
+        return res.status(401).json({ 
+          message: 'Invalid admin token - please login again' 
+        });
+      }
+    }
+
+    // PRIORITY 2: Handle Replit session authentication
     if (req.user) {
       // Debug session user object structure
       console.log(`🔍 authMiddleware: Existing user object:`, {
@@ -147,19 +195,18 @@ export const authMiddleware = async (
       }
     }
 
+    // PRIORITY 3: Check for JWT token in Authorization header (SMS auth)
+    let token: string | undefined;
     const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ 
-        message: 'Unauthorized - No valid authorization header' 
-      });
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split('Bearer ')[1]?.trim();
+      console.log('📱 authMiddleware: Found token in Authorization header');
     }
-
-    const token = authHeader.split('Bearer ')[1]?.trim();
     
+    // No authentication token found
     if (!token) {
       return res.status(401).json({ 
-        message: 'Unauthorized - No token provided' 
+        message: 'Unauthorized - No authentication token provided' 
       });
     }
 

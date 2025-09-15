@@ -5,6 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "./db";
@@ -134,6 +135,16 @@ const walletLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Admin login rate limiter for security
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 admin login attempts per 15 minutes per IP
+  message: 'Too many admin login attempts. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful logins against the limit
+});
+
 // Validation schemas for API routes
 const loginSchema = z.object({
   uid: z.string().min(1, 'User ID is required'),
@@ -141,6 +152,12 @@ const loginSchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   profileImageUrl: z.string().optional(),
+});
+
+// Admin login validation schema (supports literal admin credentials)
+const adminLoginSchema = z.object({
+  email: z.string().min(1, 'Email is required').max(100, 'Email cannot exceed 100 characters'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 const searchSchema = z.object({
@@ -547,7 +564,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Note: Apply rate limiting selectively to specific routes, not globally
 
   // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res) => {
     try {
       const userId = req.user?.id || req.user?.claims?.sub;
       const user = await storage.getUser(userId);
@@ -1836,6 +1853,186 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // - Add Zod validation schemas  
   // - Update IStorage interface with proper typing
   // - Implement methods following established patterns
+
+  // Secure admin login endpoint with environment-based credentials
+  app.post('/api/admin/login', adminLoginLimiter, validateBody(adminLoginSchema), async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+      
+      // Secure admin credentials from environment variables
+      const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+      const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
+      const ADMIN_ID = 'admin-001'; // Fixed admin ID for consistency
+      
+      // Validate environment configuration
+      if (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH) {
+        console.error('❌ Admin credentials not configured in environment variables');
+        return res.status(500).json({
+          success: false,
+          message: 'Server configuration error'
+        });
+      }
+      
+      console.log('🔐 Admin login attempt:', {
+        providedEmail: email,
+        hasExpectedEmail: !!ADMIN_EMAIL,
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+      
+      // Validate credentials using constant-time comparison for security
+      const isValidEmail = email === ADMIN_EMAIL;
+      const isValidPassword = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+      
+      if (!isValidEmail || !isValidPassword) {
+        console.warn('❌ Invalid admin login attempt:', {
+          emailMatched: isValidEmail,
+          passwordMatched: isValidPassword,
+          ip: req.ip,
+          timestamp: new Date().toISOString()
+        });
+        
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid admin credentials'
+        });
+      }
+      
+      // Create or get admin user
+      let adminUser;
+      try {
+        adminUser = await storage.getUser(ADMIN_ID);
+      } catch (error) {
+        // Admin user doesn't exist, create it
+        console.log('🔧 Creating admin user...');
+      }
+      
+      if (!adminUser) {
+        // Create admin user in database
+        try {
+          adminUser = await storage.createUser({
+            id: ADMIN_ID,
+            email: ADMIN_EMAIL,
+            firstName: 'Administrator',
+            lastName: 'Admin',
+            role: 'admin',
+            isVerified: true,
+            walletBalance: '0.00',
+            fixiPoints: 0,
+            isActive: true,
+          });
+          console.log('✅ Admin user created successfully');
+        } catch (createError) {
+          console.error('❌ Failed to create admin user:', createError);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to initialize admin user'
+          });
+        }
+      } else {
+        // Ensure admin user has correct role
+        if (adminUser.role !== 'admin') {
+          adminUser = await storage.updateUser(ADMIN_ID, {
+            role: 'admin',
+            isVerified: true,
+          }) || adminUser;
+        }
+      }
+      
+      // Generate admin JWT token with admin role
+      const adminToken = await jwtService.generateAccessToken(ADMIN_ID, 'admin');
+      
+      // Set secure HttpOnly cookie for admin authentication
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+        sameSite: 'strict' as const,
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        path: '/'
+      };
+      
+      res.cookie('adminToken', adminToken, cookieOptions);
+      
+      console.log('✅ Admin login successful:', {
+        adminId: ADMIN_ID,
+        email: ADMIN_EMAIL,
+        ip: req.ip,
+        timestamp: new Date().toISOString(),
+        tokenSet: 'HttpOnly cookie'
+      });
+      
+      // Return success response with admin user data (no token in response)
+      res.json({
+        success: true,
+        message: 'Admin login successful',
+        user: {
+          id: adminUser.id,
+          email: adminUser.email,
+          firstName: adminUser.firstName,
+          lastName: adminUser.lastName,
+          role: adminUser.role,
+          isVerified: adminUser.isVerified,
+          isActive: adminUser.isActive,
+          displayName: `${adminUser.firstName} ${adminUser.lastName}`.trim(),
+        },
+        adminAccess: true
+      });
+      
+    } catch (error) {
+      console.error('❌ Admin login error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Admin login failed due to server error'
+      });
+    }
+  });
+
+  // Secure admin logout endpoint with proper cookie clearing
+  app.post('/api/admin/logout', async (req: Request, res: Response) => {
+    try {
+      console.log('🔐 Admin logout attempt:', {
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+        timestamp: new Date().toISOString()
+      });
+
+      // Clear the admin token cookie with all the same options used when setting it
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict' as const,
+        path: '/'
+      };
+
+      res.clearCookie('adminToken', cookieOptions);
+
+      console.log('✅ Admin logout successful:', {
+        ip: req.ip,
+        timestamp: new Date().toISOString(),
+        cookieCleared: true
+      });
+
+      res.json({
+        success: true,
+        message: 'Admin logout successful'
+      });
+
+    } catch (error) {
+      console.error('❌ Admin logout error:', error);
+      // Still clear the cookie even if there's an error
+      res.clearCookie('adminToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict' as const,
+        path: '/'
+      });
+      
+      res.status(500).json({
+        success: false,
+        message: 'Logout completed but with errors'
+      });
+    }
+  });
 
   app.post('/api/v1/auth/login', validateBody(loginSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
