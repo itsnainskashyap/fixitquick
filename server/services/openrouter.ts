@@ -36,11 +36,37 @@ interface OpenRouterResponse {
 export class OpenRouterService {
   private apiKey: string;
   private baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
-  private model = 'deepseek/deepseek-chat-v3.1:free';
+  private defaultModel = 'deepseek/deepseek-chat-v3.1:free';
   private siteUrl: string;
   private siteName: string;
   private cache = new Map<string, { data: any; timestamp: number }>();
   private readonly cacheTimeout = 3 * 60 * 1000; // 3 minutes cache
+  private usageStats = new Map<string, { tokens: number; requests: number; cost: number }>();
+  
+  // Available models for different use cases
+  private readonly models = {
+    // Free/Cost-effective models
+    free: {
+      deepseek: 'deepseek/deepseek-chat-v3.1:free',
+      llama: 'meta-llama/llama-3.1-8b-instruct:free',
+      qwen: 'qwen/qwen-2-7b-instruct:free'
+    },
+    // Premium models for complex tasks
+    premium: {
+      gpt4: 'openai/gpt-4o-2024-08-06',
+      gpt4_turbo: 'openai/gpt-4-turbo',
+      claude: 'anthropic/claude-3.5-sonnet-20241022',
+      claude_haiku: 'anthropic/claude-3-haiku-20240307',
+      gemini: 'google/gemini-pro-1.5-exp'
+    },
+    // Specialized models
+    specialized: {
+      creative: 'meta-llama/llama-3.1-70b-instruct',
+      analysis: 'anthropic/claude-3.5-sonnet-20241022',
+      coding: 'deepseek/deepseek-coder',
+      fast: 'openai/gpt-3.5-turbo'
+    }
+  };
 
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
@@ -53,14 +79,112 @@ export class OpenRouterService {
       throw new Error('OpenRouter API key is required but not configured. Please add OPENROUTER_API_KEY to environment secrets.');
     }
     
-    console.log('🤖 AI Service: Initialized with OpenRouter');
-    console.log('📡 Using model:', this.model);
+    console.log('🤖 Enhanced AI Service: Initialized with OpenRouter');
+    console.log('📡 Default model:', this.defaultModel);
+    console.log('🎯 Available model categories:', Object.keys(this.models));
     console.log('🌐 Site URL:', this.siteUrl);
     console.log('🔑 API Key configured:', this.apiKey ? 'YES' : 'NO');
+    console.log('💰 Usage tracking enabled');
   }
 
-  async generateContent(prompt: string): Promise<string> {
-    console.log('🤖 OpenRouter: Generating content for prompt');
+  // Enhanced model selection based on use case
+  private selectModel(useCase: 'general' | 'creative' | 'analysis' | 'fast' | 'premium' = 'general'): string {
+    switch (useCase) {
+      case 'creative':
+        return this.models.specialized.creative;
+      case 'analysis':
+        return this.models.specialized.analysis;
+      case 'fast':
+        return this.models.specialized.fast;
+      case 'premium':
+        return this.models.premium.claude;
+      default:
+        return this.defaultModel; // Free tier by default
+    }
+  }
+
+  // Get available models for admin interface
+  getAvailableModels(): typeof this.models {
+    return this.models;
+  }
+
+  // Track usage for cost monitoring
+  private trackUsage(model: string, tokens: number, estimatedCost: number = 0): void {
+    const existing = this.usageStats.get(model) || { tokens: 0, requests: 0, cost: 0 };
+    this.usageStats.set(model, {
+      tokens: existing.tokens + tokens,
+      requests: existing.requests + 1,
+      cost: existing.cost + estimatedCost
+    });
+  }
+
+  // Estimate usage cost based on model and token count
+  private estimateUsageCost(model: string, tokens: number): number {
+    // Rough cost estimates per 1M tokens (these are approximations)
+    const costPerMillion: Record<string, { input: number; output: number }> = {
+      'deepseek/deepseek-chat-v3.1:free': { input: 0, output: 0 }, // Free tier
+      'meta-llama/llama-3.1-8b-instruct:free': { input: 0, output: 0 }, // Free tier
+      'qwen/qwen-2-7b-instruct:free': { input: 0, output: 0 }, // Free tier
+      'openai/gpt-4o-2024-08-06': { input: 2.50, output: 10.00 },
+      'openai/gpt-4-turbo': { input: 10.00, output: 30.00 },
+      'anthropic/claude-3.5-sonnet-20241022': { input: 3.00, output: 15.00 },
+      'anthropic/claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+      'google/gemini-pro-1.5-exp': { input: 3.50, output: 10.50 },
+      'meta-llama/llama-3.1-70b-instruct': { input: 0.88, output: 0.88 },
+      'deepseek/deepseek-coder': { input: 0.14, output: 0.28 },
+      'openai/gpt-3.5-turbo': { input: 0.50, output: 1.50 }
+    };
+    
+    const modelCost = costPerMillion[model];
+    if (!modelCost) {
+      return 0; // Unknown model, assume free
+    }
+    
+    // Approximate 70% input tokens, 30% output tokens
+    const inputTokens = Math.floor(tokens * 0.7);
+    const outputTokens = Math.ceil(tokens * 0.3);
+    
+    return ((inputTokens * modelCost.input) + (outputTokens * modelCost.output)) / 1000000;
+  }
+
+  // Get usage statistics with enhanced details
+  getUsageStats(): {
+    byModel: Map<string, { tokens: number; requests: number; cost: number }>;
+    total: { tokens: number; requests: number; cost: number };
+    mostUsedModel: string;
+    totalCostToday: number;
+  } {
+    let totalTokens = 0;
+    let totalRequests = 0;
+    let totalCost = 0;
+    let mostUsedModel = '';
+    let maxRequests = 0;
+    
+    for (const [model, stats] of this.usageStats) {
+      totalTokens += stats.tokens;
+      totalRequests += stats.requests;
+      totalCost += stats.cost;
+      
+      if (stats.requests > maxRequests) {
+        maxRequests = stats.requests;
+        mostUsedModel = model;
+      }
+    }
+    
+    return {
+      byModel: new Map(this.usageStats),
+      total: { tokens: totalTokens, requests: totalRequests, cost: totalCost },
+      mostUsedModel: mostUsedModel || this.defaultModel,
+      totalCostToday: totalCost // Could be enhanced to track daily costs
+    };
+  }
+
+  // Generate content with model selection
+  async generateContent(
+    prompt: string, 
+    useCase: 'general' | 'creative' | 'analysis' | 'fast' | 'premium' = 'general'
+  ): Promise<string> {
+    console.log('🤖 Enhanced OpenRouter: Generating content for', useCase, 'use case');
     
     const messages: OpenRouterMessage[] = [
       {
@@ -73,26 +197,45 @@ export class OpenRouterService {
       }
     ];
     
-    return this.makeRequest(messages, { temperature: 0.7 });
+    return this.makeRequestWithModel(messages, { temperature: 0.7 }, useCase);
   }
 
+  // Enhanced request method with model selection and usage tracking
+  async makeRequestWithModel(
+    messages: OpenRouterMessage[],
+    options: {
+      temperature?: number;
+      maxTokens?: number;
+      responseFormat?: { type: 'json_object' };
+    } = {},
+    useCase: 'general' | 'creative' | 'analysis' | 'fast' | 'premium' = 'general'
+  ): Promise<string> {
+    const selectedModel = this.selectModel(useCase);
+    return this.makeRequest(messages, options, selectedModel);
+  }
+
+  // Backwards compatible method (uses default model)
   async makeRequest(
     messages: OpenRouterMessage[],
     options: {
       temperature?: number;
       maxTokens?: number;
       responseFormat?: { type: 'json_object' };
-    } = {}
+    } = {},
+    model?: string
   ): Promise<string> {
+    const selectedModel = model || this.defaultModel;
+    
     try {
-      console.log('🚀 OpenRouter API Request:', {
-        model: this.model,
+      console.log('🚀 Enhanced OpenRouter API Request:', {
+        model: selectedModel,
         messageCount: messages.length,
-        lastMessage: messages[messages.length - 1]?.content?.substring(0, 100) + '...'
+        lastMessage: messages[messages.length - 1]?.content?.substring(0, 100) + '...',
+        useCase: model ? 'custom' : 'default'
       });
 
       const requestBody: OpenRouterRequest = {
-        model: this.model,
+        model: selectedModel,
         messages,
         temperature: options.temperature || 0.7,
         max_tokens: options.maxTokens || 1000,
@@ -128,10 +271,23 @@ export class OpenRouterService {
 
       const data = await response.json() as OpenRouterResponse;
       
-      console.log('✅ OpenRouter API Response:', {
-        tokensUsed: data.usage?.total_tokens || 0,
-        responseLength: data.choices[0]?.message?.content?.length || 0
+      const tokensUsed = data.usage?.total_tokens || 0;
+      const responseLength = data.choices[0]?.message?.content?.length || 0;
+      
+      // Enhanced logging with model information
+      console.log('✅ Enhanced OpenRouter API Response:', {
+        model: selectedModel,
+        tokensUsed,
+        responseLength,
+        promptTokens: data.usage?.prompt_tokens || 0,
+        completionTokens: data.usage?.completion_tokens || 0
       });
+
+      // Track usage for cost monitoring
+      if (tokensUsed > 0) {
+        const estimatedCost = this.estimateUsageCost(selectedModel, tokensUsed);
+        this.trackUsage(selectedModel, tokensUsed, estimatedCost);
+      }
 
       const content = data.choices[0]?.message?.content;
       if (!content) {
@@ -141,7 +297,10 @@ export class OpenRouterService {
       return content;
 
     } catch (error) {
-      console.error('💥 OpenRouter Request Error:', error);
+      console.error('💥 Enhanced OpenRouter Request Error:', {
+        model: selectedModel,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
       throw error;
     }
   }
@@ -183,10 +342,10 @@ export class OpenRouterService {
       content: userMessage
     });
 
-    return await this.makeRequest(messages, {
+    return await this.makeRequestWithModel(messages, {
       temperature: 0.8,
       maxTokens: 500
-    });
+    }, 'general'); // Use general model for chat responses
   }
 
   async analyzeSearchIntent(query: string): Promise<{
@@ -221,13 +380,13 @@ export class OpenRouterService {
     }`;
 
     try {
-      const response = await this.makeRequest([
+      const response = await this.makeRequestWithModel([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ], {
         responseFormat: { type: 'json_object' },
         temperature: 0.3
-      });
+      }, 'analysis'); // Use analysis model for intent analysis
 
       const parsed = JSON.parse(response);
       return parsed;
@@ -262,13 +421,13 @@ export class OpenRouterService {
     Category: ${category}`;
 
     try {
-      const response = await this.makeRequest([
+      const response = await this.makeRequestWithModel([
         { role: 'system', content: 'You are a professional copywriter for a service marketplace.' },
         { role: 'user', content: prompt }
       ], {
         temperature: 0.7,
         maxTokens: 150
-      });
+      }, 'creative'); // Use creative model for service descriptions
 
       return response.trim();
     } catch (error) {
