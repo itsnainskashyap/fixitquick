@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { ImageGallery } from '@/components/ImageGallery';
 import { 
   Package, 
   Plus, 
@@ -109,6 +110,15 @@ export default function PartsProvider() {
     category: '',
     specifications: '',
   });
+
+  // Image management state
+  const [partImages, setPartImages] = useState<Array<{
+    id: string;
+    url: string;
+    file?: File;
+    status: 'uploading' | 'completed' | 'error';
+    progress?: number;
+  }>>([]);
 
   // Check if user is a parts provider
   if (!user || user.role !== 'parts_provider') {
@@ -220,7 +230,7 @@ export default function PartsProvider() {
     },
   });
 
-  const handleAddPart = () => {
+  const handleAddPart = async () => {
     if (!partForm.name || !partForm.price || !partForm.stock) {
       toast({
         title: "Missing information",
@@ -233,11 +243,17 @@ export default function PartsProvider() {
     const specifications = partForm.specifications ? 
       JSON.parse(partForm.specifications) : {};
 
+    // Get completed image URLs
+    const imageUrls = partImages
+      .filter(img => img.status === 'completed')
+      .map(img => img.url);
+
     addPartMutation.mutate({
       ...partForm,
       price: parseFloat(partForm.price),
       stock: parseInt(partForm.stock),
       specifications,
+      images: imageUrls,
     });
   };
 
@@ -262,6 +278,92 @@ export default function PartsProvider() {
       category: '',
       specifications: '',
     });
+    setPartImages([]);
+  };
+
+  // Handle product image upload
+  const handleProductImageUpload = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+
+    const newImages = files.map(file => ({
+      id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      url: URL.createObjectURL(file), // Temporary local URL for preview
+      file,
+      status: 'uploading' as const,
+      progress: 0,
+    }));
+
+    // Add temporary images to state for immediate UI feedback
+    setPartImages(prev => [...prev, ...newImages]);
+
+    // Upload each file
+    for (const imageData of newImages) {
+      try {
+        const formData = new FormData();
+        formData.append('images', imageData.file!);
+        formData.append('documentType', 'product_image');
+
+        const response = await apiRequest('POST', '/api/v1/upload/product-images', formData, {
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setPartImages(prev => 
+                prev.map(img => 
+                  img.id === imageData.id 
+                    ? { ...img, progress }
+                    : img
+                )
+              );
+            }
+          }
+        });
+
+        const result = await response.json();
+
+        if (result.success && result.images && result.images.length > 0) {
+          const uploadedImage = result.images[0];
+          
+          // Update image with uploaded URL and mark as completed
+          setPartImages(prev => 
+            prev.map(img => 
+              img.id === imageData.id 
+                ? { 
+                    ...img, 
+                    url: uploadedImage.url, 
+                    status: 'completed' as const,
+                    progress: 100 
+                  }
+                : img
+            )
+          );
+
+          // Clean up temporary object URL
+          URL.revokeObjectURL(imageData.url);
+        } else {
+          throw new Error(result.message || 'Upload failed');
+        }
+      } catch (error) {
+        console.error('Product image upload error:', error);
+        
+        // Mark image as error and show toast
+        setPartImages(prev => 
+          prev.map(img => 
+            img.id === imageData.id 
+              ? { ...img, status: 'error' as const }
+              : img
+          )
+        );
+
+        toast({
+          title: "Image upload failed",
+          description: `Failed to upload ${imageData.file?.name}. Please try again.`,
+          variant: "destructive",
+        });
+
+        // Clean up temporary object URL
+        URL.revokeObjectURL(imageData.url);
+      }
+    }
   };
 
   const getStockStatus = (stock: number) => {
@@ -802,6 +904,25 @@ export default function PartsProvider() {
                   onChange={(e) => setPartForm(prev => ({ ...prev, specifications: e.target.value }))}
                   placeholder='{"voltage": "220V", "material": "Copper"}'
                   data-testid="part-specs-input"
+                />
+              </div>
+
+              {/* Product Images Upload */}
+              <div>
+                <Label>Product Images</Label>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Upload high-quality images of your part. The first image will be the primary image.
+                </p>
+                <ImageGallery
+                  images={partImages}
+                  onImagesChange={setPartImages}
+                  onUpload={handleProductImageUpload}
+                  maxImages={10}
+                  acceptedTypes={['image/jpeg', 'image/jpg', 'image/png', 'image/webp']}
+                  maxSizePerFile={10 * 1024 * 1024} // 10MB
+                  enableReordering={true}
+                  showImageMetadata={false}
+                  className="border-2 border-dashed border-border rounded-lg"
                 />
               </div>
 

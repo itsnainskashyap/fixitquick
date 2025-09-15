@@ -18,9 +18,16 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ImageGallery } from '@/components/ImageGallery';
+import { DocumentUpload } from '@/components/DocumentUpload';
+import { AvatarUpload } from '@/components/AvatarUpload';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { type UploadedImage } from '@/hooks/useImageUpload';
+import { type ImageGalleryItem } from '@/components/ImageGallery';
+import { type UploadedDocument } from '@/components/DocumentUpload';
 import { 
   Users, 
   DollarSign, 
@@ -957,15 +964,41 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
   );
 };
 
-// Document Preview Component
+// Enhanced Document Preview Component
 interface DocumentPreviewProps {
   title: string;
   url?: string;
   verified?: boolean;
   required: boolean;
+  onApprove?: () => void;
+  onReject?: () => void;
+  onView?: () => void;
+  rejectionReason?: string;
+  showActions?: boolean;
 }
 
-const DocumentPreview: React.FC<DocumentPreviewProps> = ({ title, url, verified, required }) => {
+const DocumentPreview: React.FC<DocumentPreviewProps> = ({ 
+  title, 
+  url, 
+  verified, 
+  required,
+  onApprove,
+  onReject, 
+  onView,
+  rejectionReason,
+  showActions = false
+}) => {
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleReject = () => {
+    if (onReject && rejectReason.trim()) {
+      onReject();
+      setShowRejectDialog(false);
+      setRejectReason('');
+    }
+  };
+
   return (
     <div className="border rounded-lg p-3">
       <div className="flex items-center justify-between mb-2">
@@ -996,20 +1029,86 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({ title, url, verified,
       </div>
       
       {url ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => window.open(url, '_blank')}
-          className="w-full"
-        >
-          <Eye className="w-3 h-3 mr-1" />
-          View Document
-        </Button>
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onView || (() => window.open(url, '_blank'))}
+            className="w-full"
+          >
+            <Eye className="w-3 h-3 mr-1" />
+            View Document
+          </Button>
+          
+          {showActions && !verified && (
+            <div className="flex space-x-2">
+              <Button
+                size="sm"
+                onClick={onApprove}
+                className="flex-1 bg-green-600 hover:bg-green-700"
+              >
+                <CheckCircle className="w-3 h-3 mr-1" />
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setShowRejectDialog(true)}
+                className="flex-1"
+              >
+                <XCircle className="w-3 h-3 mr-1" />
+                Reject
+              </Button>
+            </div>
+          )}
+          
+          {rejectionReason && (
+            <Alert className="mt-2">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                Rejected: {rejectionReason}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
       ) : (
         <div className="w-full h-8 bg-gray-100 rounded flex items-center justify-center">
           <span className="text-xs text-muted-foreground">Not uploaded</span>
         </div>
       )}
+
+      {/* Rejection Dialog */}
+      <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject Document: {title}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="reject-reason">Reason for rejection</Label>
+              <Textarea
+                id="reject-reason"
+                placeholder="Please provide a reason for rejection..."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRejectDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleReject}
+              disabled={!rejectReason.trim()}
+            >
+              Reject Document
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -1034,6 +1133,13 @@ export default function Admin() {
     parentId: '',
     isActive: true,
   });
+
+  // Media management state
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [mediaFilter, setMediaFilter] = useState('all');
+  const [mediaSearch, setMediaSearch] = useState('');
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [currentImageUrl, setCurrentImageUrl] = useState<string>('');
 
   // Check if user is admin
   if (!user || user.role !== 'admin') {
@@ -1405,7 +1511,7 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -1418,6 +1524,9 @@ export default function Admin() {
             </TabsTrigger>
             <TabsTrigger value="verifications" data-testid="verifications-tab">
               Verifications ({verifications?.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="media" data-testid="media-tab">
+              Media
             </TabsTrigger>
             <TabsTrigger value="analytics" data-testid="analytics-tab">Analytics</TabsTrigger>
             <TabsTrigger value="settings" data-testid="settings-tab">Settings</TabsTrigger>
@@ -1741,6 +1850,282 @@ export default function Admin() {
                 <p className="text-sm text-muted-foreground">Orders will appear here as they are placed</p>
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="media" className="mt-6">
+            <div className="space-y-6">
+              {/* Media Management Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold">Media Management</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Manage uploaded images, documents, and media assets across the platform
+                  </p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Button variant="outline" size="sm">
+                    <Upload className="w-4 h-4 mr-2" />
+                    Bulk Upload
+                  </Button>
+                  <Button variant="outline" size="sm">
+                    <Download className="w-4 h-4 mr-2" />
+                    Export Data
+                  </Button>
+                </div>
+              </div>
+
+              {/* Media Statistics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Image className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">1,234</div>
+                    <div className="text-xs text-muted-foreground">Total Images</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <FileImage className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">567</div>
+                    <div className="text-xs text-muted-foreground">Documents</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Cloud className="w-8 h-8 text-purple-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">2.4 GB</div>
+                    <div className="text-xs text-muted-foreground">Storage Used</div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 text-center">
+                    <Upload className="w-8 h-8 text-orange-500 mx-auto mb-2" />
+                    <div className="text-2xl font-bold text-foreground">89</div>
+                    <div className="text-xs text-muted-foreground">Recent Uploads</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Media Filters and Actions */}
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                        <Input
+                          placeholder="Search media by name, type, or tags..."
+                          value={mediaSearch}
+                          onChange={(e) => setMediaSearch(e.target.value)}
+                          className="pl-10"
+                          data-testid="media-search"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <Select value={mediaFilter} onValueChange={setMediaFilter}>
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Media</SelectItem>
+                          <SelectItem value="images">Images</SelectItem>
+                          <SelectItem value="documents">Documents</SelectItem>
+                          <SelectItem value="avatars">Avatars</SelectItem>
+                          <SelectItem value="products">Product Images</SelectItem>
+                          <SelectItem value="portfolios">Portfolio Images</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      
+                      <Button variant="outline" size="sm">
+                        <Filter className="w-4 h-4 mr-2" />
+                        Filter
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Bulk Actions */}
+                  {selectedImages.length > 0 && (
+                    <div className="flex items-center justify-between mt-4 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <span className="text-sm font-medium">
+                          {selectedImages.length} item(s) selected
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedImages([])}
+                        >
+                          Clear Selection
+                        </Button>
+                      </div>
+                      
+                      <div className="flex space-x-2">
+                        <Button variant="outline" size="sm">
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </Button>
+                        <Button variant="outline" size="sm">
+                          <Move className="w-4 h-4 mr-2" />
+                          Move
+                        </Button>
+                        <Button variant="destructive" size="sm">
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Media Gallery */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Image className="w-5 h-5 mr-2" />
+                    Media Gallery
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    {/* Sample Media Items - Replace with actual data */}
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="group relative aspect-square bg-muted rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary"
+                        onClick={() => {
+                          setCurrentImageUrl(`https://picsum.photos/400/400?random=${i}`);
+                          setShowImageViewer(true);
+                        }}
+                      >
+                        <img
+                          src={`https://picsum.photos/200/200?random=${i}`}
+                          alt={`Media ${i + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        
+                        {/* Selection Overlay */}
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="absolute top-2 left-2">
+                            <Checkbox
+                              checked={selectedImages.includes(`image-${i}`)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedImages([...selectedImages, `image-${i}`]);
+                                } else {
+                                  setSelectedImages(selectedImages.filter(id => id !== `image-${i}`));
+                                }
+                              }}
+                              className="bg-white"
+                            />
+                          </div>
+                          
+                          <div className="absolute top-2 right-2 flex space-x-1">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCurrentImageUrl(`https://picsum.photos/400/400?random=${i}`);
+                                setShowImageViewer(true);
+                              }}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // Handle download
+                              }}
+                            >
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        {/* Media Info */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+                          <div className="text-white text-xs">
+                            <div className="font-medium">image_{i + 1}.jpg</div>
+                            <div className="text-white/70">2.4 MB • 1920x1080</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Load More */}
+                  <div className="text-center mt-6">
+                    <Button variant="outline">
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Load More
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Upload Progress */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Activity className="w-5 h-5 mr-2" />
+                    Recent Upload Activity
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {/* Sample Upload Activities */}
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-green-100 dark:bg-green-900 rounded-lg flex items-center justify-center">
+                          <CheckCircle className="w-5 h-5 text-green-600" />
+                        </div>
+                        <div>
+                          <div className="font-medium">Product image upload completed</div>
+                          <div className="text-sm text-muted-foreground">5 images uploaded by John Doe</div>
+                        </div>
+                      </div>
+                      <div className="text-sm text-muted-foreground">2 min ago</div>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center">
+                          <Upload className="w-5 h-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <div className="font-medium">Avatar update in progress</div>
+                          <div className="text-sm text-muted-foreground">User profile image being processed</div>
+                        </div>
+                      </div>
+                      <div className="text-sm text-muted-foreground">5 min ago</div>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-red-100 dark:bg-red-900 rounded-lg flex items-center justify-center">
+                          <XCircle className="w-5 h-5 text-red-600" />
+                        </div>
+                        <div>
+                          <div className="font-medium">Document upload failed</div>
+                          <div className="text-sm text-muted-foreground">File size exceeded limit (5MB)</div>
+                        </div>
+                      </div>
+                      <div className="text-sm text-muted-foreground">10 min ago</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="verifications" className="mt-6">

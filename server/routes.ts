@@ -37,12 +37,38 @@ import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
 import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
 import { objectStorageService } from "./services/objectStorage";
+import { 
+  handleMultipleImageUpload,
+  handleAvatarUpload,
+  handleProductImageUpload,
+  handleProviderDocumentUpload,
+  getImageDetails,
+  updateImageMetadata,
+  deleteImage
+} from "./middleware/uploadHandlers";
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
+});
+
+// Upload-specific rate limiters
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 uploads per minute per IP
+  message: 'Too many upload requests. Please wait before uploading again.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const avatarUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 avatar uploads per 15 minutes
+  message: 'Too many avatar upload attempts. Please wait before trying again.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Specific rate limiters for OTP endpoints
@@ -6846,6 +6872,299 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error updating callback request:', error);
       res.status(500).json({ success: false, message: 'Failed to update callback request' });
+    }
+  });
+
+  // ========================================
+  // ENHANCED IMAGE UPLOAD ENDPOINTS
+  // ========================================
+
+  // Upload configuration endpoint
+  app.get('/api/v1/upload/config', getUploadConfig);
+
+  // Enhanced image upload endpoints
+  app.post('/api/v1/upload/images', uploadLimiter, authMiddleware, handleMultipleImageUpload);
+  
+  // Enhanced avatar upload endpoint (replaces the existing placeholder)
+  app.post('/api/v1/users/me/avatar', avatarUploadLimiter, authMiddleware, handleAvatarUpload);
+  
+  // Product image uploads for parts providers
+  app.post('/api/v1/upload/product-images', uploadLimiter, authMiddleware, requireRole(['parts_provider']), handleProductImageUpload);
+  
+  // Service image uploads for service providers
+  app.post('/api/v1/upload/service-images', uploadLimiter, authMiddleware, requireRole(['service_provider']), handleMultipleImageUpload);
+  
+  // Enhanced provider document upload (this will replace the existing one)
+  app.post('/api/v1/providers/documents/upload-enhanced', 
+    uploadLimiter, 
+    authMiddleware, 
+    requireRole(['service_provider', 'parts_provider']),
+    ...validateUpload,
+    handleProviderDocumentUpload
+  );
+  
+  // ========================================
+  // IMAGE MANAGEMENT ENDPOINTS
+  // ========================================
+  
+  // Get image details
+  app.get('/api/v1/images/:imageId', optionalAuth, getImageDetails);
+  
+  // Update image metadata
+  app.patch('/api/v1/images/:imageId', authMiddleware, updateImageMetadata);
+  
+  // Delete image
+  app.delete('/api/v1/images/:imageId', authMiddleware, deleteImage);
+  
+  // ========================================
+  // AVATAR MANAGEMENT ENDPOINTS
+  // ========================================
+  
+  // Get user avatar
+  app.get('/api/v1/users/me/avatar', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const user = await storage.getUserById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+          error: 'USER_NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        avatar: {
+          url: user.profileImageUrl,
+          hasAvatar: !!user.profileImageUrl
+        }
+      });
+    } catch (error) {
+      console.error('Error getting user avatar:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get user avatar',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+  
+  // Delete user avatar
+  app.delete('/api/v1/users/me/avatar', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const updatedUser = await storage.updateUser(userId, {
+        profileImageUrl: null
+      });
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+          error: 'USER_NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Avatar removed successfully',
+        user: {
+          id: updatedUser.id,
+          profileImageUrl: updatedUser.profileImageUrl,
+        }
+      });
+    } catch (error) {
+      console.error('Error removing user avatar:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to remove avatar',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+  
+  // ========================================
+  // PARTS IMAGE GALLERY MANAGEMENT
+  // ========================================
+  
+  // Get part images
+  app.get('/api/v1/parts/:partId/images', async (req: Request, res: Response) => {
+    try {
+      const { partId } = req.params;
+      
+      const part = await storage.getPartById(partId);
+      if (!part) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found',
+          error: 'PART_NOT_FOUND'
+        });
+      }
+
+      const images = (part.images || []).map((url, index) => ({
+        id: `${partId}_img_${index}`,
+        url,
+        filename: `image_${index + 1}.jpg`,
+        isPrimary: index === 0,
+        sortOrder: index,
+        category: index === 0 ? 'main' : 'gallery'
+      }));
+
+      res.json({
+        success: true,
+        images,
+        partId
+      });
+    } catch (error) {
+      console.error('Error getting part images:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get part images',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+  
+  // Reorder part images
+  app.patch('/api/v1/parts/:partId/images/reorder', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { partId } = req.params;
+      const { imageOrder } = req.body; // Array of image URLs in new order
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const part = await storage.getPartById(partId);
+      if (!part) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found',
+          error: 'PART_NOT_FOUND'
+        });
+      }
+
+      if (part.providerId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to modify this part',
+          error: 'FORBIDDEN'
+        });
+      }
+
+      if (!Array.isArray(imageOrder)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid image order format',
+          error: 'INVALID_FORMAT'
+        });
+      }
+
+      const updatedPart = await storage.updatePart(partId, {
+        images: imageOrder
+      });
+
+      res.json({
+        success: true,
+        message: 'Part images reordered successfully',
+        images: imageOrder,
+        part: updatedPart
+      });
+    } catch (error) {
+      console.error('Error reordering part images:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to reorder part images',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+  
+  // Set part primary image
+  app.patch('/api/v1/parts/:partId/images/:imageId/primary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { partId, imageId } = req.params;
+      const { imageUrl } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const part = await storage.getPartById(partId);
+      if (!part) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found',
+          error: 'PART_NOT_FOUND'
+        });
+      }
+
+      if (part.providerId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to modify this part',
+          error: 'FORBIDDEN'
+        });
+      }
+
+      const images = part.images || [];
+      const imageIndex = images.indexOf(imageUrl);
+      
+      if (imageIndex === -1) {
+        return res.status(404).json({
+          success: false,
+          message: 'Image not found in part gallery',
+          error: 'IMAGE_NOT_FOUND'
+        });
+      }
+
+      // Move the selected image to the first position
+      const reorderedImages = [imageUrl, ...images.filter(img => img !== imageUrl)];
+      
+      const updatedPart = await storage.updatePart(partId, {
+        images: reorderedImages
+      });
+
+      res.json({
+        success: true,
+        message: 'Primary image set successfully',
+        images: reorderedImages,
+        part: updatedPart
+      });
+    } catch (error) {
+      console.error('Error setting primary image:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to set primary image',
+        error: 'INTERNAL_ERROR'
+      });
     }
   });
 

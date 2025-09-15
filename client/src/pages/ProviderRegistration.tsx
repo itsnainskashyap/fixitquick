@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { DocumentUpload, type UploadedDocument, type DocumentType } from '@/components/DocumentUpload';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -104,6 +105,90 @@ interface DocumentUploadStatus {
   portfolio?: { uploaded: boolean; url?: string; filename?: string }[];
 }
 
+// Enhanced document types for the DocumentUpload component
+const providerDocumentTypes: DocumentType[] = [
+  {
+    id: 'aadhar_front',
+    name: 'Aadhaar Card (Front)',
+    description: 'Clear photo of the front side of your Aadhaar card',
+    required: true,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    maxSize: 10 * 1024 * 1024,
+    tips: [
+      'Ensure all text is clearly readable',
+      'Include all four corners of the card',
+      'Avoid glare and shadows',
+      'Use good lighting'
+    ]
+  },
+  {
+    id: 'aadhar_back',
+    name: 'Aadhaar Card (Back)',
+    description: 'Clear photo of the back side of your Aadhaar card',
+    required: true,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    maxSize: 10 * 1024 * 1024,
+    tips: [
+      'Ensure address is clearly readable',
+      'Include all four corners of the card',
+      'Avoid glare and shadows'
+    ]
+  },
+  {
+    id: 'photo',
+    name: 'Profile Photo',
+    description: 'A clear headshot photo for your profile',
+    required: true,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    maxSize: 5 * 1024 * 1024,
+    tips: [
+      'Use good lighting',
+      'Face should be clearly visible',
+      'Professional appearance recommended',
+      'No filters or editing'
+    ]
+  },
+  {
+    id: 'license',
+    name: 'Business License',
+    description: 'Valid business license or registration certificate',
+    required: false,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    maxSize: 10 * 1024 * 1024,
+    tips: [
+      'Ensure license details are readable',
+      'Include issuing authority information',
+      'Check expiry date is visible'
+    ]
+  },
+  {
+    id: 'insurance',
+    name: 'Insurance Certificate',
+    description: 'Liability or business insurance certificate',
+    required: false,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    maxSize: 10 * 1024 * 1024,
+    tips: [
+      'Ensure certificate is current and valid',
+      'Include coverage details',
+      'Check expiry date'
+    ]
+  },
+  {
+    id: 'certificate',
+    name: 'Training Certificates',
+    description: 'Professional certifications and training certificates',
+    required: false,
+    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    maxSize: 10 * 1024 * 1024,
+    tips: [
+      'Upload relevant skill certificates',
+      'Ensure certificate details are readable',
+      'Include issuing authority information'
+    ]
+  }
+];
+
 const STEPS = [
   { id: 1, title: 'Personal Details', icon: User },
   { id: 2, title: 'Business Info', icon: Building },
@@ -119,17 +204,8 @@ export default function ProviderRegistration() {
   const queryClient = useQueryClient();
   
   const [currentStep, setCurrentStep] = useState(1);
-  const [documents, setDocuments] = useState<DocumentUploadStatus>({});
+  const [uploadedDocuments, setUploadedDocuments] = useState<UploadedDocument[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  // File upload refs
-  const fileInputRefs = {
-    aadharFront: useRef<HTMLInputElement>(null),
-    aadharBack: useRef<HTMLInputElement>(null),
-    photo: useRef<HTMLInputElement>(null),
-    businessLicense: useRef<HTMLInputElement>(null),
-    insurance: useRef<HTMLInputElement>(null),
-  };
 
   // Form instances
   const personalForm = useForm<PersonalDetailsForm>({
@@ -181,40 +257,29 @@ export default function ProviderRegistration() {
     queryFn: () => fetch('/api/v1/categories').then(res => res.json()),
   });
 
-  // Document upload mutation
-  const documentUploadMutation = useMutation({
-    mutationFn: async ({ file, documentType }: { file: File; documentType: string }) => {
-      const formData = new FormData();
-      formData.append('document', file);
-      formData.append('documentType', documentType);
+  // Document upload handlers
+  const handleDocumentUpload = (newDocuments: UploadedDocument[]) => {
+    setUploadedDocuments(prev => {
+      // Remove any existing documents of the same type and add new ones
+      const filtered = prev.filter(doc => 
+        !newDocuments.some(newDoc => newDoc.documentType === doc.documentType)
+      );
+      return [...filtered, ...newDocuments];
+    });
+    
+    toast({
+      title: 'Document uploaded successfully',
+      description: 'Your document has been uploaded and is ready for verification.',
+    });
+  };
 
-      const response = await apiRequest('POST', '/api/v1/providers/documents/upload', formData, {
-        'Content-Type': 'multipart/form-data',
-      });
-      return response.json();
-    },
-    onSuccess: (data, variables) => {
-      setDocuments(prev => ({
-        ...prev,
-        [variables.documentType]: {
-          uploaded: true,
-          url: data.documentUrl,
-          filename: data.filename
-        }
-      }));
-      toast({
-        title: 'Document uploaded successfully',
-        description: `${variables.documentType} has been uploaded`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Upload failed',
-        description: error.message || 'Failed to upload document',
-        variant: 'destructive',
-      });
-    },
-  });
+  const handleDocumentRemove = (documentId: string) => {
+    setUploadedDocuments(prev => prev.filter(doc => doc.id !== documentId));
+    toast({
+      title: 'Document removed',
+      description: 'The document has been removed successfully.',
+    });
+  };
 
   // Final registration mutation
   const registerMutation = useMutation({
@@ -238,35 +303,11 @@ export default function ProviderRegistration() {
     },
   });
 
-  // Handle file upload
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>, documentType: string) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Validate file
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-
-    if (!allowedTypes.includes(file.type)) {
-      toast({
-        title: 'Invalid file type',
-        description: 'Please upload JPG, PNG, WebP, or PDF files only',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (file.size > maxSize) {
-      toast({
-        title: 'File too large',
-        description: 'Please upload files smaller than 10MB',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // Upload file
-    documentUploadMutation.mutate({ file, documentType });
+  // Check if required documents are uploaded
+  const getRequiredDocumentsStatus = () => {
+    const requiredTypes = providerDocumentTypes.filter(type => type.required).map(type => type.id);
+    const uploadedTypes = uploadedDocuments.map(doc => doc.documentType);
+    return requiredTypes.every(type => uploadedTypes.includes(type));
   };
 
   // Handle step navigation
@@ -849,216 +890,17 @@ export default function ProviderRegistration() {
                       Please upload clear, high-quality images of your documents. All required documents must be uploaded before you can submit your application.
                     </div>
 
-                    {/* Required Documents */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground">Required Documents</h3>
-                      
-                      {/* Aadhaar Front */}
-                      <div className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium">Aadhaar Card (Front)</h4>
-                            <p className="text-sm text-muted-foreground">Clear photo of front side</p>
-                          </div>
-                          {documents.aadharFront?.uploaded ? (
-                            <Badge variant="default" className="bg-green-100 text-green-800">
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Uploaded
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Required</Badge>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          ref={fileInputRefs.aadharFront}
-                          onChange={(e) => handleFileUpload(e, 'aadhar_front')}
-                          accept="image/*,application/pdf"
-                          className="hidden"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRefs.aadharFront.current?.click()}
-                          disabled={documentUploadMutation.isPending}
-                          data-testid="button-upload-aadhar-front"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          {documents.aadharFront?.uploaded ? 'Replace File' : 'Upload File'}
-                        </Button>
-                        {documents.aadharFront?.filename && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {documents.aadharFront.filename}
-                          </p>
-                        )}
-                      </div>
+                    {/* Document Upload Component */}
+                    <DocumentUpload
+                      documents={uploadedDocuments}
+                      onChange={setUploadedDocuments}
+                      documentTypes={providerDocumentTypes}
+                      endpoint="/api/v1/providers/documents/upload"
+                      showStatus={true}
+                      allowReupload={true}
+                      className="w-full"
+                    />
 
-                      {/* Aadhaar Back */}
-                      <div className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium">Aadhaar Card (Back)</h4>
-                            <p className="text-sm text-muted-foreground">Clear photo of back side</p>
-                          </div>
-                          {documents.aadharBack?.uploaded ? (
-                            <Badge variant="default" className="bg-green-100 text-green-800">
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Uploaded
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Required</Badge>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          ref={fileInputRefs.aadharBack}
-                          onChange={(e) => handleFileUpload(e, 'aadhar_back')}
-                          accept="image/*,application/pdf"
-                          className="hidden"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRefs.aadharBack.current?.click()}
-                          disabled={documentUploadMutation.isPending}
-                          data-testid="button-upload-aadhar-back"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          {documents.aadharBack?.uploaded ? 'Replace File' : 'Upload File'}
-                        </Button>
-                        {documents.aadharBack?.filename && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {documents.aadharBack.filename}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Profile Photo */}
-                      <div className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium">Profile Photo</h4>
-                            <p className="text-sm text-muted-foreground">Clear headshot for your profile</p>
-                          </div>
-                          {documents.photo?.uploaded ? (
-                            <Badge variant="default" className="bg-green-100 text-green-800">
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Uploaded
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Required</Badge>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          ref={fileInputRefs.photo}
-                          onChange={(e) => handleFileUpload(e, 'photo')}
-                          accept="image/*"
-                          className="hidden"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRefs.photo.current?.click()}
-                          disabled={documentUploadMutation.isPending}
-                          data-testid="button-upload-photo"
-                        >
-                          <Camera className="w-4 h-4 mr-2" />
-                          {documents.photo?.uploaded ? 'Replace Photo' : 'Upload Photo'}
-                        </Button>
-                        {documents.photo?.filename && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {documents.photo.filename}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Optional Documents */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground">Optional Documents</h3>
-                      <p className="text-sm text-muted-foreground">
-                        These documents can help improve your credibility and get more bookings
-                      </p>
-                      
-                      {/* Business License */}
-                      <div className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium">Business License</h4>
-                            <p className="text-sm text-muted-foreground">Valid business license or registration</p>
-                          </div>
-                          {documents.businessLicense?.uploaded ? (
-                            <Badge variant="default" className="bg-blue-100 text-blue-800">
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Uploaded
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary">Optional</Badge>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          ref={fileInputRefs.businessLicense}
-                          onChange={(e) => handleFileUpload(e, 'license')}
-                          accept="image/*,application/pdf"
-                          className="hidden"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRefs.businessLicense.current?.click()}
-                          disabled={documentUploadMutation.isPending}
-                          data-testid="button-upload-license"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          {documents.businessLicense?.uploaded ? 'Replace File' : 'Upload License'}
-                        </Button>
-                      </div>
-
-                      {/* Insurance */}
-                      <div className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium">Insurance Certificate</h4>
-                            <p className="text-sm text-muted-foreground">Liability or business insurance</p>
-                          </div>
-                          {documents.insurance?.uploaded ? (
-                            <Badge variant="default" className="bg-blue-100 text-blue-800">
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                              Uploaded
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary">Optional</Badge>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          ref={fileInputRefs.insurance}
-                          onChange={(e) => handleFileUpload(e, 'insurance')}
-                          accept="image/*,application/pdf"
-                          className="hidden"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRefs.insurance.current?.click()}
-                          disabled={documentUploadMutation.isPending}
-                          data-testid="button-upload-insurance"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          {documents.insurance?.uploaded ? 'Replace File' : 'Upload Certificate'}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Upload status */}
-                    {documentUploadMutation.isPending && (
-                      <div className="flex items-center space-x-2 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                        <span className="text-sm text-blue-800 dark:text-blue-200">Uploading document...</span>
-                      </div>
-                    )}
 
                     <div className="flex justify-between">
                       <Button 
@@ -1152,30 +994,21 @@ export default function ProviderRegistration() {
                         Documents
                       </h3>
                       <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div className="flex items-center space-x-2">
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span>Aadhaar Card (Front) - {documents.aadharFront?.filename}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span>Aadhaar Card (Back) - {documents.aadharBack?.filename}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span>Profile Photo - {documents.photo?.filename}</span>
-                        </div>
-                        {documents.businessLicense?.uploaded && (
-                          <div className="flex items-center space-x-2">
-                            <CheckCircle className="w-4 h-4 text-blue-600" />
-                            <span>Business License - {documents.businessLicense?.filename}</span>
+                        {uploadedDocuments.map((doc) => (
+                          <div key={doc.id} className="flex items-center space-x-2">
+                            <CheckCircle className={`w-4 h-4 ${
+                              doc.status === 'approved' ? 'text-green-600' : 
+                              doc.status === 'rejected' ? 'text-red-600' :
+                              doc.status === 'under_review' ? 'text-blue-600' : 'text-yellow-600'
+                            }`} />
+                            <span>{providerDocumentTypes.find(type => type.id === doc.documentType)?.name} - {doc.filename}</span>
+                            {doc.status !== 'pending' && (
+                              <Badge variant="outline" className="text-xs">
+                                {doc.status.replace('_', ' ')}
+                              </Badge>
+                            )}
                           </div>
-                        )}
-                        {documents.insurance?.uploaded && (
-                          <div className="flex items-center space-x-2">
-                            <CheckCircle className="w-4 h-4 text-blue-600" />
-                            <span>Insurance Certificate - {documents.insurance?.filename}</span>
-                          </div>
-                        )}
+                        ))}
                       </div>
                     </div>
 

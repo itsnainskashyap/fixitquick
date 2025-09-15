@@ -4,6 +4,7 @@ import { useLocation } from 'wouter';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
+import { AvatarUpload } from '@/components/AvatarUpload';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { RegionSelector } from '@/components/RegionSelector';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
@@ -22,6 +23,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { type UploadedImage } from '@/hooks/useImageUpload';
 import { 
   User, 
   Settings, 
@@ -123,6 +125,35 @@ export default function Account() {
 
   const handleEditProfile = () => {
     setLocation('/account/edit');
+  };
+
+  // Avatar upload handler
+  const handleAvatarUpload = (image: UploadedImage) => {
+    // Refresh user data to get updated avatar URL
+    refreshUser();
+    queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+    
+    toast({
+      title: "Avatar updated successfully",
+      description: "Your profile picture has been updated.",
+    });
+  };
+
+  // Avatar upload error handler
+  const handleAvatarError = (error: string) => {
+    toast({
+      title: "Failed to upload avatar",
+      description: error,
+      variant: "destructive",
+    });
+  };
+
+  // Get user display name
+  const getUserDisplayName = () => {
+    if (user.firstName && user.lastName) {
+      return `${user.firstName} ${user.lastName}`;
+    }
+    return user.firstName || 'User';
   };
   
   const handleEmailEdit = () => {
@@ -228,14 +259,19 @@ export default function Account() {
           <Card className="bg-gradient-to-r from-primary/10 to-secondary/10">
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
-                <Avatar className="w-20 h-20 border-4 border-background shadow-lg">
-                  <AvatarImage src={user.profileImageUrl || ''} alt={`${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'} />
-                  <AvatarFallback className="text-lg font-semibold">
-                    {user.firstName && user.lastName 
-                      ? `${user.firstName[0]}${user.lastName[0]}` 
-                      : user.firstName?.[0] || 'U'}
-                  </AvatarFallback>
-                </Avatar>
+                <div className="relative">
+                  <AvatarUpload
+                    currentAvatar={user.profileImageUrl || ''}
+                    userName={getUserDisplayName()}
+                    size="md"
+                    allowCrop={true}
+                    allowRemove={false}
+                    endpoint="/api/v1/users/me/avatar"
+                    onUpload={handleAvatarUpload}
+                    onError={handleAvatarError}
+                    className="w-20 h-20 border-4 border-background shadow-lg"
+                  />
+                </div>
                 
                 <div className="flex-1">
                   <h1 className="text-2xl font-bold text-foreground mb-1">

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,9 +7,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
+import AvatarUpload from '@/components/AvatarUpload';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -17,18 +17,16 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { type UploadedImage } from '@/hooks/useImageUpload';
+import { type UserAddress } from '@shared/schema';
 import { 
   ArrowLeft,
   User, 
-  Camera,
   Loader2,
   Save,
-  Upload,
-  X,
   MapPin,
   Bell,
-  Shield,
-  Check
+  Shield
 } from 'lucide-react';
 
 // Profile update validation schema
@@ -53,11 +51,8 @@ export default function AccountEdit() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [activeTab, setActiveTab] = useState('profile');
-  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
 
   // Profile update form
   const profileForm = useForm<ProfileUpdateFormData>({
@@ -70,7 +65,7 @@ export default function AccountEdit() {
   });
 
   // Fetch user addresses
-  const { data: addresses = [], isLoading: isLoadingAddresses } = useQuery({
+  const { data: addresses = [], isLoading: isLoadingAddresses } = useQuery<UserAddress[]>({
     queryKey: ['/api/v1/users/me/addresses'],
     enabled: activeTab === 'addresses',
   });
@@ -105,44 +100,26 @@ export default function AccountEdit() {
     },
   });
 
-  // Avatar upload mutation
-  const uploadAvatarMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('avatar', file);
-      
-      const response = await fetch('/api/v1/users/me/avatar', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      });
-      
-      const data = await response.json();
-      
-      // Check both HTTP status AND success flag to prevent false-positive success
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Failed to upload avatar');
-      }
-      
-      return data;
-    },
-    onSuccess: (data) => {
-      refreshUser();
-      setProfileImagePreview(null);
-      toast({
-        title: "Avatar updated successfully",
-        description: "Your profile picture has been updated.",
-      });
-    },
-    onError: (error: any) => {
-      console.error('Avatar upload error:', error);
-      toast({
-        title: "Failed to upload avatar",
-        description: error.message || "Please try again with a different image.",
-        variant: "destructive",
-      });
-    },
-  });
+  // Avatar upload handler
+  const handleAvatarUpload = (image: UploadedImage) => {
+    // Refresh user data to get updated avatar URL
+    refreshUser();
+    queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+    
+    toast({
+      title: "Avatar updated successfully",
+      description: "Your profile picture has been updated.",
+    });
+  };
+
+  // Avatar upload error handler
+  const handleAvatarError = (error: string) => {
+    toast({
+      title: "Failed to upload avatar",
+      description: error,
+      variant: "destructive",
+    });
+  };
 
   const handleBack = () => {
     setLocation('/account');
@@ -152,76 +129,17 @@ export default function AccountEdit() {
     updateProfileMutation.mutate(data);
   };
 
-  const handleAvatarClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast({
-        title: "Invalid file type",
-        description: "Please select an image file.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast({
-        title: "File too large",
-        description: "Please select an image smaller than 5MB.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Show preview
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setProfileImagePreview(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-
-    // Upload the file
-    setIsUploadingAvatar(true);
-    uploadAvatarMutation.mutate(file, {
-      onSettled: () => {
-        setIsUploadingAvatar(false);
-        // Clear the input
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      }
-    });
-  };
-
-  const clearPreview = () => {
-    setProfileImagePreview(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
 
   if (!user) {
     setLocation('/login');
     return null;
   }
 
-  const getAvatarUrl = () => {
-    if (profileImagePreview) return profileImagePreview;
-    return user.profileImageUrl || '';
-  };
-
-  const getInitials = () => {
+  const getUserDisplayName = () => {
     if (user.firstName && user.lastName) {
-      return `${user.firstName[0]}${user.lastName[0]}`;
+      return `${user.firstName} ${user.lastName}`;
     }
-    return user.firstName?.[0] || 'U';
+    return user.firstName || 'User';
   };
 
   return (
@@ -282,64 +200,25 @@ export default function AccountEdit() {
                   <CardTitle>Profile Information</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Avatar Section */}
+                  {/* Avatar Upload Section */}
                   <div className="flex flex-col items-center space-y-4">
-                    <div className="relative">
-                      <Avatar className="w-24 h-24 border-4 border-background shadow-lg">
-                        <AvatarImage src={getAvatarUrl()} alt="Profile picture" />
-                        <AvatarFallback className="text-xl font-semibold">
-                          {getInitials()}
-                        </AvatarFallback>
-                      </Avatar>
-                      
-                      {/* Upload/Loading overlay */}
-                      <div 
-                        className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
-                        onClick={handleAvatarClick}
-                      >
-                        {isUploadingAvatar ? (
-                          <Loader2 className="w-6 h-6 text-white animate-spin" />
-                        ) : (
-                          <Camera className="w-6 h-6 text-white" />
-                        )}
-                      </div>
-                      
-                      {/* Preview actions */}
-                      {profileImagePreview && !isUploadingAvatar && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="absolute -top-2 -right-2 w-6 h-6 p-0 rounded-full"
-                          onClick={clearPreview}
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      )}
-                    </div>
+                    <AvatarUpload
+                      currentAvatar={user.profileImageUrl || ''}
+                      userName={getUserDisplayName()}
+                      size="lg"
+                      allowCrop={true}
+                      allowRemove={false}
+                      endpoint="/api/v1/users/me/avatar"
+                      onUpload={handleAvatarUpload}
+                      onError={handleAvatarError}
+                      className="border-4 border-background shadow-lg"
+                    />
                     
                     <div className="text-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleAvatarClick}
-                        disabled={isUploadingAvatar}
-                        data-testid="upload-avatar-button"
-                      >
-                        <Upload className="w-4 h-4 mr-2" />
-                        {isUploadingAvatar ? 'Uploading...' : 'Change Photo'}
-                      </Button>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        JPG, PNG or GIF. Max size 5MB.
+                      <p className="text-xs text-muted-foreground">
+                        JPG, PNG or GIF. Max size 5MB. Click to upload or edit.
                       </p>
                     </div>
-                    
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileChange}
-                      className="hidden"
-                    />
                   </div>
 
                   {/* Profile Form */}
@@ -480,7 +359,7 @@ export default function AccountEdit() {
                         </div>
                       ) : (
                         <div className="space-y-3">
-                          {addresses.map((address: any) => (
+                          {addresses.map((address: UserAddress) => (
                             <Card key={address.id} className="border">
                               <CardContent className="p-4">
                                 <div className="flex items-start justify-between">
