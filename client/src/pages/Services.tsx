@@ -6,6 +6,7 @@ import { ServiceCard, ServiceCardSkeleton } from '@/components/ServiceCard';
 import { CartSidebar } from '@/components/CartSidebar';
 import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
+import { useHorizontalScroll } from '@/hooks/useHorizontalScroll';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useQuery } from '@tanstack/react-query';
-import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine } from 'lucide-react';
+import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine, ChevronLeft } from 'lucide-react';
 
 interface Service {
   id: string;
@@ -68,6 +69,20 @@ export default function Services() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCategoryTree, setShowCategoryTree] = useState(false);
+
+  // Horizontal scrolling for Quick Access categories
+  const {
+    scrollContainerRef: quickAccessScrollRef,
+    scrollLeft: scrollQuickAccessLeft,
+    scrollRight: scrollQuickAccessRight,
+    showLeftIndicator: showQuickAccessLeftIndicator,
+    showRightIndicator: showQuickAccessRightIndicator,
+  } = useHorizontalScroll({
+    itemWidth: 120,
+    scrollAmount: 240,
+    enableKeyboard: false, // Disable global keyboard for this specific instance
+    enableTouch: true,
+  });
 
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
@@ -485,28 +500,63 @@ export default function Services() {
             transition={{ delay: 0.15 }}
             className="mb-6"
           >
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-medium text-muted-foreground">Quick Access:</span>
+              <div className="flex gap-1">
+                {showQuickAccessLeftIndicator && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={scrollQuickAccessLeft}
+                    className="h-8 w-8 p-0 bg-background/80 backdrop-blur-sm hover:bg-background/90 shadow-sm"
+                    data-testid="quick-access-scroll-left"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                )}
+                {showQuickAccessRightIndicator && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={scrollQuickAccessRight}
+                    className="h-8 w-8 p-0 bg-background/80 backdrop-blur-sm hover:bg-background/90 shadow-sm"
+                    data-testid="quick-access-scroll-right"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {mainCategories.slice(0, 6).map((category) => (
-                <Button
-                  key={category.id}
-                  variant={selectedCategory === category.id ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => selectCategory(category.id, category.name)}
-                  className="flex items-center gap-2"
-                  data-testid={`quick-category-${category.id}`}
-                >
-                  <span>{category.icon}</span>
-                  {category.name}
-                  {category.serviceCount && category.serviceCount > 0 && (
-                    <Badge variant="secondary" className="text-xs">
-                      {category.serviceCount}
-                    </Badge>
-                  )}
-                </Button>
-              ))}
+            <div className="relative">
+              <div 
+                ref={quickAccessScrollRef}
+                className="flex overflow-x-auto overflow-y-hidden gap-2 pb-2 scroll-smooth"
+                style={{
+                  scrollbarWidth: 'thin',
+                  WebkitOverflowScrolling: 'touch',
+                  scrollSnapType: 'x proximity'
+                }}
+              >
+                {mainCategories.slice(0, 8).map((category) => (
+                  <Button
+                    key={category.id}
+                    variant={selectedCategory === category.id ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => selectCategory(category.id, category.name)}
+                    className="flex items-center gap-2 flex-shrink-0 scroll-snap-align-start"
+                    data-testid={`quick-category-${category.id}`}
+                    style={{ scrollSnapAlign: 'start' }}
+                  >
+                    <span>{category.icon}</span>
+                    {category.name}
+                    {category.serviceCount && category.serviceCount > 0 && (
+                      <Badge variant="secondary" className="text-xs">
+                        {category.serviceCount}
+                      </Badge>
+                    )}
+                  </Button>
+                ))}
+              </div>
             </div>
           </motion.div>
         )}

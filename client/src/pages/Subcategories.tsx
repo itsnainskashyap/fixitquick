@@ -129,7 +129,7 @@ export default function Subcategories() {
               ))}
             </div>
           ) : subcategories.length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
               {subcategories.map((subcategory, index) => (
                 <motion.div
                   key={subcategory.id}
@@ -141,20 +141,20 @@ export default function Subcategories() {
                   data-testid={`subcategory-${subcategory.id}`}
                 >
                   <Card className="h-full transition-all duration-200 group-hover:shadow-md group-hover:scale-105 cursor-pointer">
-                    <CardContent className="p-4 text-center">
+                    <CardContent className="p-3 sm:p-4 text-center">
                       <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
                         <span className="text-2xl">{subcategory.icon || '🔧'}</span>
                       </div>
-                      <h3 className="font-medium text-sm text-foreground mb-2">{subcategory.name}</h3>
-                      <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+                      <h3 className="font-medium text-sm text-foreground mb-2 line-clamp-2 min-h-[2.5rem] leading-tight">{subcategory.name}</h3>
+                      <p className="text-xs text-muted-foreground mb-3 line-clamp-2 min-h-[2rem] leading-relaxed">
                         {subcategory.description || 'Professional service'}
                       </p>
-                      <div className="flex items-center justify-center space-x-2">
-                        <Badge variant="outline" className="text-xs">
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                        <Badge variant="outline" className="text-[10px] sm:text-xs px-2 py-0.5 whitespace-nowrap">
                           {subcategory.servicesCount || 0} services
                         </Badge>
                         {subcategory.isActive && (
-                          <Badge variant="default" className="text-xs">
+                          <Badge variant="default" className="text-[10px] sm:text-xs px-2 py-0.5 whitespace-nowrap">
                             Available
                           </Badge>
                         )}

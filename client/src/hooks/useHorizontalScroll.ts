@@ -63,9 +63,13 @@ export function useHorizontalScroll({
     scrollTo(newPosition);
   }, [scrollAmount, scrollTo]);
 
-  // Keyboard navigation handler
+  // Keyboard navigation handler (scoped to container)
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (!enableKeyboard || isScrolling) return;
+
+    // Only handle if the container or its children are focused
+    const container = scrollContainerRef.current;
+    if (!container || !container.contains(event.target as Node)) return;
 
     switch (event.key) {
       case 'ArrowLeft':
@@ -82,7 +86,6 @@ export function useHorizontalScroll({
         break;
       case 'End':
         event.preventDefault();
-        const container = scrollContainerRef.current;
         if (container) {
           scrollTo(container.scrollWidth - container.clientWidth);
         }
