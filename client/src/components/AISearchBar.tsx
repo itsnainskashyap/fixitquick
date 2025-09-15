@@ -448,6 +448,26 @@ export function AISearchBar({
     }
   }, [enableVoice, voiceSearch.isSupported, voiceSearch.isListening, toast]);
 
+  // Remove from recent searches function
+  const removeFromRecentSearches = useCallback((itemToRemove: string, event?: React.MouseEvent) => {
+    // Prevent event bubbling to parent elements
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    const updated = recentSearches.filter(search => search !== itemToRemove);
+    setRecentSearches(updated);
+    localStorage.setItem('fixitquick-recent-searches', JSON.stringify(updated));
+    
+    // Show subtle feedback
+    toast({
+      title: "Removed from recent searches",
+      description: `"${itemToRemove}" removed from history`,
+      duration: 2000,
+    });
+  }, [recentSearches, toast]);
+
   // Clean search handler
   const handleSearch = useCallback((searchQuery: string = query) => {
     if (searchQuery.trim()) {
@@ -976,27 +996,94 @@ export function AISearchBar({
                   >
                     <Clock className="w-4 h-4 text-muted-foreground" />
                     <span className="font-medium">Recent searches</span>
+                    {recentSearches.length > 0 && (
+                      <Badge variant="secondary" className="text-xs ml-auto">
+                        {recentSearches.length}
+                      </Badge>
+                    )}
                   </motion.div>
                   
-                  {recentSearches.slice(0, 3).map((search, index) => (
+                  <AnimatePresence mode="popLayout">
+                    {recentSearches.slice(0, 3).map((search, index) => (
+                      <motion.div
+                        key={search}
+                        initial={{ opacity: 0, x: -20, height: 0 }}
+                        animate={{ opacity: 1, x: 0, height: 'auto' }}
+                        exit={{ 
+                          opacity: 0, 
+                          x: -20, 
+                          height: 0,
+                          transition: { duration: 0.3, ease: "easeInOut" }
+                        }}
+                        transition={{ delay: index * 0.05, layout: { duration: 0.2 } }}
+                        layout
+                        className="group flex items-center justify-between p-3 rounded-xl cursor-pointer hover:bg-muted/50 transition-all duration-200"
+                        onClick={() => {
+                          setQuery(search);
+                          handleSearch(search);
+                        }}
+                        data-testid={`recent-search-${index}`}
+                      >
+                        <div className="flex items-center space-x-3 flex-1 min-w-0">
+                          <div className="w-8 h-8 bg-muted/50 rounded-lg flex items-center justify-center group-hover:bg-primary/10 transition-colors duration-200">
+                            <Clock className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                          </div>
+                          <p className="font-medium text-foreground group-hover:text-primary transition-colors truncate flex-1">
+                            {search}
+                          </p>
+                        </div>
+                        
+                        {/* Remove Button */}
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ 
+                            opacity: 1, 
+                            scale: 1,
+                            transition: { delay: 0.1 }
+                          }}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-2"
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 hover:bg-destructive/10 hover:text-destructive transition-colors duration-200 rounded-md"
+                            onClick={(e) => removeFromRecentSearches(search, e)}
+                            data-testid={`remove-recent-search-${index}`}
+                            aria-label={`Remove "${search}" from recent searches`}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </motion.div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  
+                  {/* Show More Recent Searches Link if there are more than 3 */}
+                  {recentSearches.length > 3 && (
                     <motion.div
-                      key={search}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      className="flex items-center space-x-3 p-3 rounded-xl cursor-pointer hover:bg-muted/50 transition-all duration-200"
-                      onClick={() => {
-                        setQuery(search);
-                        handleSearch(search);
-                      }}
-                      data-testid={`recent-search-${index}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.2 }}
+                      className="mt-2 px-3"
                     >
-                      <div className="w-8 h-8 bg-muted/50 rounded-lg flex items-center justify-center">
-                        <Clock className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <p className="font-medium text-foreground">{search}</p>
+                      <button
+                        className="text-xs text-muted-foreground hover:text-primary transition-colors duration-200 underline-offset-2 hover:underline"
+                        onClick={() => {
+                          // Could expand to show more or clear all
+                          toast({
+                            title: "Recent searches",
+                            description: `You have ${recentSearches.length} recent searches in total`,
+                          });
+                        }}
+                        data-testid="show-more-recent-searches"
+                      >
+                        +{recentSearches.length - 3} more searches
+                      </button>
                     </motion.div>
-                  ))}
+                  )}
                 </div>
               )}
             </motion.div>
