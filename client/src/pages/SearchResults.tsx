@@ -120,7 +120,16 @@ export default function SearchResults() {
     }
   }, [location]);
   const [showFilters, setShowFilters] = useState(false);
-  const [aiInsights, setAiInsights] = useState<AIInsights | null>(null);
+  const [aiInsights, setAiInsights] = useState<AIInsights>({
+    explanation: '',
+    confidence: 0.8,
+    suggestions: [],
+    recommendations: {
+      bundles: [],
+      trending: [],
+      similar: []
+    }
+  });
 
   // Voice search state
   const [voiceSearch, setVoiceSearch] = useState<VoiceSearchState>({
@@ -353,12 +362,12 @@ export default function SearchResults() {
     });
   }, [addItem, toast, searchQuery, searchResults, trackAnalytics]);
 
-  const allResults = searchResults?.pages.flatMap(page => [
-    ...(page.results.services || []),
-    ...(page.results.parts || [])
+  const allResults = searchResults?.pages?.flatMap(page => [
+    ...(page?.results?.services || []),
+    ...(page?.results?.parts || [])
   ]) || [];
 
-  const totalResults = searchResults?.pages[0]?.results.totalResults || 0;
+  const totalResults = searchResults?.pages?.[0]?.results?.totalResults || 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -425,7 +434,7 @@ export default function SearchResults() {
 
         {/* AI Insights Panel */}
         <AnimatePresence>
-          {aiInsights && (
+          {aiInsights && aiInsights.explanation && (
             <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -447,11 +456,11 @@ export default function SearchResults() {
                     {aiInsights.explanation}
                   </p>
                   
-                  {aiInsights.suggestions.length > 0 && (
+                  {aiInsights?.suggestions?.length > 0 && (
                     <div>
                       <p className="text-sm font-medium mb-2">Related searches:</p>
                       <div className="flex flex-wrap gap-2">
-                        {aiInsights.suggestions.map((suggestion, idx) => (
+                        {(aiInsights?.suggestions || []).map((suggestion, idx) => (
                           <Button
                             key={idx}
                             variant="outline"
@@ -733,11 +742,11 @@ export default function SearchResults() {
                 <p className="text-muted-foreground mb-4">
                   We couldn't find anything matching "{searchQuery}". Try adjusting your search or filters.
                 </p>
-                {aiInsights?.suggestions && aiInsights.suggestions.length > 0 && (
+                {aiInsights?.suggestions && Array.isArray(aiInsights.suggestions) && aiInsights.suggestions.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Try these suggestions:</p>
                     <div className="flex flex-wrap gap-2 justify-center">
-                      {aiInsights.suggestions.slice(0, 3).map((suggestion, idx) => (
+                      {(aiInsights?.suggestions || []).slice(0, 3).map((suggestion, idx) => (
                         <Button
                           key={idx}
                           variant="outline"
@@ -758,7 +767,7 @@ export default function SearchResults() {
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Trending Items */}
-            {trending?.trending && trending.trending.length > 0 && (
+            {trending?.trending && Array.isArray(trending.trending) && trending.trending.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -767,7 +776,7 @@ export default function SearchResults() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {trending.trending.slice(0, 4).map((item: any, index: number) => (
+                  {(trending.trending || []).slice(0, 4).map((item: any, index: number) => (
                     <div
                       key={`trending-${item.id}`}
                       className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer transition-colors"
@@ -797,14 +806,14 @@ export default function SearchResults() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {suggestions.suggestions.reasons.map((reason: string, index: number) => (
+                  {(suggestions.suggestions.reasons || []).map((reason: string, index: number) => (
                     <div key={index} className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
                       <Lightbulb className="h-3 w-3 inline mr-1" />
                       {reason}
                     </div>
                   ))}
                   
-                  {[...suggestions.suggestions.services, ...suggestions.suggestions.parts].slice(0, 3).map((item: any, index: number) => (
+                  {[...(suggestions.suggestions.services || []), ...(suggestions.suggestions.parts || [])].slice(0, 3).map((item: any, index: number) => (
                     <div
                       key={`suggestion-${item.id}`}
                       className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer transition-colors"

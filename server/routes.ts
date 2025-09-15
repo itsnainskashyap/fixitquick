@@ -14,6 +14,15 @@ import { openRouterService } from "./services/openrouter";
 import { stripePaymentService } from "./services/stripe";
 import { notificationService } from "./services/notifications";
 import WebSocketManager from "./services/websocket";
+
+// Initialize WebSocket manager instance
+let webSocketManager: WebSocketManager | null = null;
+
+// Function to initialize WebSocket manager
+function initializeWebSocket(server: Server) {
+  webSocketManager = new WebSocketManager(server);
+  return webSocketManager;
+}
 import {
   insertUserSchema,
   insertOrderSchema,
@@ -489,6 +498,10 @@ function validateBody(schema: z.ZodSchema) {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware - Setup Replit Auth
   await setupAuth(app);
+  
+  // Create HTTP server and initialize WebSocket
+  const server = createServer(app);
+  initializeWebSocket(server);
   
   // Initialize essential data for production (categories and settings only)
   if (process.env.NODE_ENV !== 'production') {
@@ -1291,32 +1304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // POST /api/v1/users/me/avatar - Upload user avatar
-  app.post('/api/v1/users/me/avatar', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Unauthorized'
-        });
-      }
-
-      // Return 501 Not Implemented since avatar upload requires object storage integration
-      return res.status(501).json({
-        success: false,
-        message: 'Avatar upload functionality is not yet implemented',
-        note: 'This feature requires object storage integration and will be available soon'
-      });
-
-    } catch (error) {
-      console.error('Error uploading avatar:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to upload avatar. Please try again.'
-      });
-    }
-  });
+  // POST /api/v1/users/me/avatar - Upload user avatar (handled by enhanced endpoint later in file)
 
   // ========================================
   // USER ADDRESS MANAGEMENT ENDPOINTS
@@ -3007,7 +2995,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Send booking notifications
-      await notificationService.notifyNewBooking(booking);
+      await notificationService.notifyOrderUpdate(booking);
 
       res.status(201).json(booking);
     } catch (error) {
@@ -3106,7 +3094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Send status change notifications
-      await notificationService.notifyBookingStatusChange(
+      await notificationService.notifyStatusChange(
         updatedBooking?.userId ?? '',
         bookingId,
         status
@@ -3114,7 +3102,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Broadcast real-time update
       if (webSocketManager) {
-        await webSocketManager.broadcastBookingUpdate(updatedBooking);
+        webSocketManager.broadcastToRoom(`user_${req.user?.id}`, {
+          type: 'booking_update',
+          data: updatedBooking
+        });
       }
 
       res.json(updatedBooking);
@@ -3162,7 +3153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.cancelOtherJobRequests(bookingId, providerId);
 
       // Send notifications
-      await notificationService.notifyProviderAssigned(booking.userId, bookingId, providerId);
+      await notificationService.notifyProviderAssignment(booking.userId, bookingId, providerId);
 
       res.json({
         success: true,
@@ -3258,7 +3249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.cancelAllJobRequests(bookingId);
 
       // Send cancellation notifications
-      await notificationService.notifyBookingCancellation(
+      await notificationService.notifyOrderCancellation(
         cancelledBooking?.userId ?? '',
         bookingId,
         'Booking cancelled by customer'
@@ -3326,7 +3317,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Send notifications
       await notificationService.notifyProviderAssignment(providerId, bookingId);
-      await notificationService.notifyCustomerProviderAssigned(booking.userId, bookingId, providerId);
+      await notificationService.notifyProviderAssignment(booking.userId, bookingId, providerId);
 
       res.json({
         success: true,
@@ -3442,7 +3433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Send push notification to provider
-        await notificationService.notifyProviderJobRequest(provider.userId, booking.id);
+        await notificationService.notifyOrderUpdate(provider.userId, booking.id);
       }
 
       // Set up timeout to handle no provider response
@@ -3503,7 +3494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get booking details for notification
       const booking = await storage.getServiceBooking(bookingId);
       if (booking) {
-        await notificationService.notifyNoProvidersAvailable(booking.userId, bookingId);
+        await notificationService.notifyOrderUpdate(booking.userId, bookingId);
       }
     } catch (error) {
       console.error('Error handling no provider response:', error);
@@ -6202,7 +6193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             profileImage: customer.profileImageUrl,
             role: 'user',
             isOnline: false, // Could be enhanced with real-time status
-            lastSeen: customer.lastActiveAt
+            lastSeen: customer.updatedAt
           });
         }
       }
@@ -6218,7 +6209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             profileImage: provider.profileImageUrl,
             role: 'service_provider',
             isOnline: false, // Could be enhanced with real-time status
-            lastSeen: provider.lastActiveAt
+            lastSeen: provider.updatedAt
           });
         }
       }
@@ -6234,7 +6225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             profileImage: partsProvider.profileImageUrl,
             role: 'parts_provider',
             isOnline: false, // Could be enhanced with real-time status
-            lastSeen: partsProvider.lastActiveAt
+            lastSeen: partsProvider.updatedAt
           });
         }
       }
@@ -6297,7 +6288,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ticket = await storage.createSupportTicket(ticketData);
       
       // Send notification to support team
-      await notificationService.notifySupportTeam(ticket.id, ticket.subject, ticket.category);
+      await notificationService.sendPushNotification(ticket.id, ticket.subject, ticket.category);
       
       res.status(201).json({
         success: true,
@@ -6438,9 +6429,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Notify relevant parties
       if (req.user?.role !== 'admin') {
-        await notificationService.notifySupportAgents(ticketId, message.message);
+        await notificationService.sendBulkNotifications(ticketId, message.message);
       } else {
-        await notificationService.notifyUser(ticket.userId, `New message on ticket #${ticket.ticketNumber}`);
+        await notificationService.sendPushNotification(ticket.userId, `New message on ticket #${ticket.ticketNumber}`);
       }
       
       res.status(201).json({
@@ -6503,7 +6494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const faq = await storage.getFAQ(faqId);
       
-      if (!faq || !faq.published) {
+      if (!faq || !faq.isPublished) {
         return res.status(404).json({ success: false, message: 'FAQ not found' });
       }
       
@@ -6552,7 +6543,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const callback = await storage.createSupportCallbackRequest(callbackData);
       
       // Notify support team
-      await notificationService.notifyCallbackTeam(callback.id, callback.reason, callback.priority);
+      await notificationService.sendPushNotification(callback.id, callback.reason, callback.priority);
       
       res.status(201).json({
         success: true,
@@ -6932,7 +6923,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const user = await storage.getUserById(userId);
+      const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -7009,7 +7000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { partId } = req.params;
       
-      const part = await storage.getPartById(partId);
+      const part = await storage.getPart(partId);
       if (!part) {
         return res.status(404).json({
           success: false,
@@ -7057,7 +7048,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const part = await storage.getPartById(partId);
+      const part = await storage.getPart(partId);
       if (!part) {
         return res.status(404).json({
           success: false,
@@ -7117,7 +7108,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const part = await storage.getPartById(partId);
+      const part = await storage.getPart(partId);
       if (!part) {
         return res.status(404).json({
           success: false,
