@@ -22,6 +22,16 @@ import {
   insertUserNotificationPreferencesSchema,
   insertServiceBookingSchema,
   insertProviderJobRequestSchema,
+  supportTicketCreateSchema,
+  supportTicketUpdateSchema,
+  supportTicketMessageCreateSchema,
+  supportCallbackRequestCreateSchema,
+  supportCallbackRequestUpdateSchema,
+  faqCreateSchema,
+  faqUpdateSchema,
+  supportAgentCreateSchema,
+  supportAgentUpdateSchema,
+  supportTicketRatingSchema
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -379,6 +389,57 @@ const adminRefundSchema = z.object({
     .optional()
     .transform((val) => val?.trim() || 'Admin processed refund'),
 }).strict();
+
+// Support System rate limiters for security
+const supportTicketLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 ticket creations per 15 minutes per IP
+  message: 'Too many support tickets created. Please wait before creating another ticket.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const supportMessageLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 messages per minute per IP
+  message: 'Too many messages sent. Please wait before sending another message.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const supportCallbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 callback requests per hour per IP
+  message: 'Too many callback requests. Please wait before requesting another callback.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Support authorization helper
+const canAccessTicket = async (userId: string, userRole: string, ticketId: string) => {
+  if (userRole === 'admin') return true;
+  
+  const ticket = await storage.getSupportTicket(ticketId);
+  if (!ticket) return false;
+  
+  // Ticket owner or assigned agent can access
+  return ticket.userId === userId || ticket.assignedAgentId === userId;
+};
+
+
+
+
+
+
+
+
+
+const agentStatusSchema = z.object({
+  status: z.enum(['available', 'busy', 'away', 'offline'], {
+    required_error: 'Status is required',
+  }),
+  statusMessage: z.string().max(100, 'Status message cannot exceed 100 characters').optional(),
+});
 
 // Validation middleware factory
 function validateBody(schema: z.ZodSchema) {
@@ -6159,6 +6220,632 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching chat participants:', error);
       res.status(500).json({ message: 'Failed to fetch chat participants' });
+    }
+  });
+
+  // ============================
+  // SUPPORT SYSTEM API ROUTES
+  // ============================
+
+  // Support Ticket Routes
+  app.get('/api/v1/support/tickets', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { status, category, priority } = req.query;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const filters: any = {};
+      if (status) filters.status = status as string;
+      if (category) filters.category = category as string;
+      if (priority) filters.priority = priority as string;
+
+      const tickets = await storage.getSupportTickets(userId, filters);
+      
+      res.json({
+        success: true,
+        tickets
+      });
+    } catch (error) {
+      console.error('Error fetching support tickets:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+    }
+  });
+
+  app.post('/api/v1/support/tickets', supportTicketLimiter, authMiddleware, validateBody(supportTicketCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const ticketData = {
+        ...req.body,
+        userId,
+        status: 'open' as const,
+      };
+
+      const ticket = await storage.createSupportTicket(ticketData);
+      
+      // Send notification to support team
+      await notificationService.notifySupportTeam(ticket.id, ticket.subject, ticket.category);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Support ticket created successfully',
+        ticket
+      });
+    } catch (error) {
+      console.error('Error creating support ticket:', error);
+      res.status(500).json({ success: false, message: 'Failed to create ticket' });
+    }
+  });
+
+  app.get('/api/v1/support/tickets/:ticketId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const ticket = await storage.getSupportTicket(ticketId);
+      
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+
+      // Check ownership or admin access
+      if (ticket.userId !== userId && req.user?.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      res.json({
+        success: true,
+        ticket
+      });
+    } catch (error) {
+      console.error('Error fetching support ticket:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch ticket' });
+    }
+  });
+
+  app.put('/api/v1/support/tickets/:ticketId', authMiddleware, validateBody(supportTicketUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const ticket = await storage.getSupportTicket(ticketId);
+      
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+
+      // Check ownership or admin access for updates
+      if (ticket.userId !== userId && req.user?.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      const updatedTicket = await storage.updateSupportTicket(ticketId, req.body);
+      
+      res.json({
+        success: true,
+        message: 'Ticket updated successfully',
+        ticket: updatedTicket
+      });
+    } catch (error) {
+      console.error('Error updating support ticket:', error);
+      res.status(500).json({ success: false, message: 'Failed to update ticket' });
+    }
+  });
+
+  // Support Ticket Messages
+  app.get('/api/v1/support/tickets/:ticketId/messages', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+
+      // Check access
+      if (ticket.userId !== userId && req.user?.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      const messages = await storage.getSupportTicketMessages(ticketId);
+      
+      res.json({
+        success: true,
+        messages
+      });
+    } catch (error) {
+      console.error('Error fetching ticket messages:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+    }
+  });
+
+  app.post('/api/v1/support/tickets/:ticketId/messages', supportMessageLimiter, authMiddleware, validateBody(supportTicketMessageCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+
+      // Check access
+      if (ticket.userId !== userId && req.user?.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      // Security: Only agents and admins can mark messages as internal
+      const messageData = {
+        ...req.body,
+        ticketId,
+        senderId: userId,
+        senderType: req.user?.role === 'admin' ? 'agent' as const : 'user' as const,
+        // Override client isInternal field - only agents/admins can create internal messages
+        isInternal: req.body.isInternal && ['admin', 'service_provider'].includes(req.user?.role || '') ? req.body.isInternal : false,
+      };
+
+      const message = await storage.createSupportTicketMessage(messageData);
+      
+      // Notify relevant parties
+      if (req.user?.role !== 'admin') {
+        await notificationService.notifySupportAgents(ticketId, message.message);
+      } else {
+        await notificationService.notifyUser(ticket.userId, `New message on ticket #${ticket.ticketNumber}`);
+      }
+      
+      res.status(201).json({
+        success: true,
+        message: 'Message sent successfully',
+        data: message
+      });
+    } catch (error) {
+      console.error('Error creating ticket message:', error);
+      res.status(500).json({ success: false, message: 'Failed to send message' });
+    }
+  });
+
+  app.put('/api/v1/support/tickets/:ticketId/read', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      await storage.markMessagesAsRead(ticketId, userId);
+      
+      res.json({
+        success: true,
+        message: 'Messages marked as read'
+      });
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+      res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
+    }
+  });
+
+  // FAQ Routes
+  app.get('/api/v1/support/faq', async (req: Request, res: Response) => {
+    try {
+      const { category, search } = req.query;
+      
+      let faqs;
+      if (search) {
+        faqs = await storage.searchFAQs(search as string, category as string);
+      } else {
+        faqs = await storage.getFAQs(category as string, true); // Only published FAQs for public
+      }
+      
+      res.json({
+        success: true,
+        faqs
+      });
+    } catch (error) {
+      console.error('Error fetching FAQs:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch FAQs' });
+    }
+  });
+
+  app.get('/api/v1/support/faq/:faqId', async (req: Request, res: Response) => {
+    try {
+      const { faqId } = req.params;
+      
+      const faq = await storage.getFAQ(faqId);
+      
+      if (!faq || !faq.published) {
+        return res.status(404).json({ success: false, message: 'FAQ not found' });
+      }
+      
+      res.json({
+        success: true,
+        faq
+      });
+    } catch (error) {
+      console.error('Error fetching FAQ:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch FAQ' });
+    }
+  });
+
+  app.post('/api/v1/support/faq/:faqId/helpful', async (req: Request, res: Response) => {
+    try {
+      const { faqId } = req.params;
+      const { isHelpful = true } = req.body;
+      
+      await storage.incrementFAQHelpfulCount(faqId, isHelpful);
+      
+      res.json({
+        success: true,
+        message: 'Feedback recorded successfully'
+      });
+    } catch (error) {
+      console.error('Error recording FAQ feedback:', error);
+      res.status(500).json({ success: false, message: 'Failed to record feedback' });
+    }
+  });
+
+  // Callback Request Routes
+  app.post('/api/v1/support/callback', supportCallbackLimiter, authMiddleware, validateBody(supportCallbackRequestCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const callbackData = {
+        ...req.body,
+        userId,
+        status: 'pending' as const,
+      };
+
+      const callback = await storage.createSupportCallbackRequest(callbackData);
+      
+      // Notify support team
+      await notificationService.notifyCallbackTeam(callback.id, callback.reason, callback.priority);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Callback request submitted successfully',
+        request: callback
+      });
+    } catch (error) {
+      console.error('Error creating callback request:', error);
+      res.status(500).json({ success: false, message: 'Failed to create callback request' });
+    }
+  });
+
+  app.get('/api/v1/support/callback-requests', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { status } = req.query;
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const requests = await storage.getSupportCallbackRequests(userId, status as string);
+      
+      res.json({
+        success: true,
+        requests
+      });
+    } catch (error) {
+      console.error('Error fetching callback requests:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch callback requests' });
+    }
+  });
+
+  // Support Analytics
+  app.get('/api/v1/support/stats', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const stats = await storage.getSupportStats();
+      
+      res.json({
+        success: true,
+        stats
+      });
+    } catch (error) {
+      console.error('Error fetching support stats:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch support statistics' });
+    }
+  });
+
+  // Admin Support Management Routes
+  app.get('/api/v1/admin/support/tickets', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { status, category, priority, assignedTo } = req.query;
+      
+      const filters: any = {};
+      if (status) filters.status = status as string;
+      if (category) filters.category = category as string;
+      if (priority) filters.priority = priority as string;
+
+      const tickets = await storage.getSupportTickets(assignedTo as string, filters);
+      
+      res.json({
+        success: true,
+        tickets
+      });
+    } catch (error) {
+      console.error('Error fetching admin tickets:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/tickets/:ticketId/assign', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const { agentId } = req.body;
+      
+      if (!agentId) {
+        return res.status(400).json({ success: false, message: 'Agent ID is required' });
+      }
+
+      const ticket = await storage.assignSupportTicket(ticketId, agentId);
+      
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Ticket assigned successfully',
+        ticket
+      });
+    } catch (error) {
+      console.error('Error assigning ticket:', error);
+      res.status(500).json({ success: false, message: 'Failed to assign ticket' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/tickets/:ticketId/close', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { ticketId } = req.params;
+      const { resolutionNotes } = req.body;
+      
+      const ticket = await storage.closeSupportTicket(ticketId, resolutionNotes);
+      
+      if (!ticket) {
+        return res.status(404).json({ success: false, message: 'Ticket not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Ticket closed successfully',
+        ticket
+      });
+    } catch (error) {
+      console.error('Error closing ticket:', error);
+      res.status(500).json({ success: false, message: 'Failed to close ticket' });
+    }
+  });
+
+  // Support Agent Management (Admin)
+  app.get('/api/v1/admin/support/agents', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { department, isActive } = req.query;
+      
+      const agents = await storage.getSupportAgents(
+        department as string, 
+        isActive ? isActive === 'true' : undefined
+      );
+      
+      res.json({
+        success: true,
+        agents
+      });
+    } catch (error) {
+      console.error('Error fetching support agents:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch agents' });
+    }
+  });
+
+  app.post('/api/v1/admin/support/agents', authMiddleware, requireRole(['admin']), validateBody(supportAgentCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      // Create user account for the agent
+      const userData = {
+        email: req.body.email,
+        firstName: req.body.firstName,
+        lastName: req.body.lastName,
+        role: 'admin' as const,
+        isVerified: true,
+      };
+
+      const user = await storage.createUser(userData);
+      
+      // Create agent profile
+      const agentData = {
+        ...req.body,
+        userId: user.id,
+      };
+
+      const agent = await storage.createSupportAgent(agentData);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Support agent created successfully',
+        agent
+      });
+    } catch (error) {
+      console.error('Error creating support agent:', error);
+      res.status(500).json({ success: false, message: 'Failed to create agent' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/agents/:agentId', authMiddleware, requireRole(['admin']), validateBody(supportAgentUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      
+      const agent = await storage.updateSupportAgent(agentId, req.body);
+      
+      if (!agent) {
+        return res.status(404).json({ success: false, message: 'Agent not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Agent updated successfully',
+        agent
+      });
+    } catch (error) {
+      console.error('Error updating support agent:', error);
+      res.status(500).json({ success: false, message: 'Failed to update agent' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/agents/:agentId/status', authMiddleware, requireRole(['admin']), validateBody(agentStatusSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      const { status, statusMessage } = req.body;
+      
+      await storage.updateAgentStatus(agentId, status, statusMessage);
+      
+      res.json({
+        success: true,
+        message: 'Agent status updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating agent status:', error);
+      res.status(500).json({ success: false, message: 'Failed to update agent status' });
+    }
+  });
+
+  // Admin FAQ Management
+  app.get('/api/v1/admin/support/faq', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { category, published } = req.query;
+      
+      const faqs = await storage.getFAQs(
+        category as string, 
+        published ? published === 'true' : undefined
+      );
+      
+      res.json({
+        success: true,
+        faqs
+      });
+    } catch (error) {
+      console.error('Error fetching admin FAQs:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch FAQs' });
+    }
+  });
+
+  app.post('/api/v1/admin/support/faq', authMiddleware, requireRole(['admin']), validateBody(faqCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const faq = await storage.createFAQ(req.body);
+      
+      res.status(201).json({
+        success: true,
+        message: 'FAQ created successfully',
+        faq
+      });
+    } catch (error) {
+      console.error('Error creating FAQ:', error);
+      res.status(500).json({ success: false, message: 'Failed to create FAQ' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/faq/:faqId', authMiddleware, requireRole(['admin']), validateBody(faqUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { faqId } = req.params;
+      
+      const faq = await storage.updateFAQ(faqId, req.body);
+      
+      if (!faq) {
+        return res.status(404).json({ success: false, message: 'FAQ not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'FAQ updated successfully',
+        faq
+      });
+    } catch (error) {
+      console.error('Error updating FAQ:', error);
+      res.status(500).json({ success: false, message: 'Failed to update FAQ' });
+    }
+  });
+
+  app.delete('/api/v1/admin/support/faq/:faqId', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { faqId } = req.params;
+      
+      const deleted = await storage.deleteFAQ(faqId);
+      
+      if (!deleted) {
+        return res.status(404).json({ success: false, message: 'FAQ not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'FAQ deleted successfully'
+      });
+    } catch (error) {
+      console.error('Error deleting FAQ:', error);
+      res.status(500).json({ success: false, message: 'Failed to delete FAQ' });
+    }
+  });
+
+  // Admin Callback Request Management
+  app.get('/api/v1/admin/support/callbacks', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { status } = req.query;
+      
+      const requests = await storage.getSupportCallbackRequests(undefined, status as string);
+      
+      res.json({
+        success: true,
+        requests
+      });
+    } catch (error) {
+      console.error('Error fetching admin callback requests:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch callback requests' });
+    }
+  });
+
+  app.put('/api/v1/admin/support/callbacks/:requestId', authMiddleware, requireRole(['admin']), validateBody(supportCallbackRequestUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { requestId } = req.params;
+      
+      const request = await storage.updateSupportCallbackRequest(requestId, req.body);
+      
+      if (!request) {
+        return res.status(404).json({ success: false, message: 'Callback request not found' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Callback request updated successfully',
+        request
+      });
+    } catch (error) {
+      console.error('Error updating callback request:', error);
+      res.status(500).json({ success: false, message: 'Failed to update callback request' });
     }
   });
 

@@ -34,6 +34,7 @@ import Wallet from "@/pages/Wallet";
 import Account from "@/pages/Account";
 import AccountEdit from "@/pages/AccountEdit";
 import Location from "@/pages/Location";
+import Support from "@/pages/Support";
 import ServiceProvider from "@/pages/ServiceProvider";
 import PartsProvider from "@/pages/PartsProvider";
 import Admin from "@/pages/Admin";
@@ -154,6 +155,7 @@ function Router() {
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
       <Route path="/account/edit" component={() => <ProtectedRoute component={AccountEdit} />} />
       <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
+      <Route path="/support" component={() => <ProtectedRoute component={Support} />} />
       
       {/* Category Hierarchy Routes */}
       <Route path="/categories/:categoryId/subcategories" component={() => <ProtectedRoute component={Subcategories} />} />

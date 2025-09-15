@@ -1160,6 +1160,226 @@ export const providerMetrics = pgTable("provider_metrics", {
   providerDateIdx: index("pm_provider_date_idx").on(table.providerId, table.date),
 }));
 
+// Support tickets system
+export const supportTickets = pgTable("support_tickets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketNumber: varchar("ticket_number").notNull().unique(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  
+  // Ticket details
+  subject: varchar("subject").notNull(),
+  description: text("description").notNull(),
+  category: varchar("category", { 
+    enum: ["technical", "billing", "account", "service", "parts", "general"] 
+  }).default("general"),
+  priority: varchar("priority", { 
+    enum: ["low", "medium", "high", "urgent"] 
+  }).default("medium"),
+  status: varchar("status", { 
+    enum: ["open", "assigned", "in_progress", "pending_customer", "resolved", "closed"] 
+  }).default("open"),
+  
+  // Assignment
+  assignedAgentId: varchar("assigned_agent_id").references(() => users.id),
+  assignedAt: timestamp("assigned_at"),
+  
+  // Related information
+  orderId: varchar("order_id").references(() => orders.id),
+  attachments: jsonb("attachments").$type<string[]>(),
+  tags: jsonb("tags").$type<string[]>().default(sql`'[]'::jsonb`),
+  
+  // Resolution tracking
+  resolvedAt: timestamp("resolved_at"),
+  closedAt: timestamp("closed_at"),
+  resolutionNotes: text("resolution_notes"),
+  
+  // Customer feedback
+  customerRating: integer("customer_rating"), // 1-5 stars
+  customerFeedback: text("customer_feedback"),
+  agentRating: integer("agent_rating"), // 1-5 stars for agent performance
+  
+  // Metadata
+  source: varchar("source", { enum: ["web", "mobile", "email", "phone", "chat", "whatsapp"] }).default("web"),
+  urgentReason: text("urgent_reason"), // Reason if marked as urgent
+  escalatedAt: timestamp("escalated_at"),
+  escalationReason: text("escalation_reason"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  ticketNumberIdx: index("st_ticket_number_idx").on(table.ticketNumber),
+  userIdIdx: index("st_user_id_idx").on(table.userId),
+  statusIdx: index("st_status_idx").on(table.status),
+  priorityIdx: index("st_priority_idx").on(table.priority),
+  categoryIdx: index("st_category_idx").on(table.category),
+  assignedAgentIdx: index("st_assigned_agent_idx").on(table.assignedAgentId),
+  createdAtIdx: index("st_created_at_idx").on(table.createdAt),
+}));
+
+// Support ticket messages (conversation thread)
+export const supportTicketMessages = pgTable("support_ticket_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: varchar("ticket_id").references(() => supportTickets.id).notNull(),
+  senderId: varchar("sender_id").references(() => users.id).notNull(),
+  senderType: varchar("sender_type", { enum: ["customer", "agent", "system"] }).notNull(),
+  
+  // Message content
+  message: text("message").notNull(),
+  attachments: jsonb("attachments").$type<string[]>(),
+  messageType: varchar("message_type", { 
+    enum: ["text", "image", "file", "system_update", "status_change", "assignment"] 
+  }).default("text"),
+  
+  // Visibility and flags
+  isInternal: boolean("is_internal").default(false), // Internal notes between agents
+  isAutoResponse: boolean("is_auto_response").default(false),
+  
+  // Metadata
+  readAt: timestamp("read_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  ticketIdIdx: index("stm_ticket_id_idx").on(table.ticketId),
+  senderIdIdx: index("stm_sender_id_idx").on(table.senderId),
+  senderTypeIdx: index("stm_sender_type_idx").on(table.senderType),
+  createdAtIdx: index("stm_created_at_idx").on(table.createdAt),
+}));
+
+// FAQ system
+export const faq = pgTable("faq", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Content
+  category: varchar("category").notNull(),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  answerHtml: text("answer_html"), // Rich HTML version
+  
+  // Organization
+  tags: jsonb("tags").$type<string[]>().default(sql`'[]'::jsonb`),
+  keywords: jsonb("keywords").$type<string[]>().default(sql`'[]'::jsonb`), // For search optimization
+  sortOrder: integer("sort_order").default(0),
+  
+  // Engagement metrics
+  helpfulCount: integer("helpful_count").default(0),
+  notHelpfulCount: integer("not_helpful_count").default(0),
+  viewCount: integer("view_count").default(0),
+  
+  // Status
+  isPublished: boolean("is_published").default(true),
+  isPopular: boolean("is_popular").default(false), // Manually marked as popular
+  
+  // Author information
+  createdBy: varchar("created_by").references(() => users.id),
+  updatedBy: varchar("updated_by").references(() => users.id),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastReviewedAt: timestamp("last_reviewed_at"),
+}, (table) => ({
+  categoryIdx: index("faq_category_idx").on(table.category),
+  publishedIdx: index("faq_published_idx").on(table.isPublished),
+  popularIdx: index("faq_popular_idx").on(table.isPopular),
+  createdAtIdx: index("faq_created_at_idx").on(table.createdAt),
+}));
+
+// Callback requests for phone support
+export const supportCallbackRequests = pgTable("support_callback_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  
+  // Contact details
+  contactNumber: varchar("contact_number").notNull(),
+  preferredTime: varchar("preferred_time", { 
+    enum: ["now", "morning", "afternoon", "evening", "specific_time"] 
+  }).default("now"),
+  specificTime: timestamp("specific_time"), // If preferred_time is "specific_time"
+  
+  // Request details
+  reason: text("reason").notNull(),
+  priority: varchar("priority", { enum: ["low", "medium", "high"] }).default("medium"),
+  additionalNotes: text("additional_notes"),
+  ticketId: varchar("ticket_id").references(() => supportTickets.id), // Optional link to existing ticket
+  
+  // Status tracking
+  status: varchar("status", { 
+    enum: ["pending", "scheduled", "in_progress", "completed", "cancelled"] 
+  }).default("pending"),
+  
+  // Agent assignment
+  assignedAgentId: varchar("assigned_agent_id").references(() => users.id),
+  assignedAt: timestamp("assigned_at"),
+  
+  // Call tracking
+  callStartedAt: timestamp("call_started_at"),
+  callEndedAt: timestamp("call_ended_at"),
+  callDuration: integer("call_duration"), // in minutes
+  callNotes: text("call_notes"),
+  
+  // Resolution
+  isResolved: boolean("is_resolved").default(false),
+  resolutionNotes: text("resolution_notes"),
+  followUpRequired: boolean("follow_up_required").default(false),
+  followUpAt: timestamp("follow_up_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("scr_user_id_idx").on(table.userId),
+  statusIdx: index("scr_status_idx").on(table.status),
+  assignedAgentIdx: index("scr_assigned_agent_idx").on(table.assignedAgentId),
+  createdAtIdx: index("scr_created_at_idx").on(table.createdAt),
+}));
+
+// Support agent availability and status
+export const supportAgents = pgTable("support_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull().unique(),
+  
+  // Agent details
+  agentName: varchar("agent_name").notNull(),
+  agentEmail: varchar("agent_email").notNull(),
+  department: varchar("department", { 
+    enum: ["general", "technical", "billing", "escalation"] 
+  }).default("general"),
+  
+  // Skills and specializations
+  skills: jsonb("skills").$type<string[]>().default(sql`'[]'::jsonb`),
+  languages: jsonb("languages").$type<string[]>().default(sql`'["en"]'::jsonb`),
+  maxConcurrentTickets: integer("max_concurrent_tickets").default(10),
+  
+  // Status and availability
+  isActive: boolean("is_active").default(true),
+  isOnline: boolean("is_online").default(false),
+  status: varchar("status", { 
+    enum: ["available", "busy", "away", "offline"] 
+  }).default("offline"),
+  statusMessage: text("status_message"),
+  
+  // Performance metrics
+  totalTicketsHandled: integer("total_tickets_handled").default(0),
+  averageResponseTime: integer("average_response_time").default(0), // in minutes
+  averageResolutionTime: integer("average_resolution_time").default(0), // in hours
+  customerRating: decimal("customer_rating", { precision: 3, scale: 2 }).default("0.00"),
+  
+  // Schedule
+  workingHours: jsonb("working_hours").$type<{
+    timezone: string;
+    schedule: Record<string, { start: string; end: string; available: boolean }>;
+  }>(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastSeenAt: timestamp("last_seen_at"),
+}, (table) => ({
+  userIdIdx: index("sa_user_id_idx").on(table.userId),
+  departmentIdx: index("sa_department_idx").on(table.department),
+  statusIdx: index("sa_status_idx").on(table.status),
+  isActiveIdx: index("sa_is_active_idx").on(table.isActive),
+}));
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({ id: true, createdAt: true });
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
@@ -1191,6 +1411,171 @@ export const insertUserAddressSchema = createInsertSchema(userAddresses).omit({ 
 export const insertUserNotificationPreferencesSchema = createInsertSchema(userNotificationPreferences).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserLocalePreferencesSchema = createInsertSchema(userLocalePreferences).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertIndianRegionSchema = createInsertSchema(indianRegions).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Support system insert schemas
+export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, ticketNumber: true, createdAt: true, updatedAt: true });
+export const insertSupportTicketMessageSchema = createInsertSchema(supportTicketMessages).omit({ id: true, createdAt: true });
+export const insertFaqSchema = createInsertSchema(faq).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertSupportCallbackRequestSchema = createInsertSchema(supportCallbackRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertSupportAgentSchema = createInsertSchema(supportAgents).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Support system validation schemas for API endpoints
+export const supportTicketCategoryEnum = z.enum(['technical', 'billing', 'account', 'service', 'parts', 'general']);
+export const supportTicketPriorityEnum = z.enum(['low', 'medium', 'high', 'urgent']);
+export const supportTicketStatusEnum = z.enum(['open', 'assigned', 'in_progress', 'pending_customer', 'resolved', 'closed']);
+export const supportCallbackPriorityEnum = z.enum(['low', 'medium', 'high']);
+export const supportCallbackStatusEnum = z.enum(['pending', 'scheduled', 'in_progress', 'completed', 'cancelled']);
+export const supportAgentStatusEnum = z.enum(['available', 'busy', 'away', 'offline']);
+export const supportAgentDepartmentEnum = z.enum(['general', 'technical', 'billing', 'escalation']);
+
+// Frontend/API validation schemas for support ticket operations
+export const supportTicketCreateSchema = z.object({
+  subject: z.string().min(5, 'Subject must be at least 5 characters').max(200, 'Subject cannot exceed 200 characters'),
+  description: z.string().min(10, 'Description must be at least 10 characters').max(2000, 'Description cannot exceed 2000 characters'),
+  category: supportTicketCategoryEnum.default('general'),
+  priority: supportTicketPriorityEnum.default('medium'),
+  orderId: z.string().optional(),
+  attachments: z.array(z.string()).optional(),
+  source: z.enum(['web', 'mobile', 'email', 'phone', 'chat', 'whatsapp']).default('web'),
+});
+
+export const supportTicketUpdateSchema = z.object({
+  subject: z.string().min(5, 'Subject must be at least 5 characters').max(200, 'Subject cannot exceed 200 characters').optional(),
+  status: supportTicketStatusEnum.optional(),
+  priority: supportTicketPriorityEnum.optional(),
+  assignedAgentId: z.string().optional(),
+  resolutionNotes: z.string().max(1000, 'Resolution notes cannot exceed 1000 characters').optional(),
+  customerRating: z.number().min(1).max(5).optional(),
+  customerFeedback: z.string().max(1000, 'Customer feedback cannot exceed 1000 characters').optional(),
+  agentRating: z.number().min(1).max(5).optional(),
+  tags: z.array(z.string()).optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+// Support ticket message validation
+export const supportTicketMessageCreateSchema = z.object({
+  message: z.string().min(1, 'Message is required').max(2000, 'Message cannot exceed 2000 characters'),
+  attachments: z.array(z.object({
+    filename: z.string(),
+    url: z.string().url(),
+    size: z.number(),
+    mimeType: z.string(),
+  })).optional(),
+  messageType: z.enum(['text', 'image', 'file', 'system_update', 'status_change', 'assignment']).default('text'),
+  // Note: isInternal is controlled server-side based on user role, not accepted from client
+});
+
+// Support callback request validation
+export const supportCallbackRequestCreateSchema = z.object({
+  preferredTime: z.string().refine(val => {
+    // Accept specific ISO datetime or predefined slots
+    if (['now', 'morning', 'afternoon', 'evening'].includes(val)) return true;
+    return !isNaN(Date.parse(val));
+  }, {
+    message: 'Invalid preferred time format',
+  }),
+  reason: z.string().min(10, 'Reason must be at least 10 characters').max(500, 'Reason cannot exceed 500 characters'),
+  contactNumber: z.string().regex(/^\+[1-9]\d{7,14}$/, 'Phone number must be in international E.164 format'),
+  priority: supportCallbackPriorityEnum.default('medium'),
+  additionalNotes: z.string().max(1000, 'Additional notes cannot exceed 1000 characters').optional(),
+  ticketId: z.string().optional(),
+});
+
+export const supportCallbackRequestUpdateSchema = z.object({
+  status: supportCallbackStatusEnum.optional(),
+  scheduledTime: z.string().refine(val => !isNaN(Date.parse(val)), {
+    message: 'Invalid scheduled time format',
+  }).optional(),
+  assignedAgentId: z.string().optional(),
+  callDuration: z.number().min(0).optional(),
+  callNotes: z.string().max(1000, 'Call notes cannot exceed 1000 characters').optional(),
+  resolutionNotes: z.string().max(2000, 'Resolution cannot exceed 2000 characters').optional(),
+  followUpRequired: z.boolean().optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+// FAQ validation schemas
+export const faqCreateSchema = z.object({
+  question: z.string().min(10, 'Question must be at least 10 characters').max(500, 'Question cannot exceed 500 characters'),
+  answer: z.string().min(20, 'Answer must be at least 20 characters').max(5000, 'Answer cannot exceed 5000 characters'),
+  answerHtml: z.string().optional(),
+  category: z.string().min(1, 'Category is required').max(100, 'Category cannot exceed 100 characters'),
+  tags: z.array(z.string()).optional(),
+  keywords: z.array(z.string()).optional(),
+  sortOrder: z.number().min(0).optional(),
+  isPublished: z.boolean().default(false),
+});
+
+export const faqUpdateSchema = z.object({
+  question: z.string().min(10, 'Question must be at least 10 characters').max(500, 'Question cannot exceed 500 characters').optional(),
+  answer: z.string().min(20, 'Answer must be at least 20 characters').max(5000, 'Answer cannot exceed 5000 characters').optional(),
+  answerHtml: z.string().optional(),
+  category: z.string().min(1, 'Category is required').max(100, 'Category cannot exceed 100 characters').optional(),
+  tags: z.array(z.string()).optional(),
+  keywords: z.array(z.string()).optional(),
+  sortOrder: z.number().min(0).optional(),
+  isPublished: z.boolean().optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+// Support agent validation schemas
+export const supportAgentCreateSchema = z.object({
+  agentName: z.string().min(1, 'Agent name is required').max(100, 'Agent name cannot exceed 100 characters'),
+  agentEmail: z.string().email('Valid email address is required'),
+  department: supportAgentDepartmentEnum.default('general'),
+  skills: z.array(z.string()).min(1, 'At least one skill is required'),
+  languages: z.array(z.string()).min(1, 'At least one language is required').default(['en']),
+  maxConcurrentTickets: z.number().min(1).max(50).default(10),
+  workingHours: z.object({
+    timezone: z.string(),
+    schedule: z.record(z.object({
+      start: z.string(),
+      end: z.string(),
+      available: z.boolean(),
+    })),
+  }).optional(),
+});
+
+export const supportAgentUpdateSchema = z.object({
+  agentName: z.string().min(1, 'Agent name is required').max(100, 'Agent name cannot exceed 100 characters').optional(),
+  agentEmail: z.string().email('Valid email address is required').optional(),
+  department: supportAgentDepartmentEnum.optional(),
+  skills: z.array(z.string()).min(1, 'At least one skill is required').optional(),
+  languages: z.array(z.string()).min(1, 'At least one language is required').optional(),
+  maxConcurrentTickets: z.number().min(1).max(50).optional(),
+  isActive: z.boolean().optional(),
+  status: supportAgentStatusEnum.optional(),
+  statusMessage: z.string().max(100, 'Status message cannot exceed 100 characters').optional(),
+  workingHours: z.object({
+    timezone: z.string(),
+    schedule: z.record(z.object({
+      start: z.string(),
+      end: z.string(),
+      available: z.boolean(),
+    })),
+  }).optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+// Support rating/feedback validation schema
+export const supportTicketRatingSchema = z.object({
+  customerRating: z.number().min(1).max(5),
+  customerFeedback: z.string().max(1000, 'Feedback cannot exceed 1000 characters').optional(),
+  agentRating: z.number().min(1).max(5).optional(),
+  resolutionTime: z.enum(['very_fast', 'fast', 'acceptable', 'slow', 'very_slow']).optional(),
+});
+
+// Support statistics validation
+export const supportStatsRequestSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  agentId: z.string().optional(),
+  department: supportAgentDepartmentEnum.optional(),
+});
 
 // Export types
 export type User = typeof users.$inferSelect;
@@ -1249,3 +1634,37 @@ export type PartsBulkUpload = typeof partsBulkUploads.$inferSelect;
 export type InsertPartsBulkUpload = z.infer<typeof insertPartsBulkUploadSchema>;
 export type PartsSupplier = typeof partsSuppliers.$inferSelect;
 export type InsertPartsSupplier = z.infer<typeof insertPartsSupplierSchema>;
+
+// Support system types
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type InsertSupportTicket = z.infer<typeof insertSupportTicketSchema>;
+export type SupportTicketMessage = typeof supportTicketMessages.$inferSelect;
+export type InsertSupportTicketMessage = z.infer<typeof insertSupportTicketMessageSchema>;
+export type FAQ = typeof faq.$inferSelect;
+export type InsertFAQ = z.infer<typeof insertFaqSchema>;
+export type SupportCallbackRequest = typeof supportCallbackRequests.$inferSelect;
+export type InsertSupportCallbackRequest = z.infer<typeof insertSupportCallbackRequestSchema>;
+export type SupportAgent = typeof supportAgents.$inferSelect;
+export type InsertSupportAgent = z.infer<typeof insertSupportAgentSchema>;
+
+// Support API operation types
+export type SupportTicketCreateData = z.infer<typeof supportTicketCreateSchema>;
+export type SupportTicketUpdateData = z.infer<typeof supportTicketUpdateSchema>;
+export type SupportTicketMessageCreateData = z.infer<typeof supportTicketMessageCreateSchema>;
+export type SupportCallbackRequestCreateData = z.infer<typeof supportCallbackRequestCreateSchema>;
+export type SupportCallbackRequestUpdateData = z.infer<typeof supportCallbackRequestUpdateSchema>;
+export type FAQCreateData = z.infer<typeof faqCreateSchema>;
+export type FAQUpdateData = z.infer<typeof faqUpdateSchema>;
+export type SupportAgentCreateData = z.infer<typeof supportAgentCreateSchema>;
+export type SupportAgentUpdateData = z.infer<typeof supportAgentUpdateSchema>;
+export type SupportTicketRatingData = z.infer<typeof supportTicketRatingSchema>;
+export type SupportStatsRequestData = z.infer<typeof supportStatsRequestSchema>;
+
+// Support enum types for consistent usage
+export type SupportTicketCategory = z.infer<typeof supportTicketCategoryEnum>;
+export type SupportTicketPriority = z.infer<typeof supportTicketPriorityEnum>;
+export type SupportTicketStatus = z.infer<typeof supportTicketStatusEnum>;
+export type SupportCallbackPriority = z.infer<typeof supportCallbackPriorityEnum>;
+export type SupportCallbackStatus = z.infer<typeof supportCallbackStatusEnum>;
+export type SupportAgentStatus = z.infer<typeof supportAgentStatusEnum>;
+export type SupportAgentDepartment = z.infer<typeof supportAgentDepartmentEnum>;
