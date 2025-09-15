@@ -117,6 +117,30 @@ function ProtectedRoute({ component: Component, allowedRoles }: {
   return <Component />;
 }
 
+function AdminProtectedRoute({ component: Component }: { 
+  component: React.ComponentType; 
+}) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AdminLogin />;
+  }
+
+  if (user.role !== 'admin') {
+    return <Home />;
+  }
+
+  return <Component />;
+}
+
 function PublicRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -197,23 +221,23 @@ function Router() {
       {/* Admin Routes */}
       <Route 
         path="/admin" 
-        component={() => <ProtectedRoute component={Admin} allowedRoles={['admin']} />} 
+        component={() => <AdminProtectedRoute component={Admin} />} 
       />
       <Route 
         path="/admin/dashboard" 
-        component={() => <ProtectedRoute component={Admin} allowedRoles={['admin']} />} 
+        component={() => <AdminProtectedRoute component={Admin} />} 
       />
       <Route 
         path="/admin/users" 
-        component={() => <ProtectedRoute component={Admin} allowedRoles={['admin']} />} 
+        component={() => <AdminProtectedRoute component={Admin} />} 
       />
       <Route 
         path="/admin/orders" 
-        component={() => <ProtectedRoute component={Admin} allowedRoles={['admin']} />} 
+        component={() => <AdminProtectedRoute component={Admin} />} 
       />
       <Route 
         path="/admin/verifications" 
-        component={() => <ProtectedRoute component={Admin} allowedRoles={['admin']} />} 
+        component={() => <AdminProtectedRoute component={Admin} />} 
       />
       
       {/* 404 Fallback */}
