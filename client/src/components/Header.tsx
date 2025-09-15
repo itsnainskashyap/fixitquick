@@ -225,25 +225,82 @@ export function Header({
                 <NotificationCenter compact={true} className="hidden sm:block" />
               )}
               
-              {/* Cart Button */}
-              <Button
-                variant="ghost"
-                onClick={onCartClick}
-                className="relative p-2 hover:bg-muted rounded-full transition-colors"
-                data-testid="cart-button"
+              {/* Enhanced Cart Button */}
+              <motion.div
+                className="relative"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
               >
-                <ShoppingCart className="w-6 h-6" />
-                {cartItemsCount > 0 && (
+                <Button
+                  variant="ghost"
+                  onClick={onCartClick}
+                  className="enhanced-cart-button group relative p-3 rounded-xl transition-all duration-300 hover:shadow-lg"
+                  data-testid="cart-button"
+                >
                   <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    className="cart-badge"
-                    data-testid="cart-badge"
+                    className="relative"
+                    animate={cartItemsCount > 0 ? {
+                      x: [0, -1, 1, -1, 1, 0],
+                      transition: { duration: 0.5, ease: "easeInOut" }
+                    } : {}}
+                    key={cartItemsCount}
                   >
-                    {cartItemsCount > 99 ? '99+' : cartItemsCount}
+                    <ShoppingCart className="w-6 h-6 text-foreground group-hover:text-primary transition-colors duration-300" />
+                    
+                    {/* Enhanced animated cart badge */}
+                    {cartItemsCount > 0 && (
+                      <motion.div
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ 
+                          scale: 1, 
+                          opacity: 1,
+                          y: [0, -2, 0]
+                        }}
+                        exit={{ scale: 0, opacity: 0 }}
+                        transition={{ 
+                          type: "spring", 
+                          stiffness: 500, 
+                          damping: 25,
+                          y: { duration: 0.6, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }
+                        }}
+                        className="enhanced-cart-badge"
+                        data-testid="cart-badge"
+                      >
+                        <span className="relative z-10 font-bold text-xs">
+                          {cartItemsCount > 99 ? '99+' : cartItemsCount}
+                        </span>
+                        
+                        {/* Animated background glow */}
+                        <motion.div
+                          className="absolute inset-0 rounded-full opacity-50"
+                          animate={{
+                            scale: [1, 1.1, 1],
+                            opacity: [0.5, 0.8, 0.5]
+                          }}
+                          transition={{
+                            duration: 2,
+                            repeat: Infinity,
+                            ease: "easeInOut"
+                          }}
+                          style={{
+                            background: "radial-gradient(circle, rgba(147, 51, 234, 0.6) 0%, transparent 70%)"
+                          }}
+                        />
+                      </motion.div>
+                    )}
                   </motion.div>
-                )}
-              </Button>
+                  
+                  {/* Hover glow effect */}
+                  <motion.div
+                    className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(147, 51, 234, 0.1) 0%, rgba(79, 70, 229, 0.1) 100%)",
+                      boxShadow: "0 0 20px rgba(147, 51, 234, 0.3)"
+                    }}
+                  />
+                </Button>
+              </motion.div>
             </div>
           </div>
 
