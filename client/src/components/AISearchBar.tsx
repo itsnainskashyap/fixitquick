@@ -117,15 +117,48 @@ export function AISearchBar({
   ];
 
   // Auto-scroll to bottom when new messages arrive in chat mode
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const scrollToBottom = useCallback(() => {
+    // Use requestAnimationFrame to ensure DOM updates complete before scrolling
+    requestAnimationFrame(() => {
+      try {
+        if (messagesEndRef.current) {
+          // Primary scroll method - scroll the end marker into view
+          messagesEndRef.current.scrollIntoView({ 
+            behavior: 'smooth',
+            block: 'end',
+            inline: 'nearest'
+          });
+        } else {
+          // Fallback: Find and scroll the ScrollArea viewport
+          const scrollArea = document.querySelector('[data-radix-scroll-area-viewport]');
+          if (scrollArea) {
+            scrollArea.scrollTop = scrollArea.scrollHeight;
+          }
+        }
+      } catch (error) {
+        console.warn('Scroll to bottom failed:', error);
+        // Final fallback: Force scroll using parent container
+        try {
+          const messagesContainer = messagesEndRef.current?.parentElement?.parentElement;
+          if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          }
+        } catch (fallbackError) {
+          console.warn('Fallback scroll also failed:', fallbackError);
+        }
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (mode === 'chat') {
-      scrollToBottom();
+      // Add timeout to ensure DOM updates complete before scrolling
+      // This prevents race conditions between message rendering and scroll
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
     }
-  }, [messages, mode]);
+  }, [messages, mode, scrollToBottom]);
 
   // Mode toggle functionality
   const toggleMode = useCallback(() => {
@@ -656,7 +689,7 @@ export function AISearchBar({
 
               {/* Messages Area */}
               <div className="h-64">
-                <ScrollArea className="h-full p-4">
+                <ScrollArea className="h-full p-4" data-testid="chat-messages-scroll-area">
                   <div className="space-y-3">
                     {messages.map((message, index) => (
                       <motion.div
@@ -761,7 +794,13 @@ export function AISearchBar({
                       </motion.div>
                     )}
                   </div>
-                  <div ref={messagesEndRef} />
+                  {/* Scroll anchor - placed after all messages */}
+                  <div 
+                    ref={messagesEndRef} 
+                    className="h-1 w-1" 
+                    data-testid="messages-end-marker" 
+                    aria-hidden="true"
+                  />
                 </ScrollArea>
               </div>
 
