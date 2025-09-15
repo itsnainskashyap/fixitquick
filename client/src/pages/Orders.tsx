@@ -72,155 +72,190 @@ interface OrderCardProps {
 function OrderCard({ order, showActions = true }: OrderCardProps) {
   const [, setLocation] = useLocation();
 
-  const getStatusColor = (status: string) => {
+  const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
-      case 'accepted': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400';
-      case 'in_progress': return 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400';
-      case 'completed': return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
-      case 'cancelled': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
-      case 'refunded': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
-      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+      case 'pending': 
+        return {
+          color: 'text-yellow-600 dark:text-yellow-400',
+          bgColor: 'bg-yellow-50 dark:bg-yellow-950/50',
+          borderColor: 'border-yellow-200 dark:border-yellow-800',
+          icon: <Clock className="w-4 h-4" />,
+          label: 'Pending'
+        };
+      case 'accepted': 
+        return {
+          color: 'text-blue-600 dark:text-blue-400',
+          bgColor: 'bg-blue-50 dark:bg-blue-950/50',
+          borderColor: 'border-blue-200 dark:border-blue-800',
+          icon: <CheckCircle className="w-4 h-4" />,
+          label: 'Accepted'
+        };
+      case 'in_progress': 
+        return {
+          color: 'text-purple-600 dark:text-purple-400',
+          bgColor: 'bg-purple-50 dark:bg-purple-950/50',
+          borderColor: 'border-purple-200 dark:border-purple-800',
+          icon: <TrendingUp className="w-4 h-4" />,
+          label: 'In Progress'
+        };
+      case 'completed': 
+        return {
+          color: 'text-green-600 dark:text-green-400',
+          bgColor: 'bg-green-50 dark:bg-green-950/50',
+          borderColor: 'border-green-200 dark:border-green-800',
+          icon: <CheckCircle className="w-4 h-4" />,
+          label: 'Completed'
+        };
+      case 'cancelled': 
+        return {
+          color: 'text-red-600 dark:text-red-400',
+          bgColor: 'bg-red-50 dark:bg-red-950/50',
+          borderColor: 'border-red-200 dark:border-red-800',
+          icon: <XCircle className="w-4 h-4" />,
+          label: 'Cancelled'
+        };
+      case 'refunded': 
+        return {
+          color: 'text-gray-600 dark:text-gray-400',
+          bgColor: 'bg-gray-50 dark:bg-gray-950/50',
+          borderColor: 'border-gray-200 dark:border-gray-800',
+          icon: <XCircle className="w-4 h-4" />,
+          label: 'Refunded'
+        };
+      default: 
+        return {
+          color: 'text-gray-600 dark:text-gray-400',
+          bgColor: 'bg-gray-50 dark:bg-gray-950/50',
+          borderColor: 'border-gray-200 dark:border-gray-800',
+          icon: <Clock className="w-4 h-4" />,
+          label: 'Unknown'
+        };
     }
   };
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
-      case 'paid': return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
-      case 'pending': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
-      case 'failed': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
-      case 'refunded': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
-      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+      case 'paid': return 'text-green-600 dark:text-green-400';
+      case 'pending': return 'text-yellow-600 dark:text-yellow-400';
+      case 'failed': return 'text-red-600 dark:text-red-400';
+      case 'refunded': return 'text-gray-600 dark:text-gray-400';
+      default: return 'text-gray-600 dark:text-gray-400';
     }
   };
 
-  const getStatusIcon = (status: string) => {
+  const getPaymentStatusLabel = (status: string) => {
     switch (status) {
-      case 'pending': return <Clock className="w-4 h-4" />;
-      case 'accepted': return <CheckCircle className="w-4 h-4" />;
-      case 'in_progress': return <TrendingUp className="w-4 h-4" />;
-      case 'completed': return <CheckCircle className="w-4 h-4" />;
-      case 'cancelled': return <XCircle className="w-4 h-4" />;
-      case 'refunded': return <XCircle className="w-4 h-4" />;
-      default: return <Clock className="w-4 h-4" />;
+      case 'paid': return '✓ Paid';
+      case 'pending': return '⏳ Pending';
+      case 'failed': return '✗ Failed';
+      case 'refunded': return '↩ Refunded';
+      default: return '⏳ Pending';
     }
   };
+
+  const statusConfig = getStatusConfig(order.status);
+  const serviceName = order.items[0]?.name || `${order.type} Service`;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-4"
+      className="mb-3"
     >
-      <Card className="border border-border/50 hover:border-border transition-colors">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+      <Card className={`${statusConfig.borderColor} border-l-4 hover:shadow-lg transition-all duration-300 bg-white dark:bg-card shadow-sm`}>
+        <CardContent className="p-3">
+          {/* First Line: Service Name and Status */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-3 min-w-0 flex-1">
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center ${statusConfig.bgColor} ${statusConfig.borderColor} border-2 shadow-sm`}>
                 {order.type === 'service' ? (
-                  <Wrench className="w-5 h-5 text-primary" />
+                  <Wrench className={`w-4 h-4 ${statusConfig.color}`} />
                 ) : (
-                  <Package className="w-5 h-5 text-primary" />
+                  <Package className={`w-4 h-4 ${statusConfig.color}`} />
                 )}
               </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h3 className="font-semibold text-foreground">
-                    Order #{order.id.slice(-8)}
-                  </h3>
-                  <Badge className={getStatusColor(order.status)}>
-                    <div className="flex items-center space-x-1">
-                      {getStatusIcon(order.status)}
-                      <span className="capitalize">{order.status.replace('_', ' ')}</span>
-                    </div>
-                  </Badge>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-foreground text-base truncate leading-tight">
+                  {serviceName}
+                </h3>
+                <div className="flex items-center space-x-2 mt-1">
+                  <div className={`flex items-center space-x-1.5 ${statusConfig.color}`}>
+                    {statusConfig.icon}
+                    <span className="text-xs font-semibold tracking-wide">{statusConfig.label}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">•</span>
+                  <span className="text-xs text-muted-foreground">
+                    #{order.id.slice(-6).toUpperCase()}
+                  </span>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {format(new Date(order.createdAt), 'MMM dd, yyyy • h:mm a')}
-                </p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="font-bold text-lg text-foreground">
-                ₹{parseFloat(order.totalAmount).toFixed(2)}
+            <div className="text-right ml-3">
+              <p className="font-bold text-foreground text-lg leading-tight">
+                ₹{parseFloat(order.totalAmount).toFixed(0)}
               </p>
-              <Badge className={getPaymentStatusColor(order.paymentStatus)}>
-                {order.paymentStatus}
-              </Badge>
+              <p className={`text-xs font-medium ${getPaymentStatusColor(order.paymentStatus)}`}>
+                {getPaymentStatusLabel(order.paymentStatus)}
+              </p>
             </div>
           </div>
-        </CardHeader>
 
-        <CardContent className="pt-0">
-          {/* Items */}
-          <div className="space-y-2 mb-4">
-            {order.items.map((item, index) => (
-              <div key={index} className="flex justify-between items-center text-sm">
-                <span className="text-muted-foreground">
-                  {item.quantity}× {item.name}
-                </span>
-                <span className="font-medium">₹{(item.price * item.quantity).toFixed(2)}</span>
+          {/* Second Line: Date, Location, and Key Details */}
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-1">
+                <Calendar className="w-3 h-3" />
+                <span>{format(new Date(order.createdAt), 'MMM dd, yyyy')}</span>
               </div>
-            ))}
-          </div>
-
-          {/* Location */}
-          {order.location && (
-            <div className="flex items-start space-x-2 text-sm text-muted-foreground mb-4">
-              <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{order.location.address}</span>
-            </div>
-          )}
-
-          {/* Scheduled Date */}
-          {order.scheduledAt && (
-            <div className="flex items-center space-x-2 text-sm text-muted-foreground mb-4">
-              <Calendar className="w-4 h-4" />
-              <span>Scheduled: {format(new Date(order.scheduledAt), 'MMM dd, yyyy • h:mm a')}</span>
-            </div>
-          )}
-
-          {/* Notes */}
-          {order.notes && (
-            <div className="text-sm text-muted-foreground mb-4 p-3 bg-muted/50 rounded-lg">
-              <strong>Notes:</strong> {order.notes}
-            </div>
-          )}
-
-          {/* Rating & Review */}
-          {order.rating && (
-            <div className="border-t pt-3 mb-4">
-              <div className="flex items-center space-x-2 mb-2">
-                <div className="flex items-center">
-                  {[...Array(5)].map((_, i) => (
-                    <Star
-                      key={i}
-                      className={`w-4 h-4 ${
-                        i < order.rating! ? 'text-yellow-400 fill-current' : 'text-gray-300'
-                      }`}
-                    />
-                  ))}
+              {order.location && (
+                <div className="flex items-center space-x-1 max-w-32 md:max-w-none" title={order.location.address}>
+                  <MapPin className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">{order.location.address}</span>
                 </div>
-                <span className="text-sm font-medium">{order.rating}/5</span>
-              </div>
-              {order.review && (
-                <p className="text-sm text-muted-foreground italic">"{order.review}"</p>
               )}
+            </div>
+            <div className="flex items-center space-x-1">
+              <span>{order.items.length} item{order.items.length > 1 ? 's' : ''}</span>
+            </div>
+          </div>
+
+          {/* Scheduled Date (if applicable) */}
+          {order.scheduledAt && (
+            <div className="flex items-center space-x-1 text-xs text-blue-600 dark:text-blue-400 mt-2 bg-blue-50 dark:bg-blue-950/30 rounded px-2 py-1">
+              <Calendar className="w-3 h-3" />
+              <span>Scheduled: {format(new Date(order.scheduledAt), 'MMM dd • h:mm a')}</span>
+            </div>
+          )}
+
+          {/* Rating (if completed) */}
+          {order.rating && (
+            <div className="flex items-center space-x-2 mt-2 text-xs">
+              <div className="flex items-center">
+                {[...Array(5)].map((_, i) => (
+                  <Star
+                    key={i}
+                    className={`w-3 h-3 ${
+                      i < order.rating! ? 'text-yellow-400 fill-current' : 'text-gray-300'
+                    }`}
+                  />
+                ))}
+              </div>
+              <span className="text-muted-foreground">Rated {order.rating}/5</span>
             </div>
           )}
 
           {/* Actions */}
           {showActions && (
-            <div className="flex space-x-2 pt-3 border-t">
+            <div className="flex space-x-2 mt-3 pt-3 border-t border-border/50">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setLocation(`/orders/${order.id}`)}
-                className="flex-1"
+                className="flex-1 h-8 text-xs"
                 data-testid={`view-order-${order.id}`}
               >
                 View Details
-                <ArrowRight className="w-4 h-4 ml-1" />
+                <ArrowRight className="w-3 h-3 ml-1" />
               </Button>
 
               {order.status === 'in_progress' && (
@@ -229,18 +264,24 @@ function OrderCard({ order, showActions = true }: OrderCardProps) {
                     variant="outline"
                     size="sm"
                     onClick={() => setLocation(`/chat/${order.id}`)}
+                    className="h-8 px-2"
                     data-testid={`chat-order-${order.id}`}
+                    aria-label="Chat with service provider"
+                    title="Chat with service provider"
                   >
-                    <MessageCircle className="w-4 h-4" />
+                    <MessageCircle className="w-3 h-3" />
                   </Button>
                   
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => window.open(`tel:${order.serviceProviderId || order.partsProviderId}`, '_self')}
+                    className="h-8 px-2"
                     data-testid={`call-provider-${order.id}`}
+                    aria-label="Call service provider"
+                    title="Call service provider"
                   >
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-3 h-3" />
                   </Button>
                 </>
               )}
@@ -250,9 +291,10 @@ function OrderCard({ order, showActions = true }: OrderCardProps) {
                   variant="outline"
                   size="sm"
                   onClick={() => setLocation(`/orders/${order.id}/review`)}
+                  className="h-8 text-xs"
                   data-testid={`rate-order-${order.id}`}
                 >
-                  <Star className="w-4 h-4 mr-1" />
+                  <Star className="w-3 h-3 mr-1" />
                   Rate
                 </Button>
               )}
@@ -261,7 +303,7 @@ function OrderCard({ order, showActions = true }: OrderCardProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-red-600 hover:text-red-700"
+                  className="text-red-600 hover:text-red-700 h-8 text-xs"
                   onClick={() => {
                     // Handle order cancellation
                     console.log('Cancel order:', order.id);
@@ -291,10 +333,6 @@ export default function Orders() {
     enabled: !!user,
   });
 
-  const { data: recentOrders = [] } = useQuery<Order[]>({
-    queryKey: ['/api/v1/orders/recent'],
-    enabled: !!user,
-  });
 
   if (!user) {
     setLocation('/login');
@@ -323,23 +361,72 @@ export default function Orders() {
         <Header onCartClick={() => setLocation('/cart')} cartItemsCount={getItemCount()} />
         
         <main className="pt-32 px-4 pb-6">
-          <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
+          {/* Page Header Skeleton */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <div className="animate-pulse">
+              <div className="h-8 bg-muted rounded-lg w-48 mb-2"></div>
+              <div className="h-4 bg-muted rounded w-64"></div>
+            </div>
+          </motion.div>
+
+          {/* Quick Stats Skeleton */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
+          >
+            {[...Array(4)].map((_, i) => (
               <div key={i} className="animate-pulse">
-                <div className="bg-muted rounded-lg p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="space-y-2">
-                      <div className="h-4 bg-muted-foreground/20 rounded w-32"></div>
-                      <div className="h-3 bg-muted-foreground/20 rounded w-24"></div>
-                    </div>
-                    <div className="h-6 bg-muted-foreground/20 rounded w-16"></div>
+                <Card className="p-4">
+                  <div className="text-center space-y-2">
+                    <div className="h-8 bg-muted rounded w-12 mx-auto"></div>
+                    <div className="h-3 bg-muted rounded w-16 mx-auto"></div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="h-3 bg-muted-foreground/20 rounded w-full"></div>
-                    <div className="h-3 bg-muted-foreground/20 rounded w-3/4"></div>
-                  </div>
-                </div>
+                </Card>
               </div>
+            ))}
+          </motion.div>
+
+          {/* Orders Skeleton */}
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 + i * 0.1 }}
+                className="animate-pulse"
+              >
+                <Card className="bg-white dark:bg-card shadow-sm">
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-3 flex-1">
+                        <div className="w-9 h-9 bg-muted rounded-full"></div>
+                        <div className="space-y-2 flex-1">
+                          <div className="h-4 bg-muted rounded w-40"></div>
+                          <div className="h-3 bg-muted rounded w-32"></div>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="h-5 bg-muted rounded w-16"></div>
+                        <div className="h-3 bg-muted rounded w-12"></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="h-3 bg-muted rounded w-20"></div>
+                        <div className="h-3 bg-muted rounded w-24"></div>
+                      </div>
+                      <div className="h-3 bg-muted rounded w-16"></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
             ))}
           </div>
         </main>
@@ -490,7 +577,7 @@ export default function Orders() {
             <TabsContent value="completed" className="mt-6">
               {completedOrders.length > 0 ? (
                 completedOrders.map((order: Order) => (
-                  <OrderCard key={order.id} order={order} showActions={false} />
+                  <OrderCard key={order.id} order={order} />
                 ))
               ) : (
                 <div className="text-center py-12">
@@ -508,7 +595,7 @@ export default function Orders() {
             <TabsContent value="cancelled" className="mt-6">
               {cancelledOrders.length > 0 ? (
                 cancelledOrders.map((order: Order) => (
-                  <OrderCard key={order.id} order={order} showActions={false} />
+                  <OrderCard key={order.id} order={order} />
                 ))
               ) : (
                 <div className="text-center py-12">
