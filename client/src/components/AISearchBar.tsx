@@ -576,7 +576,7 @@ export function AISearchBar({
               className="bg-card/95 backdrop-blur-xl rounded-2xl border-2 border-primary/30 shadow-2xl"
             >
               {/* Chat Header */}
-              <div className="p-4 border-b border-border/50 bg-gradient-to-r from-primary/10 to-purple-500/10 rounded-t-2xl">
+              <div className="p-4 border-b border-border/50 bg-gradient-to-r from-primary/10 to-purple-500/10 rounded-t-2xl relative">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <motion.div
@@ -598,6 +598,58 @@ export function AISearchBar({
                       </h3>
                       <p className="text-xs text-muted-foreground">Ask me anything</p>
                     </div>
+                  </div>
+                  
+                  {/* Chat Mode Header Controls - Positioned in header */}
+                  <div className="flex items-center space-x-2">
+                    {/* Voice Search Button */}
+                    {enableVoice && voiceSearch.isSupported && (
+                      <motion.div
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                      >
+                        <Button
+                          type="button"
+                          variant={voiceSearch.isListening ? "destructive" : "ghost"}
+                          size="sm"
+                          onClick={toggleVoiceSearch}
+                          className="h-8 w-8 p-0"
+                          data-testid="button-voice-search-header"
+                        >
+                          {voiceSearch.isListening ? (
+                            <motion.div
+                              animate={{ scale: [1, 1.2, 1] }}
+                              transition={{ duration: 1, repeat: Infinity }}
+                            >
+                              <MicOff className="h-4 w-4" />
+                            </motion.div>
+                          ) : (
+                            <Mic className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </motion.div>
+                    )}
+
+                    {/* Switch to Search Mode Button */}
+                    <motion.div
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                    >
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setMode('search');
+                          setIsExpanded(false);
+                          setTimeout(() => inputRef.current?.focus(), 300);
+                        }}
+                        className="h-8 w-8 p-0 bg-gradient-to-r from-primary/10 to-blue-500/10 border-primary/20 hover:from-primary/20 hover:to-blue-500/20"
+                        data-testid="switch-to-search-button"
+                      >
+                        <Search className="w-4 h-4" />
+                      </Button>
+                    </motion.div>
                   </div>
                 </div>
               </div>
@@ -728,34 +780,6 @@ export function AISearchBar({
                       data-testid="ai-chat-input"
                     />
                     
-                    {/* Voice input for chat */}
-                    {enableVoice && voiceSearch.isSupported && (
-                      <motion.div
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2"
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                      >
-                        <Button
-                          type="button"
-                          variant={voiceSearch.isListening ? "destructive" : "ghost"}
-                          size="sm"
-                          onClick={toggleVoiceSearch}
-                          className="h-6 w-6 p-0 rounded-full"
-                          data-testid="voice-input-button"
-                        >
-                          {voiceSearch.isListening ? (
-                            <motion.div
-                              animate={{ scale: [1, 1.3, 1] }}
-                              transition={{ duration: 0.8, repeat: Infinity }}
-                            >
-                              <MicOff className="h-3 w-3" />
-                            </motion.div>
-                          ) : (
-                            <Mic className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </motion.div>
-                    )}
                   </div>
                   
                   <motion.div
@@ -781,130 +805,145 @@ export function AISearchBar({
             </motion.div>
           )}
 
-          {/* Right Side Controls */}
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2 z-10">
-            {/* Search Mode Controls */}
-            {mode === 'search' && (
-              <>
-                {/* Clear Button */}
-                {query && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0 }}
+          {/* Right Side Controls - Only for Search Mode */}
+          {mode === 'search' && (
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2 z-10">
+              {/* Clear Button */}
+              {query && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0 }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearSearch}
+                    className="h-8 w-8 p-0 hover:bg-destructive/10"
+                    data-testid="button-clear-search"
                   >
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={clearSearch}
-                      className="h-8 w-8 p-0 hover:bg-destructive/10"
-                      data-testid="button-clear-search"
-                    >
-                      <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                    </Button>
-                  </motion.div>
-                )}
+                    <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                  </Button>
+                </motion.div>
+              )}
 
-                {/* Voice Search Button */}
-                {enableVoice && voiceSearch.isSupported && (
+              {/* Loading Indicator */}
+              {isLoading && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  className="relative"
+                >
                   <motion.div
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                  >
-                    <Button
-                      type="button"
-                      variant={voiceSearch.isListening ? "destructive" : "ghost"}
-                      size="sm"
-                      onClick={toggleVoiceSearch}
-                      className="h-8 w-8 p-0"
-                      data-testid="button-voice-search"
-                    >
-                      {voiceSearch.isListening ? (
-                        <motion.div
-                          animate={{ scale: [1, 1.2, 1] }}
-                          transition={{ duration: 1, repeat: Infinity }}
-                        >
-                          <MicOff className="h-4 w-4" />
-                        </motion.div>
-                      ) : (
-                        <Mic className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </motion.div>
-                )}
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
+                    data-testid="search-loading"
+                  />
+                </motion.div>
+              )}
 
-                {/* Loading Indicator */}
-                {isLoading && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    className="relative"
+              {/* Voice Search Button */}
+              {enableVoice && voiceSearch.isSupported && (
+                <motion.div
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                >
+                  <Button
+                    type="button"
+                    variant={voiceSearch.isListening ? "destructive" : "ghost"}
+                    size="sm"
+                    onClick={toggleVoiceSearch}
+                    className="h-8 w-8 p-0"
+                    data-testid="button-voice-search"
                   >
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                      className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
-                      data-testid="search-loading"
-                    />
-                  </motion.div>
-                )}
-              </>
-            )}
+                    {voiceSearch.isListening ? (
+                      <motion.div
+                        animate={{ scale: [1, 1.2, 1] }}
+                        transition={{ duration: 1, repeat: Infinity }}
+                      >
+                        <MicOff className="h-4 w-4" />
+                      </motion.div>
+                    ) : (
+                      <Mic className="h-4 w-4" />
+                    )}
+                  </Button>
+                </motion.div>
+              )}
 
-            {/* Dynamic AI Toggle Button */}
-            {enableAIChat && (
+              {/* Search Button */}
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2 }}
+                transition={{ delay: 0.1 }}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
               >
                 <Button
                   type="button"
-                  variant={mode === 'chat' ? "default" : "outline"}
+                  variant="default"
                   size="sm"
-                  onClick={toggleMode}
-                  className={`h-8 px-3 relative transition-all duration-300 ${
-                    mode === 'chat' 
-                      ? 'bg-gradient-to-r from-primary to-purple-500 text-white border-0' 
-                      : 'bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 hover:from-primary/20 hover:to-purple-500/20'
-                  }`}
-                  data-testid="ai-mode-toggle"
+                  onClick={() => handleSearch()}
+                  className="h-8 w-8 p-0 relative bg-gradient-to-r from-primary to-blue-500 text-white border-0"
+                  data-testid="search-button"
                 >
                   <motion.div
-                    key={mode}
-                    initial={{ opacity: 0, rotate: -180, scale: 0 }}
-                    animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                    exit={{ opacity: 0, rotate: 180, scale: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="flex items-center space-x-1"
+                    animate={{ scale: [1, 1.1, 1] }}
+                    transition={{ duration: 2, repeat: Infinity }}
                   >
-                    {mode === 'search' ? (
-                      <>
-                        <Brain className="w-4 h-4" />
-                        <span className="text-xs font-medium hidden sm:inline">AI</span>
-                      </>
-                    ) : (
-                      <>
-                        <Search className="w-4 h-4" />
-                        <span className="text-xs font-medium hidden sm:inline">Search</span>
-                      </>
-                    )}
+                    <Search className="w-4 h-4" />
                   </motion.div>
                   
                   {/* Magical shimmer effect */}
                   <motion.div
                     className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded-lg"
                     animate={{ x: [-20, 40] }}
-                    transition={{ duration: 2, repeat: Infinity, delay: 2 }}
+                    transition={{ duration: 2, repeat: Infinity, delay: 1 }}
                   />
                 </Button>
               </motion.div>
-            )}
-          </div>
+
+              {/* AI Chat Mode Toggle Button */}
+              {enableAIChat && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.2 }}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setMode('chat');
+                      setIsExpanded(true);
+                      setTimeout(() => chatInputRef.current?.focus(), 300);
+                    }}
+                    className="h-8 w-8 p-0 relative bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 hover:from-primary/20 hover:to-purple-500/20"
+                    data-testid="ai-chat-toggle-button"
+                  >
+                    <motion.div
+                      animate={{ rotate: [0, 10, -10, 0] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    >
+                      <Brain className="w-4 h-4" />
+                    </motion.div>
+                    
+                    {/* Magical shimmer effect */}
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded-lg"
+                      animate={{ x: [-20, 40] }}
+                      transition={{ duration: 2, repeat: Infinity, delay: 3 }}
+                    />
+                  </Button>
+                </motion.div>
+              )}
+            </div>
+          )}
         </motion.div>
 
         {/* Search Suggestions Dropdown - Only in Search Mode */}
