@@ -459,7 +459,7 @@ export const serviceProviders = pgTable("service_providers", {
 // Enhanced parts categories with hierarchy support
 export const partsCategories = pgTable("parts_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  parentId: varchar("parent_id").references(() => partsCategories.id),
+  parentId: varchar("parent_id"),
   name: varchar("name").notNull(),
   slug: varchar("slug").unique(),
   icon: text("icon"),
