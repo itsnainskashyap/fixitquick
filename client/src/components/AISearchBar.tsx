@@ -67,7 +67,11 @@ export function AISearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Built-in search suggestions - reliable and fast
+  // Enhanced AI-powered suggestions - reliable and fast
+  const [aiSuggestions, setAiSuggestions] = useState<SearchSuggestion[]>([]);
+  const [showMagicalEffects, setShowMagicalEffects] = useState(false);
+
+  // Built-in search suggestions - fallback when AI is unavailable
   const builtInSuggestions: SearchSuggestion[] = [
     { id: '1', text: 'Plumbing repair', category: 'Home Services', type: 'service', icon: '🔧' },
     { id: '2', text: 'Electrical work', category: 'Home Services', type: 'service', icon: '⚡' },
@@ -94,27 +98,58 @@ export function AISearchBar({
     }
   }, []);
 
-  // Simple search with suggestions
+  // Enhanced AI-powered search with magical effects
   useEffect(() => {
     if (query.length > 1) {
       setIsLoading(true);
+      setShowMagicalEffects(true);
       
-      // Simulate a small delay for magical effect
-      const timer = setTimeout(() => {
-        const filtered = builtInSuggestions.filter(s => 
-          s.text.toLowerCase().includes(query.toLowerCase()) ||
-          s.category.toLowerCase().includes(query.toLowerCase())
-        ).slice(0, 6);
-        setSuggestions(filtered);
-        setShowSuggestions(true);
-        setIsLoading(false);
-      }, 150);
+      // Try AI suggestions first, fallback to built-in
+      const timer = setTimeout(async () => {
+        try {
+          // Call AI typeahead endpoint
+          const response = await fetch(`/api/v1/ai/typeahead?query=${encodeURIComponent(query)}&limit=6`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.suggestions) {
+              const aiSuggestions: SearchSuggestion[] = data.suggestions.map((s: any, index: number) => ({
+                id: `ai-${index}`,
+                text: s.text,
+                category: s.category || 'AI Suggestion',
+                type: 'service' as const,
+                icon: s.category === 'Electrician' ? '⚡' : 
+                      s.category === 'Plumber' ? '🔧' : 
+                      s.category === 'Cleaning' ? '🧹' : '🛠️'
+              }));
+              setSuggestions(aiSuggestions);
+              setAiSuggestions(aiSuggestions);
+            } else {
+              throw new Error('AI suggestions failed');
+            }
+          } else {
+            throw new Error('AI service unavailable');
+          }
+        } catch (error) {
+          console.warn('AI suggestions failed, using built-in:', error);
+          // Fallback to built-in suggestions
+          const filtered = builtInSuggestions.filter(s => 
+            s.text.toLowerCase().includes(query.toLowerCase()) ||
+            s.category.toLowerCase().includes(query.toLowerCase())
+          ).slice(0, 6);
+          setSuggestions(filtered);
+        } finally {
+          setShowSuggestions(true);
+          setIsLoading(false);
+          setTimeout(() => setShowMagicalEffects(false), 500);
+        }
+      }, 200); // Slight delay for magical effect
 
       return () => clearTimeout(timer);
     } else {
       setSuggestions([]);
       setShowSuggestions(false);
       setIsLoading(false);
+      setShowMagicalEffects(false);
     }
   }, [query]);
 
@@ -343,12 +378,13 @@ export function AISearchBar({
               </motion.div>
             )}
 
-            {/* Loading Indicator */}
+            {/* Enhanced Loading Indicator with Magical Effects */}
             {isLoading && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.8 }}
+                className="relative"
               >
                 <motion.div
                   animate={{ rotate: 360 }}
@@ -356,19 +392,42 @@ export function AISearchBar({
                   className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
                   data-testid="search-loading"
                 />
+                {showMagicalEffects && (
+                  <>
+                    {[...Array(6)].map((_, i) => (
+                      <motion.div
+                        key={i}
+                        className="absolute w-1 h-1 bg-primary/40 rounded-full"
+                        initial={{ opacity: 0, scale: 0 }}
+                        animate={{
+                          opacity: [0, 1, 0],
+                          scale: [0, 1, 0],
+                          x: Math.cos(i * Math.PI / 3) * 12,
+                          y: Math.sin(i * Math.PI / 3) * 12,
+                        }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          delay: i * 0.1
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
               </motion.div>
             )}
             
-            {/* Magical AI Badge */}
+            {/* Enhanced Magical AI Badge */}
             <motion.div
               initial={{ opacity: 0, scale: 0 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.2 }}
               whileHover={{ scale: 1.05 }}
+              className="relative"
             >
               <Badge 
                 variant="secondary" 
-                className="bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 text-xs px-2 py-1"
+                className="bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 text-xs px-2 py-1 relative overflow-hidden"
                 data-testid="ai-badge"
               >
                 <motion.div
@@ -378,7 +437,42 @@ export function AISearchBar({
                   <Brain className="w-3 h-3 mr-1" />
                 </motion.div>
                 AI
+                
+                {/* Magical shimmer effect */}
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                  animate={{ x: [-20, 40] }}
+                  transition={{ duration: 2, repeat: Infinity, delay: 2 }}
+                />
               </Badge>
+              
+              {/* Floating particles around badge */}
+              {showMagicalEffects && (
+                <>
+                  {[...Array(3)].map((_, i) => (
+                    <motion.div
+                      key={i}
+                      className="absolute w-1 h-1 bg-primary/60 rounded-full"
+                      initial={{ opacity: 0 }}
+                      animate={{
+                        opacity: [0, 1, 0],
+                        y: [-5, -15, -5],
+                        x: [-2 + i, 2 + i, -2 + i],
+                        scale: [0, 1, 0]
+                      }}
+                      transition={{
+                        duration: 1.5,
+                        repeat: Infinity,
+                        delay: i * 0.2
+                      }}
+                      style={{
+                        top: -2,
+                        left: 8 + i * 6
+                      }}
+                    />
+                  ))}
+                </>
+              )}
             </motion.div>
           </div>
         </motion.div>

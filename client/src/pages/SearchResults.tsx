@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
 import { AISearchBar } from '@/components/AISearchBar';
+import { AIChat } from '@/components/AIChat';
 import { ServiceCard } from '@/components/ServiceCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

@@ -2029,6 +2029,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AI Chat endpoint for conversational assistance
+  app.post('/api/v1/ai/chat', optionalAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { message, context } = req.body;
+
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Message is required and must be a non-empty string'
+        });
+      }
+
+      const userId = req.user?.id;
+      console.log(`💬 AI Chat request from user ${userId || 'anonymous'}: "${message.substring(0, 50)}..."`);
+
+      // Build context for AI
+      let systemContext = `You are a helpful AI assistant for FixitQuick, a home service marketplace. 
+      Help users find the right services like electricians, plumbers, cleaners, carpenters, pest control, etc.
+      Be friendly, concise, and practical. Focus on understanding their problem and suggesting 1-3 relevant search queries.
+      
+      When responding:
+      1. Acknowledge their problem empathetically 
+      2. Ask clarifying questions if needed
+      3. Suggest specific search terms they can use
+      4. Keep responses under 100 words for better UX`;
+
+      if (context?.userId) {
+        systemContext += `\n\nUser ID: ${context.userId}`;
+      }
+
+      if (context?.conversationHistory && context.conversationHistory.length > 0) {
+        const recentHistory = context.conversationHistory.slice(-3)
+          .map((msg: any) => `${msg.type}: ${msg.content}`)
+          .join('\n');
+        systemContext += `\n\nRecent conversation:\n${recentHistory}`;
+      }
+
+      // Generate AI response using OpenRouter
+      const aiResponse = await openRouterService.generateChatResponse(
+        message.trim(),
+        systemContext
+      );
+
+      // Extract potential search suggestions from the AI response
+      const suggestedSearches: string[] = [];
+      
+      // Simple extraction of quoted terms or service names from AI response
+      const searchPatterns = [
+        /["']([^"']{3,30})["']/g,  // Text in quotes
+        /\b(electrician|plumber|cleaner|carpenter|pest control|ac repair|appliance repair|drain cleaning|electrical work|plumbing repair)\b/gi,  // Service keywords
+        /\b(fix|repair|install|clean|maintenance)\s+[\w\s]{2,20}/gi  // Action + object patterns
+      ];
+
+      for (const pattern of searchPatterns) {
+        let match;
+        while ((match = pattern.exec(aiResponse)) !== null && suggestedSearches.length < 3) {
+          const suggestion = match[1] || match[0];
+          if (suggestion && suggestion.length >= 3 && suggestion.length <= 50) {
+            const cleanSuggestion = suggestion.trim().toLowerCase();
+            if (!suggestedSearches.some(s => s.toLowerCase().includes(cleanSuggestion) || cleanSuggestion.includes(s.toLowerCase()))) {
+              suggestedSearches.push(suggestion.trim());
+            }
+          }
+        }
+      }
+
+      // If no good suggestions found, create some based on the message
+      if (suggestedSearches.length === 0) {
+        const userMessage = message.toLowerCase();
+        if (userMessage.includes('electric') || userMessage.includes('power') || userMessage.includes('light')) {
+          suggestedSearches.push('electrician');
+        } else if (userMessage.includes('water') || userMessage.includes('pipe') || userMessage.includes('leak')) {
+          suggestedSearches.push('plumber');
+        } else if (userMessage.includes('clean') || userMessage.includes('dirty')) {
+          suggestedSearches.push('cleaning service');
+        } else if (userMessage.includes('pest') || userMessage.includes('bug') || userMessage.includes('rat')) {
+          suggestedSearches.push('pest control');
+        } else {
+          suggestedSearches.push('home repair');
+        }
+      }
+
+      res.json({
+        success: true,
+        response: aiResponse,
+        suggestedSearches: suggestedSearches.slice(0, 3),
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error('Error in AI chat endpoint:', error);
+      
+      // Provide helpful fallback response
+      const fallbackResponse = "I'm having trouble connecting right now, but I'd love to help! " +
+        "Can you describe what needs to be fixed? For example, you could search for 'electrician', 'plumber', 'cleaner', or the specific problem you're having.";
+      
+      res.status(200).json({
+        success: true,
+        response: fallbackResponse,
+        suggestedSearches: ['electrician', 'plumber', 'cleaning service'],
+        timestamp: new Date().toISOString(),
+        fallback: true
+      });
+    }
+  });
+
   // AI cache statistics for monitoring
   app.get('/api/v1/ai/cache-stats', requireRole(['admin']), async (req, res) => {
     try {
