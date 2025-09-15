@@ -9,7 +9,7 @@ import { Header } from '@/components/Header';
 import { BottomNavigation } from '@/components/BottomNavigation';
 import AvatarUpload from '@/components/AvatarUpload';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -40,7 +40,8 @@ import {
   Phone,
   Home,
   Building2,
-  Navigation
+  Navigation,
+  Smartphone
 } from 'lucide-react';
 
 // Profile update validation schema

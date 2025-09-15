@@ -1864,6 +1864,229 @@ export const serviceProviderStatusUpdateSchema = z.object({
   path: ['rejectionReason'],
 });
 
+// Referral system tables
+export const userReferrals = pgTable("user_referrals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  referralCode: varchar("referral_code").notNull().unique(),
+  referralLink: text("referral_link").notNull(),
+  totalReferrals: integer("total_referrals").default(0),
+  successfulReferrals: integer("successful_referrals").default(0),
+  pendingReferrals: integer("pending_referrals").default(0),
+  totalEarnings: decimal("total_earnings", { precision: 10, scale: 2 }).default("0.00"),
+  availableEarnings: decimal("available_earnings", { precision: 10, scale: 2 }).default("0.00"),
+  pendingEarnings: decimal("pending_earnings", { precision: 10, scale: 2 }).default("0.00"),
+  currentTier: varchar("current_tier").default("Bronze"),
+  monthlyReferrals: integer("monthly_referrals").default(0),
+  monthlyTarget: integer("monthly_target").default(5),
+  lastResetAt: timestamp("last_reset_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("ur_user_id_idx").on(table.userId),
+  referralCodeIdx: index("ur_referral_code_idx").on(table.referralCode),
+  tierIdx: index("ur_tier_idx").on(table.currentTier),
+}));
+
+export const referralRecords = pgTable("referral_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  referrerId: varchar("referrer_id").references(() => users.id).notNull(),
+  friendId: varchar("friend_id").references(() => users.id),
+  friendName: varchar("friend_name"),
+  friendEmail: varchar("friend_email"),
+  friendPhone: varchar("friend_phone"),
+  status: varchar("status", { enum: ["pending", "completed", "cancelled"] }).default("pending"),
+  earnings: decimal("earnings", { precision: 10, scale: 2 }).default("0.00"),
+  serviceUsed: varchar("service_used"),
+  completionDate: timestamp("completion_date"),
+  ipAddress: varchar("ip_address"),
+  userAgent: text("user_agent"),
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  referrerIdx: index("rr_referrer_id_idx").on(table.referrerId),
+  friendIdx: index("rr_friend_id_idx").on(table.friendId),
+  statusIdx: index("rr_status_idx").on(table.status),
+  createdAtIdx: index("rr_created_at_idx").on(table.createdAt),
+}));
+
+// User legal agreements tracking
+export const userAgreements = pgTable("user_agreements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull().unique(),
+  termsOfService: jsonb("terms_of_service").$type<{
+    accepted: boolean;
+    acceptedAt?: string;
+    version: string;
+  }>().default(sql`'{"accepted": false, "version": "1.0"}'::jsonb`),
+  privacyPolicy: jsonb("privacy_policy").$type<{
+    accepted: boolean;
+    acceptedAt?: string;
+    version: string;
+  }>().default(sql`'{"accepted": false, "version": "1.0"}'::jsonb`),
+  cookiePolicy: jsonb("cookie_policy").$type<{
+    accepted: boolean;
+    acceptedAt?: string;
+    version: string;
+  }>().default(sql`'{"accepted": false, "version": "1.0"}'::jsonb`),
+  dataProcessing: jsonb("data_processing").$type<{
+    accepted: boolean;
+    acceptedAt?: string;
+    version: string;
+  }>().default(sql`'{"accepted": false, "version": "1.0"}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("uag_user_id_idx").on(table.userId),
+}));
+
+// Data export requests
+export const dataExportRequests = pgTable("data_export_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  status: varchar("status", { enum: ["pending", "processing", "ready", "expired"] }).default("pending"),
+  requestedData: jsonb("requested_data").$type<{
+    profile?: boolean;
+    orders?: boolean;
+    payments?: boolean;
+    support?: boolean;
+    referrals?: boolean;
+  }>().default(sql`'{"profile": true, "orders": true, "payments": true, "support": true, "referrals": true}'::jsonb`),
+  downloadUrl: text("download_url"),
+  downloadCount: integer("download_count").default(0),
+  expiresAt: timestamp("expires_at"),
+  readyAt: timestamp("ready_at"),
+  processedBy: varchar("processed_by").references(() => users.id),
+  fileSize: integer("file_size"), // in bytes
+  format: varchar("format").default("json"), // json, csv, xml
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("der_user_id_idx").on(table.userId),
+  statusIdx: index("der_status_idx").on(table.status),
+  expiresAtIdx: index("der_expires_at_idx").on(table.expiresAt),
+  createdAtIdx: index("der_created_at_idx").on(table.createdAt),
+}));
+
+// Account deletion requests
+export const accountDeletionRequests = pgTable("account_deletion_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  reason: text("reason"),
+  status: varchar("status", { enum: ["pending", "processing", "completed", "cancelled"] }).default("pending"),
+  requestedBy: varchar("requested_by").references(() => users.id).notNull(),
+  approvedBy: varchar("approved_by").references(() => users.id),
+  scheduledFor: timestamp("scheduled_for"), // Actual deletion date (30 days later)
+  processedAt: timestamp("processed_at"),
+  cancellationDeadline: timestamp("cancellation_deadline"),
+  retentionData: jsonb("retention_data").$type<{
+    keepOrders?: boolean;
+    keepPayments?: boolean;
+    keepSupport?: boolean;
+    anonymizeData?: boolean;
+  }>().default(sql`'{"keepOrders": true, "keepPayments": true, "keepSupport": true, "anonymizeData": true}'::jsonb`),
+  ipAddress: varchar("ip_address"),
+  userAgent: text("user_agent"),
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdIdx: index("adr_user_id_idx").on(table.userId),
+  statusIdx: index("adr_status_idx").on(table.status),
+  scheduledForIdx: index("adr_scheduled_for_idx").on(table.scheduledFor),
+  createdAtIdx: index("adr_created_at_idx").on(table.createdAt),
+}));
+
+// Insert schemas for new tables
+export const insertUserReferralSchema = createInsertSchema(userReferrals).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertReferralRecordSchema = createInsertSchema(referralRecords).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserAgreementSchema = createInsertSchema(userAgreements).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertDataExportRequestSchema = createInsertSchema(dataExportRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertAccountDeletionRequestSchema = createInsertSchema(accountDeletionRequests).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Validation schemas for API endpoints
+export const referralCodeGenerateSchema = z.object({
+  customCode: z.string().min(3).max(20).regex(/^[A-Z0-9_-]+$/, 'Code must contain only uppercase letters, numbers, hyphens, and underscores').optional(),
+});
+
+export const referralRecordCreateSchema = z.object({
+  friendName: z.string().min(1).max(100),
+  friendEmail: z.string().email().optional(),
+  friendPhone: z.string().min(10).max(15).optional(),
+  serviceUsed: z.string().max(100).optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+export const referralRecordUpdateSchema = z.object({
+  status: z.enum(['pending', 'completed', 'cancelled']).optional(),
+  earnings: z.number().min(0).optional(),
+  serviceUsed: z.string().max(100).optional(),
+  completionDate: z.string().datetime().optional(),
+});
+
+export const userAgreementUpdateSchema = z.object({
+  termsOfService: z.object({
+    accepted: z.boolean(),
+    version: z.string(),
+  }).optional(),
+  privacyPolicy: z.object({
+    accepted: z.boolean(),
+    version: z.string(),
+  }).optional(),
+  cookiePolicy: z.object({
+    accepted: z.boolean(),
+    version: z.string(),
+  }).optional(),
+  dataProcessing: z.object({
+    accepted: z.boolean(),
+    version: z.string(),
+  }).optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one agreement must be provided for update',
+});
+
+export const dataExportRequestCreateSchema = z.object({
+  requestedData: z.object({
+    profile: z.boolean().optional(),
+    orders: z.boolean().optional(),
+    payments: z.boolean().optional(),
+    support: z.boolean().optional(),
+    referrals: z.boolean().optional(),
+  }).optional(),
+  format: z.enum(['json', 'csv', 'xml']).default('json'),
+});
+
+export const accountDeletionRequestCreateSchema = z.object({
+  reason: z.string().max(1000).optional(),
+  retentionData: z.object({
+    keepOrders: z.boolean().optional(),
+    keepPayments: z.boolean().optional(),
+    keepSupport: z.boolean().optional(),
+    anonymizeData: z.boolean().optional(),
+  }).optional(),
+});
+
+// Type exports for new tables
+export type UserReferral = typeof userReferrals.$inferSelect;
+export type InsertUserReferral = z.infer<typeof insertUserReferralSchema>;
+export type ReferralRecord = typeof referralRecords.$inferSelect;
+export type InsertReferralRecord = z.infer<typeof insertReferralRecordSchema>;
+export type UserAgreement = typeof userAgreements.$inferSelect;
+export type InsertUserAgreement = z.infer<typeof insertUserAgreementSchema>;
+export type DataExportRequest = typeof dataExportRequests.$inferSelect;
+export type InsertDataExportRequest = z.infer<typeof insertDataExportRequestSchema>;
+export type AccountDeletionRequest = typeof accountDeletionRequests.$inferSelect;
+export type InsertAccountDeletionRequest = z.infer<typeof insertAccountDeletionRequestSchema>;
+
+// API operation types
+export type ReferralCodeGenerateData = z.infer<typeof referralCodeGenerateSchema>;
+export type ReferralRecordCreateData = z.infer<typeof referralRecordCreateSchema>;
+export type ReferralRecordUpdateData = z.infer<typeof referralRecordUpdateSchema>;
+export type UserAgreementUpdateData = z.infer<typeof userAgreementUpdateSchema>;
+export type DataExportRequestCreateData = z.infer<typeof dataExportRequestCreateSchema>;
+export type AccountDeletionRequestCreateData = z.infer<typeof accountDeletionRequestCreateSchema>;
+
 // API operation types for Service Provider Profiles
 export type ServiceProviderProfileUpdateData = z.infer<typeof serviceProviderProfileUpdateSchema>;
 export type ServiceProviderDocumentSubmissionData = z.infer<typeof serviceProviderDocumentSubmissionSchema>;

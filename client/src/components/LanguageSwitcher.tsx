@@ -128,7 +128,7 @@ export function LanguageSwitcherImpl({
       localStorage.setItem('fixitquick_language', languageCode);
       
       // Optional: Send to backend to update user preferences
-      if (typeof window !== 'undefined' && window.fetch) {
+      if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
         try {
           await fetch('/api/v1/user/preferences/language', {
             method: 'PATCH',

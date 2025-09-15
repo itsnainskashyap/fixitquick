@@ -150,10 +150,10 @@ export default function Account() {
 
   // Get user display name
   const getUserDisplayName = () => {
-    if (user.firstName && user.lastName) {
+    if (user?.firstName && user?.lastName) {
       return `${user.firstName} ${user.lastName}`;
     }
-    return user.firstName || 'User';
+    return user?.firstName || 'User';
   };
   
   const handleEmailEdit = () => {

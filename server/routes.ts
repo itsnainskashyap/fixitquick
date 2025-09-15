@@ -1848,11 +1848,193 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // TODO: Implement localized content following backend guidelines
-  // - Define proper schemas in shared/schema.ts first
-  // - Add Zod validation schemas  
-  // - Update IStorage interface with proper typing
-  // - Implement methods following established patterns
+  // GET /api/v1/users/me/locale/preferences - Get user locale preferences
+  app.get('/api/v1/users/me/locale/preferences', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const preferences = await storage.getUserLocalePreferences(userId);
+      
+      // Return default preferences if none exist
+      if (!preferences) {
+        const defaultPreferences = {
+          language: 'en',
+          fallbackLanguage: 'en',
+          country: 'IN',
+          state: null,
+          city: null,
+          region: null,
+          serviceRadius: 25,
+          preferredServiceAreas: null,
+          dateFormat: 'DD/MM/YYYY',
+          timeFormat: '24h',
+          numberFormat: 'indian',
+          currencyCode: 'INR',
+          currencyFormat: 'symbol',
+          calendar: 'gregorian',
+          weekStartsOn: 1,
+          festivals: null,
+          contentPreference: 'local',
+          showLocalProviders: true,
+          showRegionalOffers: true,
+          autoDetectLocation: true,
+          autoDetectLanguage: false
+        };
+        
+        res.json({
+          success: true,
+          preferences: defaultPreferences
+        });
+      } else {
+        res.json({
+          success: true,
+          preferences
+        });
+      }
+
+    } catch (error) {
+      console.error('Error fetching locale preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch locale preferences'
+      });
+    }
+  });
+
+  // PATCH /api/v1/users/me/locale/preferences - Update user locale preferences
+  app.patch('/api/v1/users/me/locale/preferences', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const updatedPreferences = await storage.upsertUserLocalePreferences(userId, req.body);
+      
+      res.json({
+        success: true,
+        message: 'Locale preferences updated successfully',
+        preferences: updatedPreferences
+      });
+
+    } catch (error) {
+      console.error('Error updating locale preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update locale preferences'
+      });
+    }
+  });
+
+  // GET /api/v1/users/me/preferences/language-region - Get language & region preferences
+  app.get('/api/v1/users/me/preferences/language-region', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const preferences = await storage.getUserLocalePreferences(userId);
+      
+      if (!preferences) {
+        // Return default language & region preferences
+        const defaultPreferences = {
+          language: 'en',
+          country: 'IN',
+          region: 'New Delhi, Delhi',
+          currency: 'INR',
+          timezone: 'Asia/Kolkata',
+          dateFormat: 'DD/MM/YYYY',
+          timeFormat: '24',
+          unitSystem: 'metric',
+          autoDetectLocation: true
+        };
+        
+        res.json({
+          success: true,
+          preferences: defaultPreferences
+        });
+      } else {
+        // Map full locale preferences to language-region format
+        const languageRegionPrefs = {
+          language: preferences.language,
+          country: preferences.country,
+          region: preferences.region || `${preferences.city}, ${preferences.state}` || 'New Delhi, Delhi',
+          currency: preferences.currencyCode,
+          timezone: 'Asia/Kolkata', // This would ideally come from user preferences
+          dateFormat: preferences.dateFormat,
+          timeFormat: preferences.timeFormat === '24h' ? '24' : '12',
+          unitSystem: 'metric', // This would ideally come from user preferences
+          autoDetectLocation: preferences.autoDetectLocation
+        };
+        
+        res.json({
+          success: true,
+          preferences: languageRegionPrefs
+        });
+      }
+
+    } catch (error) {
+      console.error('Error fetching language-region preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch language-region preferences'
+      });
+    }
+  });
+
+  // PATCH /api/v1/users/me/preferences/language-region - Update language & region preferences
+  app.patch('/api/v1/users/me/preferences/language-region', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Map language-region format to full locale preferences
+      const { language, country, region, currency, timezone, dateFormat, timeFormat, unitSystem, autoDetectLocation } = req.body;
+      
+      const localeData = {
+        language,
+        country,
+        region: region || null,
+        currencyCode: currency,
+        dateFormat,
+        timeFormat: timeFormat === '24' ? '24h' : '12h',
+        autoDetectLocation
+      };
+
+      const updatedPreferences = await storage.upsertUserLocalePreferences(userId, localeData);
+      
+      res.json({
+        success: true,
+        message: 'Language and region preferences updated successfully',
+        preferences: updatedPreferences
+      });
+
+    } catch (error) {
+      console.error('Error updating language-region preferences:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update language-region preferences'
+      });
+    }
+  });
 
   // Secure admin login endpoint with environment-based credentials
   app.post('/api/admin/login', adminLoginLimiter, validateBody(adminLoginSchema), async (req: Request, res: Response) => {
@@ -8510,6 +8692,479 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to remove avatar',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+  
+  // ========================================
+  // REFERRAL SYSTEM ENDPOINTS
+  // ========================================
+  
+  // Get user's referral data
+  app.get('/api/v1/referrals/my-data', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Get or create user referral data
+      let referralData = await storage.getUserReferral(userId);
+      
+      if (!referralData) {
+        // Create initial referral data for user
+        const referralCode = await storage.generateReferralCode(userId);
+        const referralLink = `${req.get('origin') || 'https://fixitquick.com'}/signup?ref=${referralCode}`;
+        
+        referralData = await storage.createUserReferral({
+          userId,
+          referralCode,
+          referralLink,
+          totalReferrals: 0,
+          successfulReferrals: 0,
+          pendingReferrals: 0,
+          totalEarnings: '0.00',
+          availableEarnings: '0.00',
+          pendingEarnings: '0.00',
+          currentTier: 'Bronze',
+          monthlyReferrals: 0,
+          monthlyTarget: 5,
+        });
+      }
+
+      // Get referral history
+      const referralHistory = await storage.getReferralRecords(userId);
+      
+      // Calculate tier progress
+      const currentTier = await storage.updateReferralTier(userId);
+      
+      // Calculate next tier progress
+      const tierTargets = [
+        { name: 'Bronze', min: 0, max: 4 },
+        { name: 'Silver', min: 5, max: 9 },
+        { name: 'Gold', min: 10, max: 19 },
+        { name: 'Platinum', min: 20, max: 49 },
+        { name: 'Diamond', min: 50, max: 999 },
+      ];
+      
+      const currentTierIndex = tierTargets.findIndex(t => t.name === currentTier);
+      const nextTier = tierTargets[currentTierIndex + 1];
+      const nextTierProgress = nextTier ? 
+        ((referralData.successfulReferrals - tierTargets[currentTierIndex].min) / 
+         (nextTier.min - tierTargets[currentTierIndex].min)) * 100 : 100;
+
+      res.json({
+        referralCode: referralData.referralCode,
+        referralLink: referralData.referralLink,
+        totalReferrals: referralData.totalReferrals,
+        successfulReferrals: referralData.successfulReferrals,
+        pendingReferrals: referralData.pendingReferrals,
+        totalEarnings: Number(referralData.totalEarnings),
+        availableEarnings: Number(referralData.availableEarnings),
+        pendingEarnings: Number(referralData.pendingEarnings),
+        referralHistory: referralHistory.map(record => ({
+          id: record.id,
+          friendName: record.friendName || 'Anonymous',
+          friendEmail: record.friendEmail,
+          status: record.status,
+          inviteDate: record.createdAt?.toISOString(),
+          completionDate: record.completionDate?.toISOString(),
+          earnings: Number(record.earnings),
+          serviceUsed: record.serviceUsed,
+        })),
+        currentTier: currentTier,
+        nextTierProgress: Math.round(nextTierProgress),
+        monthlyTarget: referralData.monthlyTarget,
+        monthlyProgress: referralData.monthlyReferrals,
+      });
+    } catch (error) {
+      console.error('Error fetching referral data:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch referral data',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Generate new referral code
+  app.post('/api/v1/referrals/generate-code', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { customCode } = req.body;
+      
+      // Generate new referral code
+      const newReferralCode = await storage.generateReferralCode(userId, customCode);
+      const referralLink = `${req.get('origin') || 'https://fixitquick.com'}/signup?ref=${newReferralCode}`;
+      
+      // Update user referral data
+      const updatedReferral = await storage.updateUserReferral(userId, {
+        referralCode: newReferralCode,
+        referralLink,
+      });
+
+      if (!updatedReferral) {
+        return res.status(404).json({
+          success: false,
+          message: 'Referral data not found',
+          error: 'REFERRAL_NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        referralCode: newReferralCode,
+        referralLink,
+        message: 'Referral code updated successfully'
+      });
+    } catch (error) {
+      console.error('Error generating referral code:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate referral code',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get referral history
+  app.get('/api/v1/referrals/history', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { status } = req.query;
+      
+      const referralHistory = await storage.getReferralRecords(userId, status as string);
+      
+      res.json({
+        success: true,
+        referrals: referralHistory.map(record => ({
+          id: record.id,
+          friendName: record.friendName || 'Anonymous',
+          friendEmail: record.friendEmail,
+          status: record.status,
+          inviteDate: record.createdAt?.toISOString(),
+          completionDate: record.completionDate?.toISOString(),
+          earnings: Number(record.earnings),
+          serviceUsed: record.serviceUsed,
+        }))
+      });
+    } catch (error) {
+      console.error('Error fetching referral history:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch referral history',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ========================================
+  // LEGAL & PRIVACY ENDPOINTS
+  // ========================================
+  
+  // Get user agreements
+  app.get('/api/v1/users/me/agreements', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Get or create default agreements
+      let agreements = await storage.getUserAgreements(userId);
+      
+      if (!agreements) {
+        agreements = await storage.createUserAgreements({
+          userId,
+          termsOfService: { accepted: false, version: '1.0' },
+          privacyPolicy: { accepted: false, version: '1.0' },
+          cookiePolicy: { accepted: false, version: '1.0' },
+          dataProcessing: { accepted: false, version: '1.0' },
+        });
+      }
+
+      res.json({
+        termsOfService: agreements.termsOfService,
+        privacyPolicy: agreements.privacyPolicy,
+        cookiePolicy: agreements.cookiePolicy,
+        dataProcessing: agreements.dataProcessing,
+      });
+    } catch (error) {
+      console.error('Error fetching user agreements:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch user agreements',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Update user agreements
+  app.patch('/api/v1/users/me/agreements', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const updateData = req.body;
+      
+      const updatedAgreements = await storage.updateUserAgreements(userId, updateData);
+      
+      if (!updatedAgreements) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update agreements',
+          error: 'UPDATE_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Agreements updated successfully',
+        agreements: {
+          termsOfService: updatedAgreements.termsOfService,
+          privacyPolicy: updatedAgreements.privacyPolicy,
+          cookiePolicy: updatedAgreements.cookiePolicy,
+          dataProcessing: updatedAgreements.dataProcessing,
+        }
+      });
+    } catch (error) {
+      console.error('Error updating user agreements:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update agreements',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get data export requests
+  app.get('/api/v1/users/me/data-exports', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const exportRequests = await storage.getDataExportRequests(userId);
+      
+      res.json(exportRequests.map(request => ({
+        id: request.id,
+        status: request.status,
+        requestedAt: request.createdAt?.toISOString(),
+        readyAt: request.readyAt?.toISOString(),
+        expiresAt: request.expiresAt?.toISOString(),
+        downloadUrl: request.status === 'ready' ? request.downloadUrl : undefined,
+      })));
+    } catch (error) {
+      console.error('Error fetching data export requests:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch data export requests',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Create data export request
+  app.post('/api/v1/users/me/data-exports', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Check for pending requests
+      const existingRequests = await storage.getDataExportRequests(userId);
+      const pendingRequest = existingRequests.find(req => req.status === 'pending' || req.status === 'processing');
+      
+      if (pendingRequest) {
+        return res.status(400).json({
+          success: false,
+          message: 'You already have a pending data export request',
+          error: 'PENDING_REQUEST_EXISTS'
+        });
+      }
+
+      const { requestedData = {}, format = 'json' } = req.body;
+      
+      const exportRequest = await storage.createDataExportRequest({
+        userId,
+        requestedData: {
+          profile: true,
+          orders: true,
+          payments: true,
+          support: true,
+          referrals: true,
+          ...requestedData,
+        },
+        format,
+        status: 'pending',
+      });
+
+      // In a real implementation, trigger background job to process export
+      // For now, we'll auto-process it
+      setTimeout(async () => {
+        try {
+          await storage.processDataExport(exportRequest.id);
+        } catch (error) {
+          console.error('Error processing data export:', error);
+        }
+      }, 2000);
+
+      res.json({
+        success: true,
+        message: 'Data export request created successfully',
+        exportRequest: {
+          id: exportRequest.id,
+          status: exportRequest.status,
+          requestedAt: exportRequest.createdAt?.toISOString(),
+          expiresAt: exportRequest.expiresAt?.toISOString(),
+        }
+      });
+    } catch (error) {
+      console.error('Error creating data export request:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create data export request',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Delete user account (requires re-authentication in production)
+  app.delete('/api/v1/users/me/account', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { reason } = req.body;
+      
+      // Check for existing pending deletion request
+      const existingRequests = await storage.getAccountDeletionRequests(userId);
+      const pendingRequest = existingRequests.find(req => req.status === 'pending');
+      
+      if (pendingRequest) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account deletion already requested',
+          error: 'DELETION_ALREADY_REQUESTED',
+          scheduledFor: pendingRequest.scheduledFor?.toISOString(),
+          cancellationDeadline: pendingRequest.cancellationDeadline?.toISOString(),
+        });
+      }
+
+      const deletionRequest = await storage.createAccountDeletionRequest({
+        userId,
+        requestedBy: userId,
+        reason: reason || 'User requested account deletion',
+        status: 'pending',
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        retentionData: {
+          keepOrders: true,
+          keepPayments: true,
+          keepSupport: true,
+          anonymizeData: true,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'Account deletion request created successfully',
+        scheduledFor: deletionRequest.scheduledFor?.toISOString(),
+        cancellationDeadline: deletionRequest.cancellationDeadline?.toISOString(),
+        deletionRequest: {
+          id: deletionRequest.id,
+          status: deletionRequest.status,
+          requestedAt: deletionRequest.createdAt?.toISOString(),
+        }
+      });
+    } catch (error) {
+      console.error('Error creating account deletion request:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create account deletion request',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Cancel account deletion
+  app.post('/api/v1/users/me/account/cancel-deletion', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const cancelled = await storage.cancelAccountDeletion(userId);
+      
+      if (!cancelled) {
+        return res.status(404).json({
+          success: false,
+          message: 'No pending account deletion request found',
+          error: 'NO_PENDING_DELETION'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Account deletion request cancelled successfully'
+      });
+    } catch (error) {
+      console.error('Error cancelling account deletion:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to cancel account deletion',
         error: 'INTERNAL_ERROR'
       });
     }

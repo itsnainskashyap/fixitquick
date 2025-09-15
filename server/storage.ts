@@ -74,6 +74,23 @@ import {
   type DocumentsType,
   StatusTransitionSchema,
   type StatusTransition,
+  // Import referral and legal schemas
+  type UserReferral,
+  type InsertUserReferral,
+  type ReferralRecord,
+  type InsertReferralRecord,
+  type UserAgreement,
+  type InsertUserAgreement,
+  type DataExportRequest,
+  type InsertDataExportRequest,
+  type AccountDeletionRequest,
+  type InsertAccountDeletionRequest,
+  type ReferralCodeGenerateData,
+  type ReferralRecordCreateData,
+  type ReferralRecordUpdateData,
+  type UserAgreementUpdateData,
+  type DataExportRequestCreateData,
+  type AccountDeletionRequestCreateData,
   serviceBookings,
   providerJobRequests,
   users,
@@ -134,6 +151,11 @@ import {
   supportCallbackRequests,
   supportAgents,
   serviceProviderProfiles,
+  userReferrals,
+  referralRecords,
+  userAgreements,
+  dataExportRequests,
+  accountDeletionRequests,
   insertSupportTicketSchema,
   insertSupportTicketMessageSchema,
   insertFaqSchema,
@@ -450,10 +472,11 @@ export interface IStorage {
   updateUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences | undefined>;
   upsertUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences>;
 
-  // TODO: Implement locale preferences following backend guidelines
-  // - Define proper schemas in shared/schema.ts first
-  // - Add Zod validation schemas  
-  // - Update IStorage interface with proper typing
+  // User Locale Preferences methods
+  getUserLocalePreferences(userId: string): Promise<UserLocalePreferences | undefined>;
+  createUserLocalePreferences(preferences: InsertUserLocalePreferences): Promise<UserLocalePreferences>;
+  updateUserLocalePreferences(userId: string, data: Partial<InsertUserLocalePreferences>): Promise<UserLocalePreferences | undefined>;
+  upsertUserLocalePreferences(userId: string, data: Partial<InsertUserLocalePreferences>): Promise<UserLocalePreferences>;
 
   // Enhanced AI Search methods
   searchServices(filters: {
@@ -687,6 +710,34 @@ export interface IStorage {
 
   // Role Management
   upgradeUserRoleToProvider(userId: string): Promise<boolean>;
+
+  // Referral methods
+  getUserReferral(userId: string): Promise<UserReferral | undefined>;
+  createUserReferral(referral: InsertUserReferral): Promise<UserReferral>;
+  updateUserReferral(userId: string, data: Partial<InsertUserReferral>): Promise<UserReferral | undefined>;
+  generateReferralCode(userId: string, customCode?: string): Promise<string>;
+  getReferralRecords(referrerId: string, status?: string): Promise<ReferralRecord[]>;
+  createReferralRecord(record: InsertReferralRecord): Promise<ReferralRecord>;
+  updateReferralRecord(id: string, data: Partial<InsertReferralRecord>): Promise<ReferralRecord | undefined>;
+  getReferralByCode(code: string): Promise<UserReferral | undefined>;
+  processReferralSignup(referralCode: string, newUserId: string, metadata?: any): Promise<ReferralRecord | undefined>;
+  calculateReferralEarnings(userId: string): Promise<{ total: number; available: number; pending: number }>;
+  updateReferralTier(userId: string): Promise<string>;
+
+  // Legal and Privacy methods
+  getUserAgreements(userId: string): Promise<UserAgreement | undefined>;
+  createUserAgreements(agreements: InsertUserAgreement): Promise<UserAgreement>;
+  updateUserAgreements(userId: string, data: UserAgreementUpdateData): Promise<UserAgreement | undefined>;
+  getDataExportRequests(userId: string): Promise<DataExportRequest[]>;
+  createDataExportRequest(request: InsertDataExportRequest): Promise<DataExportRequest>;
+  updateDataExportRequest(id: string, data: Partial<InsertDataExportRequest>): Promise<DataExportRequest | undefined>;
+  getDataExportRequest(id: string): Promise<DataExportRequest | undefined>;
+  processDataExport(id: string): Promise<string | undefined>;
+  getAccountDeletionRequests(userId?: string): Promise<AccountDeletionRequest[]>;
+  createAccountDeletionRequest(request: InsertAccountDeletionRequest): Promise<AccountDeletionRequest>;
+  updateAccountDeletionRequest(id: string, data: Partial<InsertAccountDeletionRequest>): Promise<AccountDeletionRequest | undefined>;
+  cancelAccountDeletion(userId: string): Promise<boolean>;
+  processAccountDeletion(id: string): Promise<boolean>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -3835,6 +3886,42 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  // User Locale Preferences methods implementation
+  async getUserLocalePreferences(userId: string): Promise<UserLocalePreferences | undefined> {
+    const result = await db.select().from(userLocalePreferences)
+      .where(eq(userLocalePreferences.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async createUserLocalePreferences(preferences: InsertUserLocalePreferences): Promise<UserLocalePreferences> {
+    const result = await db.insert(userLocalePreferences).values(preferences).returning();
+    return result[0];
+  }
+
+  async updateUserLocalePreferences(userId: string, data: Partial<InsertUserLocalePreferences>): Promise<UserLocalePreferences | undefined> {
+    const result = await db.update(userLocalePreferences)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(userLocalePreferences.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async upsertUserLocalePreferences(userId: string, data: Partial<InsertUserLocalePreferences>): Promise<UserLocalePreferences> {
+    const existingPrefs = await this.getUserLocalePreferences(userId);
+    
+    if (existingPrefs) {
+      const updated = await this.updateUserLocalePreferences(userId, data);
+      return updated!;
+    } else {
+      const fullData = {
+        userId,
+        ...data
+      } as InsertUserLocalePreferences;
+      return await this.createUserLocalePreferences(fullData);
+    }
+  }
+
   async upsertUserNotificationPreferences(userId: string, data: Partial<InsertUserNotificationPreferences>): Promise<UserNotificationPreferences> {
     // First try to get existing preferences
     const existing = await this.getUserNotificationPreferences(userId);
@@ -5675,6 +5762,439 @@ export class PostgresStorage implements IStorage {
       return success;
     } catch (error) {
       console.error(`❌ storage.upgradeUserRoleToProvider: Error upgrading role for userId: ${userId}:`, error);
+      return false;
+    }
+  }
+
+  // Referral methods implementation
+  async getUserReferral(userId: string): Promise<UserReferral | undefined> {
+    try {
+      const result = await db.select().from(userReferrals).where(eq(userReferrals.userId, userId)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getUserReferral: Error fetching referral for userId: ${userId}:`, error);
+      return undefined;
+    }
+  }
+
+  async createUserReferral(referral: InsertUserReferral): Promise<UserReferral> {
+    const result = await db.insert(userReferrals).values({
+      ...referral,
+      updatedAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async updateUserReferral(userId: string, data: Partial<InsertUserReferral>): Promise<UserReferral | undefined> {
+    const result = await db.update(userReferrals)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(userReferrals.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async generateReferralCode(userId: string, customCode?: string): Promise<string> {
+    const baseCode = customCode || `FQ${userId.substring(0, 6).toUpperCase()}`;
+    let referralCode = baseCode;
+    let attempts = 0;
+    
+    // Ensure uniqueness by adding suffix if needed
+    while (attempts < 10) {
+      const existing = await this.getReferralByCode(referralCode);
+      if (!existing) {
+        break;
+      }
+      attempts++;
+      referralCode = `${baseCode}${attempts}`;
+    }
+    
+    return referralCode;
+  }
+
+  async getReferralRecords(referrerId: string, status?: string): Promise<ReferralRecord[]> {
+    try {
+      const conditions = [eq(referralRecords.referrerId, referrerId)];
+      
+      if (status) {
+        conditions.push(eq(referralRecords.status, status));
+      }
+      
+      const result = await db.select().from(referralRecords)
+        .where(combineConditions(conditions))
+        .orderBy(desc(referralRecords.createdAt));
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getReferralRecords: Error fetching records for referrerId: ${referrerId}:`, error);
+      return [];
+    }
+  }
+
+  async createReferralRecord(record: InsertReferralRecord): Promise<ReferralRecord> {
+    const result = await db.insert(referralRecords).values({
+      ...record,
+      updatedAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async updateReferralRecord(id: string, data: Partial<InsertReferralRecord>): Promise<ReferralRecord | undefined> {
+    const result = await db.update(referralRecords)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(referralRecords.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getReferralByCode(code: string): Promise<UserReferral | undefined> {
+    try {
+      const result = await db.select().from(userReferrals).where(eq(userReferrals.referralCode, code)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getReferralByCode: Error fetching referral for code: ${code}:`, error);
+      return undefined;
+    }
+  }
+
+  async processReferralSignup(referralCode: string, newUserId: string, metadata?: any): Promise<ReferralRecord | undefined> {
+    try {
+      const referral = await this.getReferralByCode(referralCode);
+      if (!referral) {
+        return undefined;
+      }
+
+      const friend = await this.getUser(newUserId);
+      if (!friend) {
+        return undefined;
+      }
+
+      // Create referral record
+      const record = await this.createReferralRecord({
+        referrerId: referral.userId,
+        friendId: newUserId,
+        friendName: `${friend.firstName || ''} ${friend.lastName || ''}`.trim() || 'Anonymous',
+        friendEmail: friend.email,
+        friendPhone: friend.phone,
+        status: 'pending',
+        earnings: 100, // Default referral bonus
+        metadata: metadata || {},
+      });
+
+      // Update referral counts
+      await this.updateUserReferral(referral.userId, {
+        totalReferrals: referral.totalReferrals + 1,
+        pendingReferrals: referral.pendingReferrals + 1,
+        pendingEarnings: Number(referral.pendingEarnings) + 100,
+      });
+
+      return record;
+    } catch (error) {
+      console.error(`❌ storage.processReferralSignup: Error processing referral signup:`, error);
+      return undefined;
+    }
+  }
+
+  async calculateReferralEarnings(userId: string): Promise<{ total: number; available: number; pending: number }> {
+    try {
+      const referral = await this.getUserReferral(userId);
+      if (!referral) {
+        return { total: 0, available: 0, pending: 0 };
+      }
+
+      return {
+        total: Number(referral.totalEarnings),
+        available: Number(referral.availableEarnings),
+        pending: Number(referral.pendingEarnings),
+      };
+    } catch (error) {
+      console.error(`❌ storage.calculateReferralEarnings: Error calculating earnings for userId: ${userId}:`, error);
+      return { total: 0, available: 0, pending: 0 };
+    }
+  }
+
+  async updateReferralTier(userId: string): Promise<string> {
+    try {
+      const referral = await this.getUserReferral(userId);
+      if (!referral) {
+        return 'Bronze';
+      }
+
+      const successful = referral.successfulReferrals;
+      let tier = 'Bronze';
+      
+      if (successful >= 50) tier = 'Diamond';
+      else if (successful >= 20) tier = 'Platinum';
+      else if (successful >= 10) tier = 'Gold';
+      else if (successful >= 5) tier = 'Silver';
+
+      if (tier !== referral.currentTier) {
+        await this.updateUserReferral(userId, { currentTier: tier });
+      }
+
+      return tier;
+    } catch (error) {
+      console.error(`❌ storage.updateReferralTier: Error updating tier for userId: ${userId}:`, error);
+      return 'Bronze';
+    }
+  }
+
+  // Legal and Privacy methods implementation
+  async getUserAgreements(userId: string): Promise<UserAgreement | undefined> {
+    try {
+      const result = await db.select().from(userAgreements).where(eq(userAgreements.userId, userId)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getUserAgreements: Error fetching agreements for userId: ${userId}:`, error);
+      return undefined;
+    }
+  }
+
+  async createUserAgreements(agreements: InsertUserAgreement): Promise<UserAgreement> {
+    const result = await db.insert(userAgreements).values({
+      ...agreements,
+      updatedAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async updateUserAgreements(userId: string, data: UserAgreementUpdateData): Promise<UserAgreement | undefined> {
+    try {
+      // First get existing agreements or create default ones
+      let existing = await this.getUserAgreements(userId);
+      
+      if (!existing) {
+        existing = await this.createUserAgreements({
+          userId,
+          termsOfService: { accepted: false, version: '1.0' },
+          privacyPolicy: { accepted: false, version: '1.0' },
+          cookiePolicy: { accepted: false, version: '1.0' },
+          dataProcessing: { accepted: false, version: '1.0' },
+        });
+      }
+
+      // Update the specific agreements with acceptedAt timestamp
+      const updateData: any = { updatedAt: new Date() };
+      const timestamp = new Date().toISOString();
+
+      if (data.termsOfService) {
+        updateData.termsOfService = {
+          ...existing.termsOfService,
+          ...data.termsOfService,
+          acceptedAt: data.termsOfService.accepted ? timestamp : existing.termsOfService.acceptedAt,
+        };
+      }
+
+      if (data.privacyPolicy) {
+        updateData.privacyPolicy = {
+          ...existing.privacyPolicy,
+          ...data.privacyPolicy,
+          acceptedAt: data.privacyPolicy.accepted ? timestamp : existing.privacyPolicy.acceptedAt,
+        };
+      }
+
+      if (data.cookiePolicy) {
+        updateData.cookiePolicy = {
+          ...existing.cookiePolicy,
+          ...data.cookiePolicy,
+          acceptedAt: data.cookiePolicy.accepted ? timestamp : existing.cookiePolicy.acceptedAt,
+        };
+      }
+
+      if (data.dataProcessing) {
+        updateData.dataProcessing = {
+          ...existing.dataProcessing,
+          ...data.dataProcessing,
+          acceptedAt: data.dataProcessing.accepted ? timestamp : existing.dataProcessing.acceptedAt,
+        };
+      }
+
+      const result = await db.update(userAgreements)
+        .set(updateData)
+        .where(eq(userAgreements.userId, userId))
+        .returning();
+
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateUserAgreements: Error updating agreements for userId: ${userId}:`, error);
+      return undefined;
+    }
+  }
+
+  async getDataExportRequests(userId: string): Promise<DataExportRequest[]> {
+    try {
+      const result = await db.select().from(dataExportRequests)
+        .where(eq(dataExportRequests.userId, userId))
+        .orderBy(desc(dataExportRequests.createdAt));
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getDataExportRequests: Error fetching export requests for userId: ${userId}:`, error);
+      return [];
+    }
+  }
+
+  async createDataExportRequest(request: InsertDataExportRequest): Promise<DataExportRequest> {
+    const result = await db.insert(dataExportRequests).values({
+      ...request,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days expiry
+      updatedAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async updateDataExportRequest(id: string, data: Partial<InsertDataExportRequest>): Promise<DataExportRequest | undefined> {
+    const result = await db.update(dataExportRequests)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(dataExportRequests.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getDataExportRequest(id: string): Promise<DataExportRequest | undefined> {
+    try {
+      const result = await db.select().from(dataExportRequests).where(eq(dataExportRequests.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getDataExportRequest: Error fetching export request id: ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async processDataExport(id: string): Promise<string | undefined> {
+    try {
+      const exportRequest = await this.getDataExportRequest(id);
+      if (!exportRequest || exportRequest.status !== 'pending') {
+        return undefined;
+      }
+
+      // Mark as processing
+      await this.updateDataExportRequest(id, { status: 'processing' });
+
+      // Generate export data URL (in a real implementation, this would be processed by a background job)
+      const downloadUrl = `https://exports.fixitquick.com/user-data-${id}.${exportRequest.format}`;
+      
+      // Mark as ready
+      await this.updateDataExportRequest(id, {
+        status: 'ready',
+        downloadUrl,
+        readyAt: new Date(),
+        fileSize: 1024 * 100, // Mock file size
+      });
+
+      return downloadUrl;
+    } catch (error) {
+      console.error(`❌ storage.processDataExport: Error processing export id: ${id}:`, error);
+      await this.updateDataExportRequest(id, { status: 'pending' });
+      return undefined;
+    }
+  }
+
+  async getAccountDeletionRequests(userId?: string): Promise<AccountDeletionRequest[]> {
+    try {
+      const conditions = [];
+      
+      if (userId) {
+        conditions.push(eq(accountDeletionRequests.userId, userId));
+      }
+      
+      const result = await db.select().from(accountDeletionRequests)
+        .where(combineConditions(conditions))
+        .orderBy(desc(accountDeletionRequests.createdAt));
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getAccountDeletionRequests: Error fetching deletion requests:`, error);
+      return [];
+    }
+  }
+
+  async createAccountDeletionRequest(request: InsertAccountDeletionRequest): Promise<AccountDeletionRequest> {
+    const scheduledDate = new Date();
+    scheduledDate.setDate(scheduledDate.getDate() + 30); // 30 days from now
+    
+    const cancellationDeadline = new Date();
+    cancellationDeadline.setDate(cancellationDeadline.getDate() + 29); // 29 days grace period
+
+    const result = await db.insert(accountDeletionRequests).values({
+      ...request,
+      scheduledFor: scheduledDate,
+      cancellationDeadline,
+      updatedAt: new Date(),
+    }).returning();
+    return result[0];
+  }
+
+  async updateAccountDeletionRequest(id: string, data: Partial<InsertAccountDeletionRequest>): Promise<AccountDeletionRequest | undefined> {
+    const result = await db.update(accountDeletionRequests)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(accountDeletionRequests.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async cancelAccountDeletion(userId: string): Promise<boolean> {
+    try {
+      const result = await db.update(accountDeletionRequests)
+        .set({
+          status: 'cancelled',
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(accountDeletionRequests.userId, userId),
+          eq(accountDeletionRequests.status, 'pending')
+        ))
+        .returning();
+
+      return result.length > 0;
+    } catch (error) {
+      console.error(`❌ storage.cancelAccountDeletion: Error cancelling deletion for userId: ${userId}:`, error);
+      return false;
+    }
+  }
+
+  async processAccountDeletion(id: string): Promise<boolean> {
+    try {
+      const deletionRequest = await db.select().from(accountDeletionRequests)
+        .where(eq(accountDeletionRequests.id, id))
+        .limit(1);
+
+      if (deletionRequest.length === 0 || deletionRequest[0].status !== 'pending') {
+        return false;
+      }
+
+      const request = deletionRequest[0];
+      
+      // Mark as processing
+      await this.updateAccountDeletionRequest(id, { 
+        status: 'processing',
+        processedAt: new Date()
+      });
+
+      // In a real implementation, this would:
+      // 1. Anonymize user data based on retention settings
+      // 2. Delete or archive user records
+      // 3. Handle related data cleanup
+      // For now, we'll just mark as completed
+
+      await this.updateAccountDeletionRequest(id, { 
+        status: 'completed',
+        processedAt: new Date()
+      });
+
+      return true;
+    } catch (error) {
+      console.error(`❌ storage.processAccountDeletion: Error processing deletion id: ${id}:`, error);
       return false;
     }
   }

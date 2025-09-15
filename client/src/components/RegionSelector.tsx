@@ -183,7 +183,7 @@ export function RegionSelectorImpl({
     onRegionChange?.(regionWithService);
     
     // Optional: Send to backend to update user preferences
-    if (typeof window !== 'undefined' && window.fetch) {
+    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
       try {
         fetch('/api/v1/user/preferences/region', {
           method: 'PATCH',

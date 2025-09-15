@@ -45,6 +45,10 @@ import ProviderRegistration from "@/pages/ProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
 import ServiceProviderDashboard from "@/pages/ProviderDashboard";
 import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
+import LanguageRegion from "@/pages/LanguageRegion";
+import ReferEarn from "@/pages/ReferEarn";
+import HelpSupport from "@/pages/HelpSupport";
+import LegalPrivacy from "@/pages/LegalPrivacy";
 
 // Import components
 import { FloatingCartWidget } from "@/components/FloatingCartWidget";
@@ -187,8 +191,11 @@ function Router() {
       <Route path="/payment-methods" component={() => <ProtectedRoute component={PaymentMethods} />} />
       <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
       <Route path="/account/edit" component={() => <ProtectedRoute component={AccountEdit} />} />
+      <Route path="/account/language" component={() => <ProtectedRoute component={LanguageRegion} />} />
+      <Route path="/account/referral" component={() => <ProtectedRoute component={ReferEarn} />} />
+      <Route path="/support" component={() => <ProtectedRoute component={HelpSupport} />} />
+      <Route path="/legal" component={() => <ProtectedRoute component={LegalPrivacy} />} />
       <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
-      <Route path="/support" component={() => <ProtectedRoute component={Support} />} />
       
       {/* Category Hierarchy Routes */}
       <Route path="/categories/:categoryId/subcategories" component={() => <ProtectedRoute component={Subcategories} />} />
