@@ -42,7 +42,6 @@ const navigationItems: NavigationItem[] = [
     label: 'Orders',
     icon: ClipboardList,
     path: '/orders',
-    badge: 2, // This would come from actual data
   },
   {
     id: 'wallet',
