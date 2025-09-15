@@ -1910,8 +1910,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!adminUser) {
         // Create admin user in database
         try {
-          adminUser = await storage.createUser({
-            id: ADMIN_ID,
+          // Create admin user without id (auto-generated)
+          const newUser = await storage.createUser({
             email: ADMIN_EMAIL,
             firstName: 'Administrator',
             lastName: 'Admin',
@@ -1921,6 +1921,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             fixiPoints: 0,
             isActive: true,
           });
+          
+          // Use the created user as admin (IDs are auto-generated)
+          adminUser = newUser;
           console.log('✅ Admin user created successfully');
         } catch (createError) {
           console.error('❌ Failed to create admin user:', createError);
@@ -2544,10 +2547,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: conversationResult.response,
             messageType: 'ai',
             metadata: {
-              suggestedServices: conversationResult.suggestedServices || [],
-              extractedInfo: conversationResult.extractedInfo || {},
-              nextStage: conversationResult.nextStage || '',
-              quickReplies: conversationResult.quickReplies || []
+              suggestedServices: conversationResult.suggestedServices || null,
+              extractedInfo: conversationResult.extractedInfo || null,
+              nextStage: conversationResult.nextStage || null,
+              quickReplies: conversationResult.quickReplies || null
             }
           });
         } catch (dbError) {
@@ -2595,6 +2598,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fallback: true,
         // Backward compatibility
         suggestedSearches: ['Electrical problem', 'Plumbing issue', 'Cleaning needed', 'Something else']
+      });
+    }
+  });
+
+  // NEW: Chat-based service suggestions endpoint
+  app.post('/api/v1/ai/chat-suggestions', optionalAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { conversationHistory, context } = req.body;
+
+      if (!conversationHistory || !Array.isArray(conversationHistory)) {
+        return res.status(400).json({
+          success: false,
+          message: 'conversationHistory array is required'
+        });
+      }
+
+      if (conversationHistory.length < 1) {
+        return res.json({
+          success: true,
+          suggestions: [],
+          analysis: {
+            problemType: 'unknown',
+            urgency: 'low',
+            confidence: 0,
+            extractedInfo: {}
+          },
+          recommendationReason: 'Not enough conversation context to provide recommendations.'
+        });
+      }
+
+      const userId = req.user?.id;
+      console.log(`🎯 Generating chat suggestions from ${conversationHistory.length} messages for user: ${userId || 'anonymous'}`);
+
+      // Convert frontend message format to backend format
+      const messages = conversationHistory.map((msg: any) => ({
+        id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: msg.type,
+        content: msg.content,
+        timestamp: new Date(msg.timestamp || Date.now()),
+        metadata: msg.metadata || {}
+      }));
+
+      // Generate suggestions using the enhanced AI service
+      const result = await aiService.generateChatSuggestions(messages, context);
+
+      res.json({
+        success: true,
+        suggestions: result.suggestions,
+        analysis: result.analysis,
+        recommendationReason: result.recommendationReason,
+        timestamp: new Date().toISOString(),
+        conversationCount: conversationHistory.length
+      });
+
+    } catch (error) {
+      console.error('Error in chat suggestions endpoint:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate chat suggestions',
+        error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined
       });
     }
   });
@@ -3825,7 +3888,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Send booking notifications
-      await notificationService.notifyOrderUpdate(booking.userId, booking.id, booking.status);
+      if (booking.userId) {
+        await notificationService.notifyOrderUpdate(booking.userId, booking.id, booking.status);
+      }
 
       res.status(201).json(booking);
     } catch (error) {
@@ -4071,8 +4136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const cancelledBooking = await storage.updateServiceBooking(bookingId, {
-        status: 'cancelled',
-        updatedAt: new Date(),
+        status: 'cancelled'
       });
 
       // Handle refunds if payment was made
@@ -4602,7 +4666,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get provider's current assignments
       const activeBookings = await storage.getUserServiceBookings(providerId, {
-        statuses: ['provider_assigned', 'provider_on_way', 'work_in_progress'],
+        status: 'provider_assigned', // Use single status filter
         limit: 10
       });
       
@@ -5604,7 +5668,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Recent activity
       const recentOrders = orders
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .sort((a, b) => (b.createdAt ? new Date(b.createdAt).getTime() : 0) - (a.createdAt ? new Date(a.createdAt).getTime() : 0))
         .slice(0, 5);
         
       // Top selling products

@@ -28,7 +28,7 @@ export interface AIIconRequest {
   style?: 'cartoon' | 'minimalist' | 'detailed';
 }
 
-class AIService {
+export class AIService {
   private baseUrl = '/api/v1/ai';
 
   constructor() {
@@ -235,6 +235,104 @@ class AIService {
     }
   }
 
+  // NEW: Get service suggestions based on chat conversation history
+  async getChatSuggestions(
+    conversationHistory: Array<{
+      id: string;
+      type: 'user' | 'ai' | 'suggestion';
+      content: string;
+      timestamp: Date;
+    }>,
+    context?: {
+      location?: { latitude: number; longitude: number };
+      extractedInfo?: Record<string, any>;
+    }
+  ): Promise<{
+    suggestions: AISearchResult[];
+    analysis: {
+      problemType: string;
+      urgency: 'low' | 'medium' | 'high';
+      confidence: number;
+      extractedInfo: Record<string, any>;
+    };
+    recommendationReason: string;
+  }> {
+    try {
+      console.log('🤖 NainsAI: Fetching chat suggestions for conversation with', conversationHistory.length, 'messages');
+
+      if (conversationHistory.length < 1) {
+        return {
+          suggestions: [],
+          analysis: {
+            problemType: 'unknown',
+            urgency: 'low',
+            confidence: 0,
+            extractedInfo: {}
+          },
+          recommendationReason: 'Not enough conversation context to provide recommendations.'
+        };
+      }
+
+      // Filter to only user messages for analysis
+      const userMessages = conversationHistory.filter(msg => msg.type === 'user');
+      
+      if (userMessages.length === 0) {
+        return {
+          suggestions: [],
+          analysis: {
+            problemType: 'unknown',
+            urgency: 'low',
+            confidence: 0,
+            extractedInfo: {}
+          },
+          recommendationReason: 'No user messages found in conversation.'
+        };
+      }
+
+      const response = await this.makeServerRequest('/chat-suggestions', 'POST', {
+        conversationHistory,
+        context
+      });
+
+      if (response.success) {
+        // Transform backend suggestions to client format
+        const suggestions: AISearchResult[] = response.suggestions.map((service: any) => ({
+          id: service.id,
+          name: service.name,
+          description: service.description,
+          price: service.price,
+          icon: service.icon,
+          category: service.category,
+          type: 'service' as const,
+          rating: service.rating
+        }));
+
+        console.log(`Found ${suggestions.length} chat-based service suggestions`);
+
+        return {
+          suggestions,
+          analysis: response.analysis,
+          recommendationReason: response.recommendationReason
+        };
+      } else {
+        throw new Error(response.message || 'Failed to get chat suggestions');
+      }
+
+    } catch (error) {
+      console.error('Error getting chat suggestions:', error);
+      return {
+        suggestions: [],
+        analysis: {
+          problemType: 'general',
+          urgency: 'medium',
+          confidence: 0,
+          extractedInfo: {}
+        },
+        recommendationReason: 'Unable to analyze conversation for service recommendations.'
+      };
+    }
+  }
+
   async generateProviderTips(metrics: {
     completionRate: number;
     avgRating: number;
@@ -291,4 +389,5 @@ class AIService {
   }
 }
 
+// Export the instance (class is already exported above)
 export const aiService = new AIService();

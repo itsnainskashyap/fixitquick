@@ -511,6 +511,172 @@ class ServerAIService {
     }
   }
   
+  // NEW: Generate chat-based service suggestions from conversation history
+  async generateChatSuggestions(
+    conversationHistory: ConversationMessage[], 
+    context?: ConversationContext
+  ): Promise<{
+    suggestions: ServiceSuggestion[];
+    analysis: {
+      problemType: string;
+      urgency: 'low' | 'medium' | 'high';
+      confidence: number;
+      extractedInfo: Record<string, any>;
+    };
+    recommendationReason: string;
+  }> {
+    console.log('🤖 NainsAI: Analyzing conversation history for service suggestions');
+    
+    try {
+      // Extract key information from conversation history
+      const conversationText = conversationHistory
+        .filter(msg => msg.type === 'user')
+        .map(msg => msg.content)
+        .join(' ');
+
+      if (conversationText.length < 10) {
+        return {
+          suggestions: [],
+          analysis: {
+            problemType: 'unknown',
+            urgency: 'low',
+            confidence: 0,
+            extractedInfo: {}
+          },
+          recommendationReason: 'Not enough conversation context to provide recommendations.'
+        };
+      }
+
+      // Use AI to analyze the complete conversation
+      const analysisPrompt = `Analyze this conversation about home service needs and extract key information:
+
+Conversation: "${conversationText}"
+
+Extract and return JSON with:
+{
+  "problemType": "electrician|plumber|cleaner|carpentry|pest_control|appliance_repair|general",
+  "urgency": "low|medium|high",
+  "confidence": 0.0-1.0,
+  "extractedInfo": {
+    "problemDescription": "brief description",
+    "location": "any location mentioned",
+    "budget": "any budget mentioned",
+    "timeframe": "when they need it done",
+    "specificIssues": ["list", "of", "specific", "problems"]
+  },
+  "searchKeywords": ["relevant", "search", "terms"]
+}`;
+
+      let analysis: any;
+      try {
+        const analysisResult = await openRouterService.generateChatResponse(conversationText, analysisPrompt);
+        analysis = JSON.parse(analysisResult);
+      } catch (error) {
+        console.warn('AI analysis failed, using fallback analysis');
+        analysis = this.fallbackConversationAnalysis(conversationText);
+      }
+
+      // Search for relevant services based on analysis
+      const suggestions = await this.searchServices(
+        analysis.extractedInfo?.problemDescription || conversationText,
+        {
+          category: analysis.problemType !== 'general' ? analysis.problemType : undefined,
+          urgency: analysis.urgency,
+          location: context?.extractedInfo?.location
+        }
+      );
+
+      // Generate recommendation explanation
+      const reasonPrompt = `Based on this conversation analysis, explain why these services are recommended:
+      
+Problem: ${analysis.problemType}
+Issues: ${analysis.extractedInfo?.specificIssues?.join(', ') || 'General service needs'}
+Urgency: ${analysis.urgency}
+
+Write a brief, friendly explanation (30-50 words) of why these services match their needs.`;
+
+      let recommendationReason = '';
+      try {
+        recommendationReason = await openRouterService.generateChatResponse(conversationText, reasonPrompt);
+      } catch (error) {
+        recommendationReason = `Based on our conversation about ${analysis.problemType} issues, here are some services that can help resolve your concerns.`;
+      }
+
+      console.log(`Found ${suggestions.length} services based on conversation analysis`);
+      
+      return {
+        suggestions: suggestions.slice(0, 6), // Limit to top 6 suggestions
+        analysis: {
+          problemType: analysis.problemType,
+          urgency: analysis.urgency,
+          confidence: analysis.confidence || 0.7,
+          extractedInfo: analysis.extractedInfo || {}
+        },
+        recommendationReason: recommendationReason.substring(0, 200) // Limit length
+      };
+
+    } catch (error) {
+      console.error('Error generating chat suggestions:', error);
+      return {
+        suggestions: [],
+        analysis: {
+          problemType: 'general',
+          urgency: 'medium',
+          confidence: 0,
+          extractedInfo: {}
+        },
+        recommendationReason: 'Unable to analyze conversation for recommendations.'
+      };
+    }
+  }
+
+  // Fallback conversation analysis when AI fails
+  private fallbackConversationAnalysis(conversationText: string): any {
+    const text = conversationText.toLowerCase();
+    
+    // Problem type detection
+    let problemType = 'general';
+    if (text.includes('electric') || text.includes('fan') || text.includes('switch') || text.includes('light')) {
+      problemType = 'electrician';
+    } else if (text.includes('water') || text.includes('pipe') || text.includes('leak') || text.includes('tap')) {
+      problemType = 'plumber';
+    } else if (text.includes('clean') || text.includes('dirty') || text.includes('dust')) {
+      problemType = 'cleaner';
+    } else if (text.includes('wood') || text.includes('door') || text.includes('cabinet')) {
+      problemType = 'carpentry';
+    } else if (text.includes('pest') || text.includes('cockroach') || text.includes('rat')) {
+      problemType = 'pest_control';
+    }
+
+    // Urgency detection
+    let urgency: 'low' | 'medium' | 'high' = 'medium';
+    if (text.includes('urgent') || text.includes('emergency') || text.includes('immediately')) {
+      urgency = 'high';
+    } else if (text.includes('when possible') || text.includes('sometime')) {
+      urgency = 'low';
+    }
+
+    return {
+      problemType,
+      urgency,
+      confidence: 0.6,
+      extractedInfo: {
+        problemDescription: conversationText.substring(0, 100),
+        specificIssues: this.extractKeywords(conversationText)
+      },
+      searchKeywords: this.extractKeywords(conversationText)
+    };
+  }
+
+  private extractKeywords(text: string): string[] {
+    const keywords = text.toLowerCase()
+      .split(/\s+/)
+      .filter(word => word.length > 3)
+      .filter(word => !['this', 'that', 'with', 'from', 'they', 'have', 'been', 'some', 'will', 'your', 'what', 'when', 'where', 'need', 'want'].includes(word))
+      .slice(0, 10);
+    return Array.from(new Set(keywords)); // Remove duplicates
+  }
+
   // Generate service suggestions with explanations
   private async generateServiceSuggestions(
     message: string,

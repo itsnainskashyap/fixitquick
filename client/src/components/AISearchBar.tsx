@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+import { AIService, AISearchResult } from '@/lib/ai';
 
 // TypeScript declarations for speech recognition APIs
 declare global {
@@ -102,6 +103,16 @@ export function AISearchBar({
   const [aiSuggestions, setAiSuggestions] = useState<SearchSuggestion[]>([]);
   const [showMagicalEffects, setShowMagicalEffects] = useState(false);
 
+  // NEW: Service suggestions after chat state
+  const [serviceSuggestions, setServiceSuggestions] = useState<AISearchResult[]>([]);
+  const [suggestionAnalysis, setSuggestionAnalysis] = useState<any>(null);
+  const [suggestionReason, setSuggestionReason] = useState<string>('');
+  const [showServiceSuggestions, setShowServiceSuggestions] = useState(false);
+  const [isLoadingServiceSuggestions, setIsLoadingServiceSuggestions] = useState(false);
+
+  // AI Service instance
+  const aiService = useState(() => new AIService())[0];
+
   // Built-in search suggestions - fallback when AI is unavailable
   const builtInSuggestions: SearchSuggestion[] = [
     { id: '1', text: 'Plumbing repair', category: 'Home Services', type: 'service', icon: '🔧' },
@@ -159,6 +170,64 @@ export function AISearchBar({
       }, 100);
     }
   }, [messages, mode, scrollToBottom]);
+
+  // NEW: Generate service suggestions after meaningful conversations
+  const generateServiceSuggestions = useCallback(async () => {
+    // Only generate suggestions if we have enough conversation and we're in chat mode
+    if (mode !== 'chat' || messages.length < 3 || isLoadingServiceSuggestions) {
+      return;
+    }
+
+    // Check if we have meaningful user messages (not just AI responses)
+    const userMessages = messages.filter(msg => msg.type === 'user');
+    if (userMessages.length < 2) {
+      return;
+    }
+
+    // Don't regenerate if we already have suggestions for this conversation
+    if (showServiceSuggestions && serviceSuggestions.length > 0) {
+      return;
+    }
+
+    try {
+      setIsLoadingServiceSuggestions(true);
+      console.log('🎯 Generating service suggestions from chat conversation');
+
+      const result = await aiService.getChatSuggestions(messages, {
+        location: user?.location,
+        extractedInfo: {}
+      });
+
+      if (result.suggestions.length > 0) {
+        setServiceSuggestions(result.suggestions);
+        setSuggestionAnalysis(result.analysis);
+        setSuggestionReason(result.recommendationReason);
+        setShowServiceSuggestions(true);
+
+        // Show a toast notification about suggestions
+        toast({
+          title: "Service Suggestions Ready! 🎯",
+          description: `Found ${result.suggestions.length} services that match your needs`,
+          duration: 4000,
+        });
+      }
+    } catch (error) {
+      console.error('Error generating service suggestions:', error);
+      // Don't show error toast to avoid disrupting chat experience
+    } finally {
+      setIsLoadingServiceSuggestions(false);
+    }
+  }, [mode, messages, isLoadingServiceSuggestions, showServiceSuggestions, serviceSuggestions.length, aiService, user?.location, toast]);
+
+  // Trigger service suggestions after chat conversations
+  useEffect(() => {
+    // Wait a bit after the last message to generate suggestions
+    const timer = setTimeout(() => {
+      generateServiceSuggestions();
+    }, 2000); // Wait 2 seconds after last message
+
+    return () => clearTimeout(timer);
+  }, [messages, generateServiceSuggestions]);
 
   // Mode toggle functionality
   const toggleMode = useCallback(() => {
@@ -793,6 +862,158 @@ export function AISearchBar({
                         </div>
                       </motion.div>
                     )}
+
+                    {/* NEW: Service Suggestions after meaningful conversations */}
+                    <AnimatePresence>
+                      {showServiceSuggestions && serviceSuggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 30, scale: 0.9 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -20, scale: 0.9 }}
+                          transition={{ 
+                            type: "spring", 
+                            stiffness: 200, 
+                            damping: 20,
+                            delay: 0.2
+                          }}
+                          className="mt-4 p-3 bg-gradient-to-br from-green-50 via-primary/5 to-blue-50 dark:from-green-950/30 dark:via-primary/10 dark:to-blue-950/30 rounded-xl border border-green-200 dark:border-green-800/50"
+                          data-testid="service-suggestions-container"
+                        >
+                          {/* Suggestions Header */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center space-x-2">
+                              <motion.div
+                                animate={{ rotate: [0, 360] }}
+                                transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                              >
+                                <Sparkles className="w-4 h-4 text-green-600 dark:text-green-400" />
+                              </motion.div>
+                              <h4 className="text-sm font-semibold text-green-800 dark:text-green-300">
+                                Perfect Match Services 🎯
+                              </h4>
+                              <Badge variant="secondary" className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300">
+                                {serviceSuggestions.length} found
+                              </Badge>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowServiceSuggestions(false)}
+                              className="h-6 w-6 p-0 hover:bg-green-100 dark:hover:bg-green-900/50"
+                              data-testid="close-suggestions-button"
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+
+                          {/* Suggestion Reason */}
+                          {suggestionReason && (
+                            <p className="text-xs text-green-700 dark:text-green-300 mb-3 bg-green-100/50 dark:bg-green-900/30 p-2 rounded-lg">
+                              {suggestionReason}
+                            </p>
+                          )}
+
+                          {/* Service Cards */}
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {serviceSuggestions.slice(0, 4).map((service, index) => (
+                              <motion.div
+                                key={service.id}
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: index * 0.1 }}
+                                whileHover={{ scale: 1.02, x: 4 }}
+                                whileTap={{ scale: 0.98 }}
+                                className="flex items-center space-x-3 p-2 bg-white dark:bg-gray-800/50 rounded-lg border border-green-200 dark:border-green-800/30 cursor-pointer hover:border-green-300 dark:hover:border-green-700 transition-all duration-200 group"
+                                onClick={() => {
+                                  // Navigate to service booking
+                                  setLocation(`/service-booking?serviceId=${service.id}&fromChat=true`);
+                                  toast({
+                                    title: "Opening Service Booking",
+                                    description: `Booking ${service.name} with chat context`,
+                                  });
+                                }}
+                                data-testid={`service-suggestion-${service.id}`}
+                              >
+                                <div className="text-lg group-hover:scale-110 transition-transform">
+                                  {service.icon || '🔧'}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h5 className="text-xs font-medium text-foreground truncate">
+                                    {service.name}
+                                  </h5>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {service.description}
+                                  </p>
+                                  <div className="flex items-center space-x-2 mt-1">
+                                    <span className="text-xs font-bold text-green-600 dark:text-green-400">
+                                      ₹{service.price}
+                                    </span>
+                                    {service.rating && (
+                                      <div className="flex items-center space-x-1">
+                                        <span className="text-xs text-yellow-500">⭐</span>
+                                        <span className="text-xs text-muted-foreground">
+                                          {service.rating.toFixed(1)}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <motion.div
+                                  whileHover={{ x: 4 }}
+                                  className="text-green-600 dark:text-green-400"
+                                >
+                                  <Package className="w-4 h-4" />
+                                </motion.div>
+                              </motion.div>
+                            ))}
+                          </div>
+
+                          {/* View All Button */}
+                          {serviceSuggestions.length > 4 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-full mt-3 text-xs border-green-300 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30"
+                              onClick={() => {
+                                // Navigate to search results with chat context
+                                const searchQuery = suggestionAnalysis?.extractedInfo?.problemDescription || 'services';
+                                setLocation(`/search?q=${encodeURIComponent(searchQuery)}&chatSuggested=true`);
+                              }}
+                              data-testid="view-all-suggestions-button"
+                            >
+                              View All {serviceSuggestions.length} Suggestions
+                            </Button>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Loading indicator for service suggestions */}
+                    <AnimatePresence>
+                      {isLoadingServiceSuggestions && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="mt-4 p-3 bg-gradient-to-r from-primary/5 to-purple-500/5 rounded-xl border border-primary/20"
+                          data-testid="service-suggestions-loading"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                            >
+                              <Loader2 className="w-4 h-4 text-primary" />
+                            </motion.div>
+                            <span className="text-xs text-muted-foreground">
+                              Analyzing conversation for service suggestions...
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   {/* Scroll anchor - placed after all messages */}
                   <div 
