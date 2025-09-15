@@ -7518,6 +7518,294 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // TEST SERVICES MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Get all test services
+  app.get('/api/v1/admin/test-services', adminSessionMiddleware, async (req, res) => {
+    try {
+      const testServices = await storage.getTestServices();
+      res.json(testServices);
+    } catch (error) {
+      console.error('Error fetching test services:', error);
+      res.status(500).json({ message: 'Failed to fetch test services' });
+    }
+  });
+
+  // Create multiple demo test services at once
+  app.post('/api/v1/admin/test-services/demo', adminSessionMiddleware, async (req, res) => {
+    try {
+      const demoServices = [
+        {
+          name: 'Plumbing Repair Service',
+          description: 'Professional plumbing repairs and maintenance for your home',
+          basePrice: '150.00',
+          estimatedDuration: 120,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🔧',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 7
+        },
+        {
+          name: 'Electrical Work',
+          description: 'Licensed electrician for all your electrical needs',
+          basePrice: '200.00',
+          estimatedDuration: 180,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '⚡',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 5
+        },
+        {
+          name: 'House Cleaning',
+          description: 'Professional deep cleaning service for your home',
+          basePrice: '80.00',
+          estimatedDuration: 240,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🧹',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 3
+        },
+        {
+          name: 'Garden Maintenance',
+          description: 'Complete garden care and landscaping services',
+          basePrice: '120.00',
+          estimatedDuration: 180,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🌱',
+          allowInstantBooking: false,
+          allowScheduledBooking: true,
+          advanceBookingDays: 7
+        },
+        {
+          name: 'AC Repair & Service',
+          description: 'Air conditioning repair and maintenance by certified technicians',
+          basePrice: '180.00',
+          estimatedDuration: 150,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '❄️',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 2
+        },
+        {
+          name: 'Pest Control Service',
+          description: 'Safe and effective pest elimination for your property',
+          basePrice: '100.00',
+          estimatedDuration: 90,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🐛',
+          allowInstantBooking: false,
+          allowScheduledBooking: true,
+          advanceBookingDays: 5
+        },
+        {
+          name: 'Appliance Repair',
+          description: 'Expert repair services for all household appliances',
+          basePrice: '140.00',
+          estimatedDuration: 120,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🔌',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 3
+        },
+        {
+          name: 'Painting Service',
+          description: 'Professional interior and exterior painting services',
+          basePrice: '300.00',
+          estimatedDuration: 480,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🎨',
+          allowInstantBooking: false,
+          allowScheduledBooking: true,
+          advanceBookingDays: 10
+        },
+        {
+          name: 'Carpet Cleaning',
+          description: 'Deep carpet cleaning and stain removal service',
+          basePrice: '90.00',
+          estimatedDuration: 120,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🏠',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 2
+        },
+        {
+          name: 'Handyman Service',
+          description: 'General home repairs and maintenance tasks',
+          basePrice: '110.00',
+          estimatedDuration: 180,
+          categoryId: null,
+          isActive: true,
+          isTestService: true,
+          icon: '🔨',
+          allowInstantBooking: true,
+          allowScheduledBooking: true,
+          advanceBookingDays: 3
+        }
+      ];
+
+      const createdServices = [];
+      for (const serviceData of demoServices) {
+        const service = await storage.createTestService(serviceData as any);
+        createdServices.push(service);
+      }
+
+      console.log(`✅ Admin created ${createdServices.length} demo test services`);
+      res.json({
+        success: true,
+        message: `Successfully created ${createdServices.length} demo services`,
+        services: createdServices
+      });
+    } catch (error) {
+      console.error('Error creating demo test services:', error);
+      res.status(500).json({ message: 'Failed to create demo test services' });
+    }
+  });
+
+  // Create individual test service
+  app.post('/api/v1/admin/test-services', adminSessionMiddleware, async (req, res) => {
+    try {
+      const serviceData = {
+        ...req.body,
+        isTestService: true // Force test service flag
+      };
+
+      const service = await storage.createTestService(serviceData);
+      console.log('✅ Admin created test service:', { id: service.id, name: service.name });
+      res.json(service);
+    } catch (error) {
+      console.error('Error creating test service:', error);
+      res.status(500).json({ message: 'Failed to create test service' });
+    }
+  });
+
+  // Update test service
+  app.put('/api/v1/admin/test-services/:serviceId', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      const updateData = req.body;
+
+      // Verify it's a test service
+      const existingService = await storage.getService(serviceId);
+      if (!existingService || !existingService.isTestService) {
+        return res.status(404).json({ message: 'Test service not found' });
+      }
+
+      const updatedService = await storage.updateService(serviceId, updateData);
+      
+      if (!updatedService) {
+        return res.status(404).json({ message: 'Test service not found or update failed' });
+      }
+
+      console.log('✅ Admin updated test service:', { id: serviceId, name: updatedService.name });
+      res.json(updatedService);
+    } catch (error) {
+      console.error('Error updating test service:', error);
+      res.status(500).json({ message: 'Failed to update test service' });
+    }
+  });
+
+  // Delete individual test service
+  app.delete('/api/v1/admin/test-services/:serviceId', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      
+      // Verify it's a test service
+      const existingService = await storage.getService(serviceId);
+      if (!existingService || !existingService.isTestService) {
+        return res.status(404).json({ message: 'Test service not found' });
+      }
+
+      const result = await storage.deleteService(serviceId);
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      console.log('✅ Admin deleted test service:', { id: serviceId });
+      res.json({ success: true, message: result.message });
+    } catch (error) {
+      console.error('Error deleting test service:', error);
+      res.status(500).json({ message: 'Failed to delete test service' });
+    }
+  });
+
+  // Bulk delete all test services
+  app.delete('/api/v1/admin/test-services', adminSessionMiddleware, async (req, res) => {
+    try {
+      const result = await storage.bulkDeleteTestServices();
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      console.log(`✅ Admin bulk deleted test services: ${result.deletedCount} deleted`);
+      res.json({
+        success: true,
+        message: result.message,
+        deletedCount: result.deletedCount
+      });
+    } catch (error) {
+      console.error('Error bulk deleting test services:', error);
+      res.status(500).json({ message: 'Failed to bulk delete test services' });
+    }
+  });
+
+  // Bulk delete selected test services
+  app.post('/api/v1/admin/test-services/delete-selected', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceIds } = req.body;
+      
+      if (!Array.isArray(serviceIds) || serviceIds.length === 0) {
+        return res.status(400).json({ message: 'Service IDs array is required' });
+      }
+
+      const result = await storage.deleteSelectedTestServices(serviceIds);
+      
+      if (!result.success) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      console.log(`✅ Admin deleted selected test services: ${result.deletedCount} deleted`);
+      res.json({
+        success: true,
+        message: result.message,
+        deletedCount: result.deletedCount
+      });
+    } catch (error) {
+      console.error('Error deleting selected test services:', error);
+      res.status(500).json({ message: 'Failed to delete selected test services' });
+    }
+  });
+
+  // ============================================================================
+  // END TEST SERVICES MANAGEMENT ENDPOINTS
+  // ============================================================================
+  // ============================================================================
   // END ADMIN SERVICES MANAGEMENT ENDPOINTS
   // ============================================================================
 

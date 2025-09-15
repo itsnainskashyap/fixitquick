@@ -398,11 +398,15 @@ export const services = pgTable("services", {
   allowScheduledBooking: boolean("allow_scheduled_booking").default(true),
   advanceBookingDays: integer("advance_booking_days").default(7),
   
+  // Test service flag - for admin testing and demo purposes
+  isTestService: boolean("is_test_service").default(false),
+  
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => ({
   categoryIdx: index("services_category_idx").on(table.categoryId),
   slugIdx: index("services_slug_idx").on(table.slug),
   activeIdx: index("services_active_idx").on(table.isActive),
+  testServiceIdx: index("services_test_idx").on(table.isTestService),
 }));
 
 // Enhanced service providers with marketplace features

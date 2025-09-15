@@ -224,7 +224,7 @@ export interface IStorage {
   }>;
 
   // Service methods
-  getServices(filters?: { categoryId?: string; isActive?: boolean }): Promise<Service[]>;
+  getServices(filters?: { categoryId?: string; isActive?: boolean; isTestService?: boolean }): Promise<Service[]>;
   getService(id: string): Promise<Service | undefined>;
   createService(service: Omit<Service, 'id' | 'createdAt'>): Promise<Service>;
   updateService(id: string, data: Partial<Omit<Service, 'id' | 'createdAt'>>): Promise<Service | undefined>;
@@ -1342,7 +1342,7 @@ export class PostgresStorage implements IStorage {
   }
 
   // Service methods
-  async getServices(filters?: { categoryId?: string; isActive?: boolean }): Promise<Service[]> {
+  async getServices(filters?: { categoryId?: string; isActive?: boolean; isTestService?: boolean }): Promise<Service[]> {
     let baseQuery = db.select().from(services);
     
     const conditions: SQL[] = [];
@@ -1351,6 +1351,9 @@ export class PostgresStorage implements IStorage {
     }
     if (filters?.categoryId && filters.categoryId !== 'all') {
       conditions.push(eq(services.categoryId, filters.categoryId));
+    }
+    if (filters?.isTestService !== undefined) {
+      conditions.push(eq(services.isTestService, filters.isTestService));
     }
     
     const whereClause = combineConditions(conditions);
@@ -1416,6 +1419,123 @@ export class PostgresStorage implements IStorage {
     return await db.select().from(services)
       .where(and(eq(services.categoryId, categoryId), eq(services.isActive, true)))
       .execute();
+  }
+
+  // Test service management methods
+  async getTestServices(): Promise<Service[]> {
+    return await db.select().from(services)
+      .where(eq(services.isTestService, true))
+      .orderBy(desc(services.createdAt));
+  }
+
+  async createTestService(serviceData: Omit<Service, 'id' | 'createdAt'> & { isTestService: true }): Promise<Service> {
+    const result = await db.insert(services).values([serviceData]).returning();
+    return result[0];
+  }
+
+  async bulkDeleteTestServices(): Promise<{ success: boolean; message: string; deletedCount: number }> {
+    try {
+      // Get all test services first to count them
+      const testServices = await this.getTestServices();
+      
+      if (testServices.length === 0) {
+        return { success: false, message: 'No test services found to delete', deletedCount: 0 };
+      }
+      
+      // Check if any test services have active orders
+      const testServiceIds = testServices.map(s => s.id);
+      const activeOrdersQuery = await db.select({ count: count() })
+        .from(orders)
+        .where(
+          sql`EXISTS (
+            SELECT 1 FROM jsonb_array_elements(${orders.items}) AS item
+            WHERE (item->>'id')::text = ANY(${testServiceIds})
+          )`
+        );
+      
+      const activeOrdersCount = activeOrdersQuery[0]?.count || 0;
+      
+      if (activeOrdersCount > 0) {
+        return {
+          success: false,
+          message: `Cannot delete test services with ${activeOrdersCount} active orders. Please complete or cancel them first.`,
+          deletedCount: 0
+        };
+      }
+      
+      // Delete all test services
+      const deleteResult = await db.delete(services)
+        .where(eq(services.isTestService, true));
+      
+      return {
+        success: true,
+        message: `Successfully deleted ${testServices.length} test services`,
+        deletedCount: testServices.length
+      };
+    } catch (error) {
+      console.error('Error bulk deleting test services:', error);
+      return { success: false, message: 'Failed to delete test services', deletedCount: 0 };
+    }
+  }
+
+  async deleteSelectedTestServices(serviceIds: string[]): Promise<{ success: boolean; message: string; deletedCount: number }> {
+    try {
+      if (serviceIds.length === 0) {
+        return { success: false, message: 'No services selected for deletion', deletedCount: 0 };
+      }
+      
+      // Verify all services are test services
+      const serviceRecords = await db.select()
+        .from(services)
+        .where(and(
+          inArray(services.id, serviceIds),
+          eq(services.isTestService, true)
+        ));
+      
+      if (serviceRecords.length !== serviceIds.length) {
+        return {
+          success: false,
+          message: 'Some selected services are not test services or do not exist',
+          deletedCount: 0
+        };
+      }
+      
+      // Check for active orders
+      const activeOrdersQuery = await db.select({ count: count() })
+        .from(orders)
+        .where(
+          sql`EXISTS (
+            SELECT 1 FROM jsonb_array_elements(${orders.items}) AS item
+            WHERE (item->>'id')::text = ANY(${serviceIds})
+          )`
+        );
+      
+      const activeOrdersCount = activeOrdersQuery[0]?.count || 0;
+      
+      if (activeOrdersCount > 0) {
+        return {
+          success: false,
+          message: `Cannot delete services with ${activeOrdersCount} active orders`,
+          deletedCount: 0
+        };
+      }
+      
+      // Delete selected test services
+      await db.delete(services)
+        .where(and(
+          inArray(services.id, serviceIds),
+          eq(services.isTestService, true)
+        ));
+      
+      return {
+        success: true,
+        message: `Successfully deleted ${serviceRecords.length} test services`,
+        deletedCount: serviceRecords.length
+      };
+    } catch (error) {
+      console.error('Error deleting selected test services:', error);
+      return { success: false, message: 'Failed to delete selected services', deletedCount: 0 };
+    }
   }
 
   // Order methods

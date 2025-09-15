@@ -379,6 +379,7 @@ interface Service {
   isActive: boolean;
   isPopular: boolean;
   isFeatured: boolean;
+  isTestService?: boolean; // New field to mark test services
   availabilityZones?: string[];
   metadata?: {
     difficulty: 'easy' | 'medium' | 'hard';
@@ -1161,6 +1162,21 @@ export default function Admin() {
     requirements: [] as string[]
   });
 
+  // Test Services management state
+  const [selectedTestService, setSelectedTestService] = useState<Service | null>(null);
+  const [selectedTestServices, setSelectedTestServices] = useState<string[]>([]);
+  const [isCreateTestServiceOpen, setIsCreateTestServiceOpen] = useState(false);
+  const [isEditTestServiceOpen, setIsEditTestServiceOpen] = useState(false);
+  const [testServiceFormData, setTestServiceFormData] = useState({
+    name: '',
+    description: '',
+    basePrice: '',
+    estimatedDuration: 120,
+    categoryId: '',
+    isActive: true,
+    icon: ''
+  });
+
   // Check if user is admin
   if (!user || user.role !== 'admin') {
     setLocation('/');
@@ -1245,6 +1261,16 @@ export default function Admin() {
     queryKey: ['/api/v1/services'],
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/v1/services');
+      return response.json();
+    },
+    enabled: !!user,
+  });
+
+  // Fetch test services
+  const { data: testServices } = useQuery<Service[]>({
+    queryKey: ['/api/v1/admin/test-services'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/test-services');
       return response.json();
     },
     enabled: !!user,
@@ -1514,6 +1540,122 @@ export default function Admin() {
     },
   });
 
+  // Test Services mutations
+  const createDemoServicesMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/v1/admin/test-services/demo');
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      toast({
+        title: "Demo services created",
+        description: `Successfully created ${data.services?.length || 10} demo services.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Creation failed",
+        description: error.message || "Failed to create demo services",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createTestServiceMutation = useMutation({
+    mutationFn: async (serviceData: any) => {
+      const response = await apiRequest('POST', '/api/v1/admin/test-services', serviceData);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      toast({
+        title: "Test service created",
+        description: "New test service has been created successfully.",
+      });
+    },
+  });
+
+  const updateTestServiceMutation = useMutation({
+    mutationFn: async ({ serviceId, data }: { serviceId: string; data: any }) => {
+      const response = await apiRequest('PUT', `/api/v1/admin/test-services/${serviceId}`, data);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      toast({
+        title: "Test service updated",
+        description: "Test service has been updated successfully.",
+      });
+    },
+  });
+
+  const deleteTestServiceMutation = useMutation({
+    mutationFn: async (serviceId: string) => {
+      const response = await apiRequest('DELETE', `/api/v1/admin/test-services/${serviceId}`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      toast({
+        title: "Test service deleted",
+        description: "Test service has been deleted successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Delete failed",
+        description: error.message || "Failed to delete test service",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bulkDeleteTestServicesMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('DELETE', '/api/v1/admin/test-services');
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      toast({
+        title: "Test services deleted",
+        description: `Successfully deleted ${data.deletedCount} test services.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Bulk delete failed",
+        description: error.message || "Failed to delete test services",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSelectedTestServicesMutation = useMutation({
+    mutationFn: async (serviceIds: string[]) => {
+      const response = await apiRequest('POST', '/api/v1/admin/test-services/delete-selected', {
+        serviceIds
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
+      setSelectedTestServices([]);
+      toast({
+        title: "Selected services deleted",
+        description: `Successfully deleted ${data.deletedCount} test services.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Delete failed",
+        description: error.message || "Failed to delete selected services",
+        variant: "destructive",
+      });
+    },
+  });
+
   const toggleCategoryExpansion = (categoryId: string) => {
     const newExpanded = new Set(expandedCategories);
     if (newExpanded.has(categoryId)) {
@@ -1621,6 +1763,150 @@ export default function Admin() {
     setSelectedService(null);
   };
 
+  // Test service handler functions
+  const handleCreateDemoServices = () => {
+    if (testServices && testServices.length > 0) {
+      if (window.confirm('Test services already exist. Creating new ones will add to existing services. Continue?')) {
+        createDemoServicesMutation.mutate();
+      }
+    } else {
+      createDemoServicesMutation.mutate();
+    }
+  };
+
+  const handleCreateTestService = () => {
+    if (!testServiceFormData.name.trim() || !testServiceFormData.description.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Service name and description are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const data = {
+      name: testServiceFormData.name,
+      description: testServiceFormData.description,
+      basePrice: parseFloat(testServiceFormData.basePrice) || 0,
+      estimatedDuration: testServiceFormData.estimatedDuration,
+      categoryId: testServiceFormData.categoryId || null,
+      isActive: testServiceFormData.isActive,
+      icon: testServiceFormData.icon,
+      allowInstantBooking: true,
+      allowScheduledBooking: true,
+      advanceBookingDays: 3
+    };
+    
+    createTestServiceMutation.mutate(data);
+    setIsCreateTestServiceOpen(false);
+    resetTestServiceForm();
+  };
+
+  const handleEditTestService = (service: Service) => {
+    setSelectedTestService(service);
+    setTestServiceFormData({
+      name: service.name,
+      description: service.description,
+      basePrice: service.basePrice?.toString() || '',
+      estimatedDuration: service.estimatedDuration || 120,
+      categoryId: service.categoryId || '',
+      isActive: service.isActive,
+      icon: service.icon || ''
+    });
+    setIsEditTestServiceOpen(true);
+  };
+
+  const handleUpdateTestService = () => {
+    if (!selectedTestService || !testServiceFormData.name.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Service name is required",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const data = {
+      name: testServiceFormData.name,
+      description: testServiceFormData.description,
+      basePrice: parseFloat(testServiceFormData.basePrice) || 0,
+      estimatedDuration: testServiceFormData.estimatedDuration,
+      categoryId: testServiceFormData.categoryId || null,
+      isActive: testServiceFormData.isActive,
+      icon: testServiceFormData.icon
+    };
+    
+    updateTestServiceMutation.mutate({ serviceId: selectedTestService.id, data });
+    setIsEditTestServiceOpen(false);
+    setSelectedTestService(null);
+  };
+
+  const handleDeleteTestService = (serviceId: string) => {
+    if (window.confirm('Are you sure you want to delete this test service?')) {
+      deleteTestServiceMutation.mutate(serviceId);
+    }
+  };
+
+  const handleBulkDeleteTestServices = () => {
+    const count = testServices?.length || 0;
+    if (count === 0) {
+      toast({
+        title: "No services to delete",
+        description: "There are no test services to delete.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to delete all ${count} test services? This action cannot be undone.`)) {
+      bulkDeleteTestServicesMutation.mutate();
+    }
+  };
+
+  const handleDeleteSelectedTestServices = () => {
+    if (selectedTestServices.length === 0) {
+      toast({
+        title: "No services selected",
+        description: "Please select services to delete.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to delete ${selectedTestServices.length} selected test services? This action cannot be undone.`)) {
+      deleteSelectedTestServicesMutation.mutate(selectedTestServices);
+    }
+  };
+
+  const handleTestServiceSelection = (serviceId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedTestServices([...selectedTestServices, serviceId]);
+    } else {
+      setSelectedTestServices(selectedTestServices.filter(id => id !== serviceId));
+    }
+  };
+
+  const handleSelectAllTestServices = (checked: boolean) => {
+    if (checked) {
+      setSelectedTestServices(testServices?.map(s => s.id) || []);
+    } else {
+      setSelectedTestServices([]);
+    }
+  };
+
+  const resetTestServiceForm = () => {
+    setTestServiceFormData({
+      name: '',
+      description: '',
+      basePrice: '',
+      estimatedDuration: 120,
+      categoryId: '',
+      isActive: true,
+      icon: ''
+    });
+    setSelectedTestService(null);
+  };
+
   const getUserStatusColor = (status: string) => {
     switch (status) {
       case 'active':
@@ -1697,7 +1983,7 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-9">
+          <TabsList className="grid w-full grid-cols-10">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -1707,6 +1993,9 @@ export default function Admin() {
             </TabsTrigger>
             <TabsTrigger value="services" data-testid="services-tab">
               Services
+            </TabsTrigger>
+            <TabsTrigger value="test-services" data-testid="test-services-tab">
+              Test Services
             </TabsTrigger>
             <TabsTrigger value="categories" data-testid="categories-tab">
               Categories
