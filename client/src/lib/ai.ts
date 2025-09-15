@@ -33,7 +33,7 @@ class AIService {
 
   constructor() {
     // No API keys needed - all requests go through secure server endpoints
-    console.log('🤖 AI Service: Initialized with server-side endpoints');
+    console.log('🤖 NainsAI Service: Initialized with server-side endpoints');
   }
 
   private async makeServerRequest(endpoint: string, method: 'GET' | 'POST' = 'GET', body?: any) {

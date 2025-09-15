@@ -13,7 +13,6 @@ import {
   Bot,
   User,
   Lightbulb,
-  Magic,
   Stars,
   Loader2
 } from 'lucide-react';
@@ -65,7 +64,7 @@ export function AIChat({ isOpen, onClose, onSearchSuggestion, triggerElement }: 
     {
       id: 'welcome',
       type: 'ai',
-      content: "Hi! I'm your AI assistant. Describe what you need help with and I'll help you find the right services or parts. You can also use voice input! 🎤",
+      content: "Hey! I'm NainsAI, and I'm here to cut through the BS and help you figure out exactly what you need. Whether it's a broken pipe, a weird noise, or you just need to find someone reliable - let's talk about it. Voice input works too if you're feeling lazy about typing! 🎤",
       timestamp: new Date()
     }
   ]);

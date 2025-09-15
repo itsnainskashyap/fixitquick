@@ -50,7 +50,7 @@ interface VoiceSearchState {
 
 export function AISearchBar({
   onSearch,
-  placeholder = "Search services, parts, or describe what you need...",
+  placeholder = "Tell me what you need - I'm NainsAI, here to help you figure it out...",
   autoFocus = false,
   enableVoice = true,
   enableAIChat = true,
@@ -76,7 +76,7 @@ export function AISearchBar({
     {
       id: 'welcome',
       type: 'ai',
-      content: "Hi! I'm your AI assistant. Describe what you need help with and I'll help you find the right services or parts. You can also use voice input! 🎤",
+      content: "Hey there! I'm NainsAI. Skip the small talk - what's broken, what needs fixing, or what are you looking for? I'll cut through the noise and help you find exactly what you need. Voice input works too if you're feeling chatty! 🎤",
       timestamp: new Date()
     }
   ]);
@@ -180,8 +180,8 @@ export function AISearchBar({
     setSelectedIndex(-1);
     
     toast({
-      title: newMode === 'chat' ? "AI Chat Mode" : "Search Mode",
-      description: newMode === 'chat' ? "Ask me anything about services!" : "Search for services and parts",
+      title: newMode === 'chat' ? "NainsAI Chat Mode" : "Search Mode",
+      description: newMode === 'chat' ? "Let's have a real conversation about what you need!" : "Search for services and parts",
     });
   }, [mode, toast]);
 

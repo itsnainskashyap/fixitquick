@@ -71,7 +71,7 @@ export class OpenRouterService {
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
     this.siteUrl = process.env.SITE_URL || 'http://localhost:5000';
-    this.siteName = process.env.SITE_NAME || 'FixitQuick';
+    this.siteName = process.env.SITE_NAME || 'NainsAI';
     
     if (!this.apiKey) {
       console.error('❌ CRITICAL: OPENROUTER_API_KEY not found in environment variables');
@@ -79,7 +79,7 @@ export class OpenRouterService {
       throw new Error('OpenRouter API key is required but not configured. Please add OPENROUTER_API_KEY to environment secrets.');
     }
     
-    console.log('🤖 Enhanced AI Service: Initialized with OpenRouter');
+    console.log('🤖 NainsAI Service: Initialized with OpenRouter');
     console.log('📡 Default model:', this.defaultModel);
     console.log('🎯 Available model categories:', Object.keys(this.models));
     console.log('🌐 Site URL:', this.siteUrl);
@@ -160,7 +160,7 @@ export class OpenRouterService {
     let mostUsedModel = '';
     let maxRequests = 0;
     
-    for (const [model, stats] of this.usageStats) {
+    Array.from(this.usageStats.entries()).forEach(([model, stats]) => {
       totalTokens += stats.tokens;
       totalRequests += stats.requests;
       totalCost += stats.cost;
@@ -169,7 +169,7 @@ export class OpenRouterService {
         maxRequests = stats.requests;
         mostUsedModel = model;
       }
-    }
+    });
     
     return {
       byModel: new Map(this.usageStats),
@@ -321,10 +321,7 @@ export class OpenRouterService {
     } else {
       messages.push({
         role: 'system',
-        content: `You are a helpful AI assistant for FixitQuick, a service marketplace platform. 
-        You help users find home services like electricians, plumbers, cleaners, etc. 
-        Be friendly, concise, and focus on helping users find the right services for their needs.
-        Always prioritize safety and quality in your recommendations.`
+        content: `You are NainsAI, a frank and personalized AI assistant. You speak directly and honestly, like a knowledgeable friend who knows the user well. You help with service needs but also engage in casual conversation. Be conversational, use the user's name when possible, and don't be overly formal or robotic. You can be witty, direct, and relatable while still being helpful. Focus on understanding what the user really needs, not just what they're asking for. Cut through the BS and give straight answers.`
       });
     }
 

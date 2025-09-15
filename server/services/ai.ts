@@ -1,4 +1,4 @@
-// Enhanced AI Service with real OpenRouter integration
+// NainsAI Service with real OpenRouter integration
 console.log('🤖 AI Service: Initialized with OpenRouter');
 
 import { storage } from '../storage';
@@ -61,7 +61,7 @@ interface BookingPreparation {
 
 interface AISearchFilters {
   category?: string;
-  priceRange?: { min: number; max: number };
+  priceRange?: { min?: number; max?: number };
   urgency?: 'low' | 'medium' | 'high';
   location?: { latitude: number; longitude: number; maxDistance?: number };
 }
@@ -148,7 +148,7 @@ class ServerAIService {
   }
 
   async searchServices(query: string, filters?: AISearchFilters): Promise<ServiceSuggestion[]> {
-    console.log('Enhanced AI: Searching services for:', query, 'with filters:', filters);
+    console.log('🤖 NainsAI: Searching services for:', query, 'with filters:', filters);
     
     try {
       // Parse the query to understand intent
@@ -158,7 +158,9 @@ class ServerAIService {
       const searchFilters = {
         query: intent.cleanQuery,
         categories: intent.categories.length > 0 ? intent.categories : filters?.category ? [filters.category] : undefined,
-        priceRange: filters?.priceRange,
+        priceRange: filters?.priceRange && typeof filters.priceRange.min === 'number' && typeof filters.priceRange.max === 'number' 
+          ? { min: filters.priceRange.min, max: filters.priceRange.max } 
+          : undefined,
         location: filters?.location,
         urgency: filters?.urgency || intent.urgency,
         limit: 20,
@@ -196,7 +198,7 @@ class ServerAIService {
     inStockOnly?: boolean;
     providerId?: string;
   }): Promise<ServiceSuggestion[]> {
-    console.log('Enhanced AI: Searching parts for:', query, 'with filters:', filters);
+    console.log('🤖 NainsAI: Searching parts for:', query, 'with filters:', filters);
     
     try {
       // Build search filters for parts
@@ -234,7 +236,7 @@ class ServerAIService {
   }
 
   async enhancedSearch(query: string, context?: SearchContext): Promise<EnhancedAISearchResponse> {
-    console.log('Enhanced AI: Performing enhanced search for:', query, 'with context:', context);
+    console.log('🤖 NainsAI: Performing enhanced search for:', query, 'with context:', context);
     
     try {
       const intent = this.parseSearchIntent(query);
@@ -304,7 +306,7 @@ class ServerAIService {
   }
 
   async getSuggestions(userInput: string, context?: any): Promise<ServiceSuggestion[]> {
-    console.log('🤖 Enhanced AI: Getting suggestions for:', userInput);
+    console.log('🤖 NainsAI: Getting suggestions for:', userInput);
     
     try {
       // Get AI-powered smart suggestions
@@ -336,7 +338,7 @@ class ServerAIService {
   }
 
   async generateServiceDescription(serviceName: string, category: string): Promise<string> {
-    console.log('🤖 Enhanced AI: Generating description for:', serviceName, category);
+    console.log('🤖 NainsAI: Generating description for:', serviceName, category);
     
     try {
       // Use OpenRouter for intelligent description generation
@@ -364,7 +366,7 @@ class ServerAIService {
     urgency: 'low' | 'medium' | 'high';
     extractedInfo: Record<string, any>;
   }> {
-    console.log('🤖 Enhanced AI: Analyzing intent for:', input);
+    console.log('🤖 NainsAI: Analyzing intent for:', input);
     
     try {
       // Use OpenRouter for intelligent intent analysis
@@ -403,7 +405,7 @@ class ServerAIService {
     bookingReady?: boolean;
     bookingData?: BookingPreparation;
   }> {
-    console.log('🤖 Enhanced AI: Generating conversation response for:', message, 'Stage:', context.conversationStage);
+    console.log('🤖 NainsAI: Generating conversation response for:', message, 'Stage:', context.conversationStage);
     
     try {
       // Analyze the conversation flow
@@ -669,7 +671,7 @@ class ServerAIService {
   }
 
   async generateChatResponse(message: string, context?: any): Promise<string> {
-    console.log('🤖 Enhanced AI: Generating chat response for:', message);
+    console.log('🤖 NainsAI: Generating chat response for:', message);
     
     try {
       // Use OpenRouter for intelligent chat response
