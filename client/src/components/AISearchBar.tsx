@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Search, Sparkles, Clock, TrendingUp, Mic, MicOff, Brain, X, Zap, Package } from 'lucide-react';
+import { Search, Sparkles, Clock, TrendingUp, Mic, MicOff, Brain, X, Zap, Package, Send, Bot, User, Loader2, MessageCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -24,11 +25,21 @@ interface SearchSuggestion {
   icon?: string;
 }
 
+interface ChatMessage {
+  id: string;
+  type: 'user' | 'ai' | 'suggestion';
+  content: string;
+  timestamp: Date;
+  searchQueries?: string[];
+  isTransformingToSearch?: boolean;
+}
+
 interface AISearchBarProps {
   onSearch?: (query: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
   enableVoice?: boolean;
+  enableAIChat?: boolean; // New prop to enable/disable AI chat mode
 }
 
 interface VoiceSearchState {
@@ -42,10 +53,15 @@ export function AISearchBar({
   placeholder = "Search services, parts, or describe what you need...",
   autoFocus = false,
   enableVoice = true,
+  enableAIChat = true,
 }: AISearchBarProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  
+  // Mode state - the key new feature
+  const [mode, setMode] = useState<'search' | 'chat'>('search');
+  const [isExpanded, setIsExpanded] = useState(false);
   
   // Search state
   const [query, setQuery] = useState('');
@@ -54,6 +70,19 @@ export function AISearchBar({
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Chat state
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: 'welcome',
+      type: 'ai',
+      content: "Hi! I'm your AI assistant. Describe what you need help with and I'll help you find the right services or parts. You can also use voice input! 🎤",
+      timestamp: new Date()
+    }
+  ]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   // Voice search state
   const [voiceSearch, setVoiceSearch] = useState<VoiceSearchState>({
@@ -65,6 +94,8 @@ export function AISearchBar({
   // Refs
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
   // Enhanced AI-powered suggestions - reliable and fast
@@ -84,6 +115,42 @@ export function AISearchBar({
     { id: '9', text: 'AC filters', category: 'Parts', type: 'part', icon: '🌬️' },
     { id: '10', text: 'Electrical switches', category: 'Parts', type: 'part', icon: '⚡' },
   ];
+
+  // Auto-scroll to bottom when new messages arrive in chat mode
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (mode === 'chat') {
+      scrollToBottom();
+    }
+  }, [messages, mode]);
+
+  // Mode toggle functionality
+  const toggleMode = useCallback(() => {
+    const newMode = mode === 'search' ? 'chat' : 'search';
+    setMode(newMode);
+    setIsExpanded(newMode === 'chat');
+    
+    // Focus appropriate input
+    setTimeout(() => {
+      if (newMode === 'search') {
+        inputRef.current?.focus();
+      } else {
+        chatInputRef.current?.focus();
+      }
+    }, 300);
+
+    // Reset states when switching modes
+    setShowSuggestions(false);
+    setSelectedIndex(-1);
+    
+    toast({
+      title: newMode === 'chat' ? "AI Chat Mode" : "Search Mode",
+      description: newMode === 'chat' ? "Ask me anything about services!" : "Search for services and parts",
+    });
+  }, [mode, toast]);
 
   // Initialize recent searches
   useEffect(() => {
@@ -153,26 +220,149 @@ export function AISearchBar({
     }
   }, [query]);
 
-  // Voice search setup
+  // Chat message handling
+  const handleSendMessage = async (messageContent: string = inputMessage) => {
+    if (!messageContent.trim() || isChatLoading) return;
+
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: messageContent.trim(),
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+    setIsChatLoading(true);
+    setIsTyping(true);
+
+    try {
+      // Call AI service to get intelligent response
+      const response = await fetch('/api/v1/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageContent.trim(),
+          context: {
+            userId: user?.id,
+            conversationHistory: messages.filter(m => m.type !== 'suggestion').slice(-5)
+          }
+        })
+      });
+
+      if (!response.ok) throw new Error('AI service unavailable');
+
+      const data = await response.json();
+      
+      const aiMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: data.response || "I understand you need help. Let me suggest some searches for you.",
+        timestamp: new Date(),
+        searchQueries: data.suggestedSearches || []
+      };
+
+      // Simulate typing delay for better UX
+      setTimeout(() => {
+        setIsTyping(false);
+        setMessages(prev => [...prev, aiMessage]);
+        
+        // If there are search suggestions, create suggestion messages
+        if (data.suggestedSearches && data.suggestedSearches.length > 0) {
+          setTimeout(() => {
+            data.suggestedSearches.forEach((query: string, index: number) => {
+              setTimeout(() => {
+                const suggestionMessage: ChatMessage = {
+                  id: `suggestion-${Date.now()}-${index}`,
+                  type: 'suggestion',
+                  content: query,
+                  timestamp: new Date()
+                };
+                setMessages(prev => [...prev, suggestionMessage]);
+              }, index * 200);
+            });
+          }, 500);
+        }
+      }, 1000 + Math.random() * 1000);
+
+    } catch (error) {
+      console.error('AI chat error:', error);
+      setIsTyping(false);
+      
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: "I'm having trouble connecting right now. Let me create some search suggestions based on your message.",
+        timestamp: new Date(),
+        searchQueries: [messageContent.trim()]
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
+      
+      toast({
+        title: "AI temporarily unavailable",
+        description: "I'll still help you with search suggestions",
+        variant: "destructive"
+      });
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  // Handle search suggestion click from chat with transformation
+  const handleSearchSuggestion = async (query: string, messageId: string) => {
+    // Mark message as transforming
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId 
+        ? { ...msg, isTransformingToSearch: true }
+        : msg
+    ));
+
+    // Wait for animation
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Switch to search mode and perform search
+    setMode('search');
+    setIsExpanded(false);
+    setQuery(query);
+    handleSearch(query);
+
+    toast({
+      title: "Searching...",
+      description: `Looking for "${query}"`,
+    });
+  };
+
+  // Voice search setup - enhanced for both modes
   useEffect(() => {
     if (enableVoice && voiceSearch.isSupported) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'en-US';
 
       recognitionRef.current.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         setVoiceSearch(prev => ({ ...prev, transcript, isListening: false }));
-        setQuery(transcript);
-        handleSearch(transcript);
+        
+        if (mode === 'search') {
+          setQuery(transcript);
+          handleSearch(transcript);
+        } else {
+          setInputMessage(transcript);
+          // Auto-send voice message in chat mode after short delay
+          setTimeout(() => {
+            handleSendMessage(transcript);
+          }, 500);
+        }
       };
 
       recognitionRef.current.onerror = () => {
         setVoiceSearch(prev => ({ ...prev, isListening: false }));
         toast({
-          title: "Voice search failed",
-          description: "Please try again or use text search",
+          title: mode === 'search' ? "Voice search failed" : "Voice input failed",
+          description: "Please try again or type your message",
           variant: "destructive"
         });
       };
@@ -181,7 +371,7 @@ export function AISearchBar({
         setVoiceSearch(prev => ({ ...prev, isListening: false }));
       };
     }
-  }, [enableVoice, voiceSearch.isSupported, toast]);
+  }, [enableVoice, voiceSearch.isSupported, mode, toast]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -189,41 +379,51 @@ export function AISearchBar({
     setSelectedIndex(-1);
   };
 
-  // Keyboard navigation for suggestions
+  // Enhanced keyboard navigation for both modes
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!showSuggestions || suggestions.length === 0) return;
+    if (mode === 'search') {
+      if (!showSuggestions || suggestions.length === 0) return;
 
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setSelectedIndex(prev => 
-          prev < suggestions.length - 1 ? prev + 1 : 0
-        );
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setSelectedIndex(prev => prev > 0 ? prev - 1 : suggestions.length - 1);
-        break;
-      case 'Enter':
-        e.preventDefault();
-        if (selectedIndex >= 0 && suggestions[selectedIndex]) {
-          const selected = suggestions[selectedIndex];
-          setQuery(selected.text);
-          handleSearch(selected.text);
-        } else {
-          handleSearch();
-        }
-        break;
-      case 'Escape':
-        setShowSuggestions(false);
-        setSelectedIndex(-1);
-        inputRef.current?.blur();
-        break;
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setSelectedIndex(prev => 
+            prev < suggestions.length - 1 ? prev + 1 : 0
+          );
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setSelectedIndex(prev => prev > 0 ? prev - 1 : suggestions.length - 1);
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (selectedIndex >= 0 && suggestions[selectedIndex]) {
+            const selected = suggestions[selectedIndex];
+            setQuery(selected.text);
+            handleSearch(selected.text);
+          } else {
+            handleSearch();
+          }
+          break;
+        case 'Escape':
+          setShowSuggestions(false);
+          setSelectedIndex(-1);
+          inputRef.current?.blur();
+          break;
+      }
+    }
+  };
+
+  // Chat keyboard handling
+  const handleChatKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
     }
   };
 
   const handleInputFocus = () => {
-    if (query.length > 1 || recentSearches.length > 0) {
+    if (mode === 'search' && (query.length > 1 || recentSearches.length > 0)) {
       setShowSuggestions(true);
     }
   };
@@ -302,184 +502,394 @@ export function AISearchBar({
 
   return (
     <div ref={searchRef} className="ai-search-bar" data-testid="ai-search-bar">
-      <div className="relative">
+      <motion.div 
+        className="relative"
+        animate={{
+          height: isExpanded ? 'auto' : 'auto',
+        }}
+        transition={{ type: "spring", damping: 20, stiffness: 300 }}
+      >
+        {/* Main Search/Chat Interface */}
         <motion.div 
-          className="relative"
-          whileHover={{ scale: 1.02 }}
+          className={`relative ${isExpanded ? 'rounded-2xl border-2 border-primary/30 bg-gradient-to-br from-background via-background to-primary/5 shadow-2xl' : ''}`}
+          whileHover={{ scale: mode === 'search' ? 1.01 : 1 }}
           transition={{ type: "spring", stiffness: 400, damping: 17 }}
+          animate={{
+            borderRadius: isExpanded ? '1rem' : '1.5rem',
+          }}
         >
-          <motion.div
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="absolute left-3 top-1/2 transform -translate-y-1/2"
-          >
-            <Search className="w-5 h-5 text-muted-foreground" />
-          </motion.div>
-          
-          <Input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={handleInputChange}
-            onFocus={handleInputFocus}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            className="pl-12 pr-24 h-12 text-base rounded-2xl border-2 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all duration-200 bg-gradient-to-r from-background via-background to-primary/5"
-            autoFocus={autoFocus}
-            data-testid="search-input"
-          />
-          
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
-            {/* Clear Button */}
-            {query && (
+          {/* Search Mode UI */}
+          {mode === 'search' && (
+            <>
+              {/* Search Icon */}
               <motion.div
-                initial={{ opacity: 0, scale: 0 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0 }}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10"
               >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearSearch}
-                  className="h-8 w-8 p-0 hover:bg-destructive/10"
-                  data-testid="button-clear-search"
-                >
-                  <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                </Button>
+                <Search className="w-5 h-5 text-muted-foreground" />
               </motion.div>
+              
+              {/* Search Input */}
+              <Input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={handleInputChange}
+                onFocus={handleInputFocus}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                className="pl-12 pr-32 h-12 text-base rounded-2xl border-2 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all duration-200 bg-gradient-to-r from-background via-background to-primary/5"
+                autoFocus={autoFocus}
+                data-testid="search-input"
+              />
+            </>
+          )}
+
+          {/* Chat Mode UI */}
+          {mode === 'chat' && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 400 }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+              className="bg-card/95 backdrop-blur-xl rounded-2xl border-2 border-primary/30 shadow-2xl"
+            >
+              {/* Chat Header */}
+              <div className="p-4 border-b border-border/50 bg-gradient-to-r from-primary/10 to-purple-500/10 rounded-t-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <motion.div
+                      className="w-8 h-8 bg-gradient-to-br from-primary to-purple-500 rounded-full flex items-center justify-center"
+                      animate={{ rotate: [0, 360] }}
+                      transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Brain className="w-4 h-4 text-white" />
+                    </motion.div>
+                    <div>
+                      <h3 className="font-semibold text-foreground flex items-center space-x-2">
+                        <span>AI Assistant</span>
+                        <motion.div
+                          animate={{ rotate: [0, 10, -10, 0] }}
+                          transition={{ duration: 2, repeat: Infinity, delay: 1 }}
+                        >
+                          <Sparkles className="w-3 h-3 text-primary" />
+                        </motion.div>
+                      </h3>
+                      <p className="text-xs text-muted-foreground">Ask me anything</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Messages Area */}
+              <div className="h-64">
+                <ScrollArea className="h-full p-4">
+                  <div className="space-y-3">
+                    {messages.map((message, index) => (
+                      <motion.div
+                        key={message.id}
+                        initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                        animate={{ 
+                          opacity: 1, 
+                          y: 0, 
+                          scale: message.isTransformingToSearch ? [1, 1.1, 0] : 1 
+                        }}
+                        transition={{ 
+                          delay: index * 0.05,
+                          scale: message.isTransformingToSearch ? { duration: 0.8 } : {}
+                        }}
+                        className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        {message.type === 'suggestion' ? (
+                          <motion.div
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            className="bg-gradient-to-r from-primary/10 to-purple-500/10 border border-primary/20 rounded-xl p-3 cursor-pointer hover:from-primary/20 hover:to-purple-500/20 transition-all duration-200 max-w-xs"
+                            onClick={() => handleSearchSuggestion(message.content, message.id)}
+                            data-testid={`search-suggestion-${index}`}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <motion.div
+                                animate={{ rotate: [0, 360] }}
+                                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                              >
+                                <Search className="w-3 h-3 text-primary" />
+                              </motion.div>
+                              <span className="text-xs font-medium text-foreground">
+                                Search: "{message.content}"
+                              </span>
+                            </div>
+                          </motion.div>
+                        ) : (
+                          <div className={`flex items-start space-x-2 max-w-xs ${
+                            message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''
+                          }`}>
+                            <motion.div
+                              className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                                message.type === 'user' 
+                                  ? 'bg-primary text-white' 
+                                  : 'bg-gradient-to-br from-primary/20 to-purple-500/20 text-primary'
+                              }`}
+                              animate={message.type === 'ai' ? { scale: [1, 1.1, 1] } : {}}
+                              transition={{ duration: 2, repeat: Infinity }}
+                            >
+                              {message.type === 'user' ? (
+                                <User className="w-3 h-3" />
+                              ) : (
+                                <Bot className="w-3 h-3" />
+                              )}
+                            </motion.div>
+                            
+                            <div className={`rounded-xl p-2 ${
+                              message.type === 'user'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted/50 text-foreground'
+                            }`}>
+                              <p className="text-xs">{message.content}</p>
+                            </div>
+                          </div>
+                        )}
+                      </motion.div>
+                    ))}
+
+                    {/* Typing indicator */}
+                    {isTyping && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex justify-start"
+                      >
+                        <div className="flex items-start space-x-2 max-w-xs">
+                          <motion.div
+                            className="w-6 h-6 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 text-primary flex items-center justify-center"
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ duration: 1, repeat: Infinity }}
+                          >
+                            <Bot className="w-3 h-3" />
+                          </motion.div>
+                          
+                          <div className="bg-muted/50 text-foreground rounded-xl p-2">
+                            <div className="flex space-x-1">
+                              {[...Array(3)].map((_, i) => (
+                                <motion.div
+                                  key={i}
+                                  className="w-1 h-1 bg-primary/60 rounded-full"
+                                  animate={{ y: [0, -2, 0] }}
+                                  transition={{
+                                    duration: 0.6,
+                                    repeat: Infinity,
+                                    delay: i * 0.2
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                  <div ref={messagesEndRef} />
+                </ScrollArea>
+              </div>
+
+              {/* Chat Input Area */}
+              <div className="p-3 border-t border-border/50 bg-muted/10 rounded-b-2xl">
+                <div className="flex items-center space-x-2">
+                  <div className="relative flex-1">
+                    <Input
+                      ref={chatInputRef}
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      onKeyPress={handleChatKeyPress}
+                      placeholder="Ask me anything about services..."
+                      className="pr-10 text-sm border-2 border-border/50 focus:border-primary/50 rounded-xl"
+                      disabled={isChatLoading}
+                      data-testid="ai-chat-input"
+                    />
+                    
+                    {/* Voice input for chat */}
+                    {enableVoice && voiceSearch.isSupported && (
+                      <motion.div
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                      >
+                        <Button
+                          type="button"
+                          variant={voiceSearch.isListening ? "destructive" : "ghost"}
+                          size="sm"
+                          onClick={toggleVoiceSearch}
+                          className="h-6 w-6 p-0 rounded-full"
+                          data-testid="voice-input-button"
+                        >
+                          {voiceSearch.isListening ? (
+                            <motion.div
+                              animate={{ scale: [1, 1.3, 1] }}
+                              transition={{ duration: 0.8, repeat: Infinity }}
+                            >
+                              <MicOff className="h-3 w-3" />
+                            </motion.div>
+                          ) : (
+                            <Mic className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </motion.div>
+                    )}
+                  </div>
+                  
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <Button
+                      onClick={() => handleSendMessage()}
+                      disabled={!inputMessage.trim() || isChatLoading}
+                      size="sm"
+                      className="rounded-xl bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90"
+                      data-testid="send-message-button"
+                    >
+                      {isChatLoading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Send className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </motion.div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Right Side Controls */}
+          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2 z-10">
+            {/* Search Mode Controls */}
+            {mode === 'search' && (
+              <>
+                {/* Clear Button */}
+                {query && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0 }}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearSearch}
+                      className="h-8 w-8 p-0 hover:bg-destructive/10"
+                      data-testid="button-clear-search"
+                    >
+                      <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                    </Button>
+                  </motion.div>
+                )}
+
+                {/* Voice Search Button */}
+                {enableVoice && voiceSearch.isSupported && (
+                  <motion.div
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                  >
+                    <Button
+                      type="button"
+                      variant={voiceSearch.isListening ? "destructive" : "ghost"}
+                      size="sm"
+                      onClick={toggleVoiceSearch}
+                      className="h-8 w-8 p-0"
+                      data-testid="button-voice-search"
+                    >
+                      {voiceSearch.isListening ? (
+                        <motion.div
+                          animate={{ scale: [1, 1.2, 1] }}
+                          transition={{ duration: 1, repeat: Infinity }}
+                        >
+                          <MicOff className="h-4 w-4" />
+                        </motion.div>
+                      ) : (
+                        <Mic className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </motion.div>
+                )}
+
+                {/* Loading Indicator */}
+                {isLoading && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    className="relative"
+                  >
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                      className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
+                      data-testid="search-loading"
+                    />
+                  </motion.div>
+                )}
+              </>
             )}
 
-            {/* Voice Search Button */}
-            {enableVoice && voiceSearch.isSupported && (
+            {/* Dynamic AI Toggle Button */}
+            {enableAIChat && (
               <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.2 }}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
               >
                 <Button
                   type="button"
-                  variant={voiceSearch.isListening ? "destructive" : "ghost"}
+                  variant={mode === 'chat' ? "default" : "outline"}
                   size="sm"
-                  onClick={toggleVoiceSearch}
-                  className="h-8 w-8 p-0"
-                  data-testid="button-voice-search"
+                  onClick={toggleMode}
+                  className={`h-8 px-3 relative transition-all duration-300 ${
+                    mode === 'chat' 
+                      ? 'bg-gradient-to-r from-primary to-purple-500 text-white border-0' 
+                      : 'bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 hover:from-primary/20 hover:to-purple-500/20'
+                  }`}
+                  data-testid="ai-mode-toggle"
                 >
-                  {voiceSearch.isListening ? (
-                    <motion.div
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ duration: 1, repeat: Infinity }}
-                    >
-                      <MicOff className="h-4 w-4" />
-                    </motion.div>
-                  ) : (
-                    <Mic className="h-4 w-4" />
-                  )}
+                  <motion.div
+                    key={mode}
+                    initial={{ opacity: 0, rotate: -180, scale: 0 }}
+                    animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                    exit={{ opacity: 0, rotate: 180, scale: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="flex items-center space-x-1"
+                  >
+                    {mode === 'search' ? (
+                      <>
+                        <Brain className="w-4 h-4" />
+                        <span className="text-xs font-medium hidden sm:inline">AI</span>
+                      </>
+                    ) : (
+                      <>
+                        <Search className="w-4 h-4" />
+                        <span className="text-xs font-medium hidden sm:inline">Search</span>
+                      </>
+                    )}
+                  </motion.div>
+                  
+                  {/* Magical shimmer effect */}
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded-lg"
+                    animate={{ x: [-20, 40] }}
+                    transition={{ duration: 2, repeat: Infinity, delay: 2 }}
+                  />
                 </Button>
               </motion.div>
             )}
-
-            {/* Enhanced Loading Indicator with Magical Effects */}
-            {isLoading && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                className="relative"
-              >
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                  className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
-                  data-testid="search-loading"
-                />
-                {showMagicalEffects && (
-                  <>
-                    {[...Array(6)].map((_, i) => (
-                      <motion.div
-                        key={i}
-                        className="absolute w-1 h-1 bg-primary/40 rounded-full"
-                        initial={{ opacity: 0, scale: 0 }}
-                        animate={{
-                          opacity: [0, 1, 0],
-                          scale: [0, 1, 0],
-                          x: Math.cos(i * Math.PI / 3) * 12,
-                          y: Math.sin(i * Math.PI / 3) * 12,
-                        }}
-                        transition={{
-                          duration: 1,
-                          repeat: Infinity,
-                          delay: i * 0.1
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </motion.div>
-            )}
-            
-            {/* Enhanced Magical AI Badge */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.2 }}
-              whileHover={{ scale: 1.05 }}
-              className="relative"
-            >
-              <Badge 
-                variant="secondary" 
-                className="bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 text-xs px-2 py-1 relative overflow-hidden"
-                data-testid="ai-badge"
-              >
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ duration: 2, repeat: Infinity, delay: 1 }}
-                >
-                  <Brain className="w-3 h-3 mr-1" />
-                </motion.div>
-                AI
-                
-                {/* Magical shimmer effect */}
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
-                  animate={{ x: [-20, 40] }}
-                  transition={{ duration: 2, repeat: Infinity, delay: 2 }}
-                />
-              </Badge>
-              
-              {/* Floating particles around badge */}
-              {showMagicalEffects && (
-                <>
-                  {[...Array(3)].map((_, i) => (
-                    <motion.div
-                      key={i}
-                      className="absolute w-1 h-1 bg-primary/60 rounded-full"
-                      initial={{ opacity: 0 }}
-                      animate={{
-                        opacity: [0, 1, 0],
-                        y: [-5, -15, -5],
-                        x: [-2 + i, 2 + i, -2 + i],
-                        scale: [0, 1, 0]
-                      }}
-                      transition={{
-                        duration: 1.5,
-                        repeat: Infinity,
-                        delay: i * 0.2
-                      }}
-                      style={{
-                        top: -2,
-                        left: 8 + i * 6
-                      }}
-                    />
-                  ))}
-                </>
-              )}
-            </motion.div>
           </div>
         </motion.div>
 
-        {/* Magical Search Suggestions Dropdown */}
+        {/* Search Suggestions Dropdown - Only in Search Mode */}
         <AnimatePresence>
-          {showSuggestions && (suggestions.length > 0 || recentSearches.length > 0) && (
+          {mode === 'search' && showSuggestions && (suggestions.length > 0 || recentSearches.length > 0) && (
             <motion.div
               initial={{ opacity: 0, y: -20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -592,7 +1002,7 @@ export function AISearchBar({
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </motion.div>
     </div>
   );
 }

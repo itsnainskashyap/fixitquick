@@ -1,11 +1,10 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, ShoppingCart, Bell, Menu, AlertTriangle, Wallet, Plus, BarChart3, Package, Users, Settings, Home, Calendar, Brain, Sparkles } from 'lucide-react';
+import { MapPin, ShoppingCart, Bell, Menu, AlertTriangle, Wallet, Plus, BarChart3, Package, Users, Settings, Home, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AISearchBar } from './AISearchBar';
-import { AIChat } from './AIChat';
 import { NotificationCenter } from './NotificationCenter';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -36,9 +35,7 @@ export function Header({
   const { user, isAuthenticated } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
-  const [showAIChat, setShowAIChat] = useState(false);
   const [, setLocation] = useLocation();
-  const aiButtonRef = useRef<HTMLButtonElement>(null);
 
   // Get role-specific navigation items
   const getRoleNavigation = () => {
@@ -224,41 +221,6 @@ export function Header({
               {/* Language Switcher - controlled by VITE_I18N_ENABLED feature flag */}
               <LanguageSwitcher />
 
-              {/* AI Assistant Button */}
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.3 }}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Button
-                  ref={aiButtonRef}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowAIChat(true)}
-                  className="relative bg-gradient-to-r from-primary/10 to-purple-500/10 border-primary/20 hover:from-primary/20 hover:to-purple-500/20 transition-all duration-300"
-                  data-testid="ai-assistant-button"
-                >
-                  <motion.div
-                    animate={{ rotate: [0, 360] }}
-                    transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-                    className="mr-2"
-                  >
-                    <Brain className="w-4 h-4 text-primary" />
-                  </motion.div>
-                  <span className="text-sm font-semibold text-foreground hidden md:inline">
-                    Ask AI
-                  </span>
-                  <motion.div
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 2, repeat: Infinity, delay: 1 }}
-                    className="ml-1"
-                  >
-                    <Sparkles className="w-3 h-3 text-purple-500" />
-                  </motion.div>
-                </Button>
-              </motion.div>
 
               {/* Notifications - Real-time Notification Center */}
               {isAuthenticated && (
@@ -287,11 +249,15 @@ export function Header({
             </div>
           </div>
 
-          {/* AI Search Bar with enhanced functionality */}
+          {/* Enhanced AI Search Bar with integrated chat functionality */}
           <AISearchBar 
             onSearch={(query) => {
               setLocation(`/search?q=${encodeURIComponent(query)}`);
             }}
+            enableAIChat={true}
+            enableVoice={true}
+            autoFocus={false}
+            placeholder="Search services, ask AI for help, or describe what you need..."
           />
         </div>
       </motion.header>
@@ -308,16 +274,6 @@ export function Header({
         <AlertTriangle className="w-6 h-6" />
       </motion.button>
 
-      {/* AI Chat Modal */}
-      <AIChat
-        isOpen={showAIChat}
-        onClose={() => setShowAIChat(false)}
-        onSearchSuggestion={(query) => {
-          setLocation(`/search?q=${encodeURIComponent(query)}`);
-          setShowAIChat(false);
-        }}
-        triggerElement={aiButtonRef.current || undefined}
-      />
 
       {/* Click outside handlers */}
       {showNotifications && (
