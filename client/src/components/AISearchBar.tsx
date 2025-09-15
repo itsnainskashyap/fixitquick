@@ -64,6 +64,9 @@ export function AISearchBar({
   const [mode, setMode] = useState<'search' | 'chat'>('search');
   const [isExpanded, setIsExpanded] = useState(false);
   
+  // NEW: Track whether chat has been opened by user (for search button visibility)
+  const [hasOpenedChat, setHasOpenedChat] = useState(false);
+  
   // Search state
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -194,7 +197,10 @@ export function AISearchBar({
       console.log('🎯 Generating service suggestions from chat conversation');
 
       const result = await aiService.getChatSuggestions(messages, {
-        location: user?.location,
+        location: user?.location ? { 
+          latitude: user.location.latitude, 
+          longitude: user.location.longitude 
+        } : undefined,
         extractedInfo: {}
       });
 
@@ -234,6 +240,11 @@ export function AISearchBar({
     const newMode = mode === 'search' ? 'chat' : 'search';
     setMode(newMode);
     setIsExpanded(newMode === 'chat');
+    
+    // CRITICAL: Only set hasOpenedChat to true when user opens chat mode
+    if (newMode === 'chat') {
+      setHasOpenedChat(true); // Enable search button for future search mode use
+    }
     
     // Focus appropriate input
     setTimeout(() => {
@@ -525,6 +536,8 @@ export function AISearchBar({
   };
 
   const handleInputFocus = () => {
+    // Only show suggestions if we have query content or recent searches
+    // Do NOT set hasOpenedChat here - button should only appear after chat is opened
     if (mode === 'search' && (query.length > 1 || recentSearches.length > 0)) {
       setShowSuggestions(true);
     }
@@ -1065,8 +1078,8 @@ export function AISearchBar({
             </motion.div>
           )}
 
-          {/* Right Side Controls - Only for Search Mode */}
-          {mode === 'search' && (
+          {/* Right Side Controls - Only for Search Mode AFTER Chat Has Been Opened */}
+          {mode === 'search' && hasOpenedChat && (
             <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2 z-10">
               {/* Clear Button */}
               {query && (
@@ -1179,6 +1192,7 @@ export function AISearchBar({
                     variant="outline"
                     size="sm"
                     onClick={() => {
+                      setHasOpenedChat(true); // Enable search button for future use
                       setMode('chat');
                       setIsExpanded(true);
                       setTimeout(() => chatInputRef.current?.focus(), 300);
