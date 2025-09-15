@@ -42,6 +42,13 @@ export const uploadSingleImage = createMulterConfig({
   maxFiles: 1,
 }).single('image');
 
+// Category image upload with specific 5MB limit
+export const uploadCategoryImage = createMulterConfig({
+  maxFileSize: 5 * 1024 * 1024, // 5MB for category images
+  maxFiles: 1,
+  allowedTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+}).single('image');
+
 export const uploadAvatar = createMulterConfig({
   maxFileSize: 5 * 1024 * 1024, // 5MB for avatars
   maxFiles: 1,
@@ -66,7 +73,7 @@ const documentUploadSchema = z.object({
   documentType: z.enum([
     'aadhar_front', 'aadhar_back', 'photo', 'certificate', 
     'license', 'insurance', 'portfolio', 'product_image', 
-    'service_image', 'avatar'
+    'service_image', 'avatar', 'category_image'
   ]),
 });
 
@@ -596,6 +603,105 @@ export const deleteImage = async (req: AuthenticatedRequest, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete image',
+      error: 'INTERNAL_ERROR'
+    });
+  }
+};
+
+// Category image upload handler
+export const handleCategoryImageUpload = async (
+  req: AuthenticatedRequest, 
+  res: Response, 
+  next: NextFunction
+) => {
+  try {
+    uploadCategoryImage(req, res, async (multerError) => {
+      if (multerError) {
+        return res.status(400).json({
+          success: false,
+          message: multerError.message || 'Category image upload failed',
+          error: 'UPLOAD_ERROR'
+        });
+      }
+
+      const file = req.file;
+      const { categoryId } = req.params;
+      const userId = req.user?.id;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No category image uploaded',
+          error: 'NO_FILE'
+        });
+      }
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      if (!categoryId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Category ID is required',
+          error: 'MISSING_CATEGORY_ID'
+        });
+      }
+
+      try {
+        // Upload to object storage
+        const uploadResult = await objectStorageService.uploadFile(
+          file,
+          `category_${categoryId}`,
+          userId,
+          true // Public for category images
+        );
+
+        if (!uploadResult.success) {
+          return res.status(500).json({
+            success: false,
+            message: uploadResult.error || 'Failed to upload category image',
+            error: 'UPLOAD_FAILED'
+          });
+        }
+
+        const imageData = {
+          id: `category_img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          url: uploadResult.url,
+          filename: file.originalname,
+          size: file.size,
+          mimeType: file.mimetype,
+          metadata: uploadResult.metadata,
+          width: uploadResult.metadata?.width,
+          height: uploadResult.metadata?.height,
+          uploadedAt: new Date().toISOString(),
+        };
+
+        res.json({
+          success: true,
+          message: 'Category image uploaded successfully',
+          image: imageData,
+          categoryId
+        });
+
+      } catch (error) {
+        console.error('Error processing category image upload:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to process category image upload',
+          error: 'PROCESSING_ERROR'
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Category image upload handler error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
       error: 'INTERNAL_ERROR'
     });
   }

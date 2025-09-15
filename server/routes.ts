@@ -56,6 +56,7 @@ import {
   handleAvatarUpload,
   handleProductImageUpload,
   handleProviderDocumentUpload,
+  handleCategoryImageUpload,
   getImageDetails,
   updateImageMetadata,
   deleteImage
@@ -152,6 +153,30 @@ const loginSchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   profileImageUrl: z.string().optional(),
+});
+
+// Category image URL validation schema for security
+const categoryImageUrlSchema = z.object({
+  imageUrl: z.string()
+    .url('Must be a valid URL')
+    .refine((url) => {
+      // Ensure URL is from our object storage domain for security
+      const allowedDomains = [
+        'objectstorage.replit.com',
+        // Add other trusted domains if needed
+      ];
+      try {
+        const urlObj = new URL(url);
+        return allowedDomains.some(domain => urlObj.hostname === domain);
+      } catch {
+        return false;
+      }
+    }, 'Image URL must be from authorized storage domain')
+    .refine((url) => {
+      // Additional validation for image file extensions
+      const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+      return allowedExtensions.some(ext => url.toLowerCase().includes(ext));
+    }, 'URL must point to a valid image file')
 });
 
 // Admin login validation schema (supports literal admin credentials)
@@ -7391,6 +7416,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error reordering categories:', error);
       res.status(500).json({ message: 'Failed to reorder categories' });
+    }
+  });
+
+  // Category Image Management Endpoints
+  
+  // Upload category image
+  app.post('/api/v1/admin/categories/:categoryId/image', uploadLimiter, adminSessionMiddleware, handleCategoryImageUpload);
+
+  // Update category with image URL
+  app.put('/api/v1/admin/categories/:categoryId/image', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      
+      // Validate request body with security constraints
+      const validation = categoryImageUrlSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          message: 'Invalid image URL',
+          errors: validation.error.errors.map(e => e.message)
+        });
+      }
+      
+      const { imageUrl } = validation.data;
+
+      const updatedCategory = await storage.updateServiceCategory(categoryId, { imageUrl });
+      
+      if (!updatedCategory) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      console.log('✅ Admin updated category image:', { 
+        id: categoryId, 
+        name: updatedCategory.name,
+        imageUrl 
+      });
+
+      res.json({
+        success: true,
+        message: 'Category image updated successfully',
+        category: updatedCategory
+      });
+    } catch (error) {
+      console.error('Error updating category image:', error);
+      res.status(500).json({ message: 'Failed to update category image' });
+    }
+  });
+
+  // Delete category image
+  app.delete('/api/v1/admin/categories/:categoryId/image', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+
+      // Get current category to get the image URL
+      const category = await storage.getServiceCategory(categoryId);
+      if (!category) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      const oldImageUrl = category.imageUrl;
+
+      // Remove image URL from category
+      const updatedCategory = await storage.updateServiceCategory(categoryId, { imageUrl: null });
+      
+      if (!updatedCategory) {
+        return res.status(404).json({ message: 'Category not found' });
+      }
+
+      // Delete the actual image file from object storage
+      if (oldImageUrl) {
+        try {
+          const filePath = objectStorageService.extractFilePathFromUrl(oldImageUrl);
+          if (filePath) {
+            const deleteResult = await objectStorageService.deleteFile(filePath);
+            if (!deleteResult.success) {
+              console.error('Failed to delete old image file:', deleteResult.error);
+              // Continue with category update even if file deletion fails
+              // to avoid leaving the category in an inconsistent state
+            } else {
+              console.log('✅ Successfully deleted old image file:', filePath);
+            }
+          } else {
+            console.warn('Could not extract file path from URL:', oldImageUrl);
+          }
+        } catch (fileDeleteError) {
+          console.error('Error deleting old image file:', fileDeleteError);
+          // Continue with category update
+        }
+      }
+
+      console.log('✅ Admin removed category image:', { 
+        id: categoryId, 
+        name: updatedCategory.name,
+        removedImageUrl: oldImageUrl
+      });
+
+      res.json({
+        success: true,
+        message: 'Category image removed successfully',
+        category: updatedCategory
+      });
+    } catch (error) {
+      console.error('Error removing category image:', error);
+      res.status(500).json({ message: 'Failed to remove category image' });
     }
   });
 

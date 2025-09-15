@@ -22,6 +22,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import ImageGallery from '@/components/ImageGallery';
 import DocumentUpload from '@/components/DocumentUpload';
 import AvatarUpload from '@/components/AvatarUpload';
+import ImageUpload from '@/components/ImageUpload';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
@@ -1131,6 +1132,7 @@ export default function Admin() {
     name: '',
     description: '',
     icon: '',
+    imageUrl: '',
     parentId: '',
     isActive: true,
   });
@@ -1372,7 +1374,7 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
       setIsCreateCategoryOpen(false);
-      setCategoryFormData({ name: '', description: '', icon: '', parentId: '', isActive: true });
+      setCategoryFormData({ name: '', description: '', icon: '', imageUrl: '', parentId: '', isActive: true });
       toast({
         title: "Category created",
         description: "New category has been created successfully.",
@@ -1419,6 +1421,93 @@ export default function Admin() {
     },
   });
 
+  // Category image upload mutations
+  const uploadCategoryImageMutation = useMutation({
+    mutationFn: async ({ categoryId, file }: { categoryId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append('image', file);
+      
+      const response = await fetch(`/api/v1/admin/categories/${categoryId}/image`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to upload image');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      // Invalidate both admin and public category queries for consistent UX
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      toast({
+        title: "Image uploaded",
+        description: "Category image has been uploaded successfully.",
+      });
+      return data;
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Failed to upload category image",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateCategoryImageMutation = useMutation({
+    mutationFn: async ({ categoryId, imageUrl }: { categoryId: string; imageUrl: string }) => {
+      const response = await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}/image`, { imageUrl });
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalidate both admin and public category queries for consistent UX
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      toast({
+        title: "Image updated",
+        description: "Category image has been updated successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Update failed",
+        description: error.message || "Failed to update category image",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteCategoryImageMutation = useMutation({
+    mutationFn: async (categoryId: string) => {
+      const response = await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}/image`);
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalidate both admin and public category queries for consistent UX
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      toast({
+        title: "Image removed",
+        description: "Category image has been removed successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Remove failed",
+        description: error.message || "Failed to remove category image",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleUpdateUser = (userId: string, updates: any) => {
     updateUserMutation.mutate({ userId, updates });
   };
@@ -1456,6 +1545,7 @@ export default function Admin() {
       name: category.name,
       description: category.description || '',
       icon: category.icon || '',
+      imageUrl: category.image || '',
       parentId: category.parentId || '',
       isActive: category.isActive,
     });
@@ -1483,6 +1573,36 @@ export default function Admin() {
   const handleDeleteCategory = (categoryId: string) => {
     if (window.confirm('Are you sure you want to delete this category? This action cannot be undone.')) {
       deleteCategoryMutation.mutate(categoryId);
+    }
+  };
+
+  // Category image handlers
+  const handleCategoryImageUpload = async (categoryId: string, images: UploadedImage[]) => {
+    if (images.length > 0) {
+      const image = images[0]; // Take only the first image for categories
+      try {
+        // First upload the image
+        const uploadResult = await uploadCategoryImageMutation.mutateAsync({ 
+          categoryId, 
+          file: image.file! 
+        });
+        
+        // Then update the category with the image URL
+        if (uploadResult.success && uploadResult.image?.url) {
+          await updateCategoryImageMutation.mutateAsync({
+            categoryId,
+            imageUrl: uploadResult.image.url
+          });
+        }
+      } catch (error) {
+        console.error('Error uploading category image:', error);
+      }
+    }
+  };
+
+  const handleCategoryImageRemove = (categoryId: string) => {
+    if (window.confirm('Are you sure you want to remove this category image?')) {
+      deleteCategoryImageMutation.mutate(categoryId);
     }
   };
 
@@ -3184,6 +3304,54 @@ export default function Admin() {
                   data-testid="category-icon-input"
                 />
               </div>
+              
+              <div>
+                <Label>Category Image (Optional)</Label>
+                <ImageUpload
+                  variant="compact"
+                  multiple={false}
+                  maxFiles={1}
+                  maxSize={5 * 1024 * 1024} // 5MB
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  placeholder="Upload category image"
+                  uploadText="Choose Image"
+                  onComplete={(images) => {
+                    if (images.length > 0) {
+                      setCategoryFormData({ ...categoryFormData, imageUrl: images[0].url });
+                    }
+                  }}
+                  onError={(error) => {
+                    toast({
+                      title: "Upload Error",
+                      description: error,
+                      variant: "destructive",
+                    });
+                  }}
+                  data-testid="upload-category-image"
+                />
+                {categoryFormData.imageUrl && (
+                  <div className="mt-2">
+                    <div className="flex items-center space-x-2">
+                      <img 
+                        src={categoryFormData.imageUrl} 
+                        alt="Category preview" 
+                        className="w-16 h-16 object-cover rounded border"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCategoryFormData({ ...categoryFormData, imageUrl: '' })}
+                        data-testid="button-remove-image"
+                      >
+                        <X className="w-4 h-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
               <div>
                 <Label htmlFor="parentCategory">Parent Category (Optional)</Label>
                 <Select 
@@ -3625,6 +3793,66 @@ export default function Admin() {
                   data-testid="edit-category-icon-input"
                 />
               </div>
+              
+              <div>
+                <Label>Category Image (Optional)</Label>
+                <ImageUpload
+                  variant="compact"
+                  multiple={false}
+                  maxFiles={1}
+                  maxSize={5 * 1024 * 1024} // 5MB
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  placeholder="Upload category image"
+                  uploadText="Choose Image"
+                  initialImages={categoryFormData.imageUrl ? [{
+                    id: 'current',
+                    url: categoryFormData.imageUrl,
+                    filename: 'current-image.jpg',
+                    size: 0,
+                    mimeType: 'image/jpeg'
+                  }] : []}
+                  onComplete={(images) => {
+                    if (images.length > 0) {
+                      setCategoryFormData({ ...categoryFormData, imageUrl: images[0].url });
+                    }
+                  }}
+                  onError={(error) => {
+                    toast({
+                      title: "Upload Error",
+                      description: error,
+                      variant: "destructive",
+                    });
+                  }}
+                  data-testid="edit-upload-category-image"
+                />
+                {categoryFormData.imageUrl && (
+                  <div className="mt-2">
+                    <div className="flex items-center space-x-2">
+                      <img 
+                        src={categoryFormData.imageUrl} 
+                        alt="Category preview" 
+                        className="w-16 h-16 object-cover rounded border"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (selectedCategory?.id) {
+                            handleCategoryImageRemove(selectedCategory.id);
+                          }
+                          setCategoryFormData({ ...categoryFormData, imageUrl: '' });
+                        }}
+                        data-testid="button-edit-remove-image"
+                      >
+                        <X className="w-4 h-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
               <div>
                 <Label htmlFor="editParentCategory">Parent Category</Label>
                 <Select 

@@ -164,6 +164,7 @@ export const serviceCategories = pgTable("service_categories", {
   name: varchar("name").notNull(),
   slug: varchar("slug"), // nullable initially, will be backfilled
   icon: text("icon"),
+  imageUrl: text("image_url"), // Category image for better visual representation
   description: text("description"),
   level: integer("level").default(0), // 0=category, 1=sub-category, 2=service-type
   sortOrder: integer("sort_order").default(0),
