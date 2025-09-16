@@ -49,7 +49,13 @@ import {
   X,
   Loader2,
   Languages,
-  MapPin as MapPinIcon
+  MapPin as MapPinIcon,
+  Wrench,
+  Package,
+  ArrowRight,
+  TrendingUp,
+  Users,
+  Briefcase
 } from 'lucide-react';
 
 // Email update validation schema
@@ -450,6 +456,127 @@ export default function Account() {
             </CardContent>
           </Card>
         </motion.div>
+
+        {/* Provider Options - Only show for regular users */}
+        {user.role === 'user' && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="mb-6"
+          >
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-foreground mb-2">Grow Your Business</h2>
+              <p className="text-sm text-muted-foreground">
+                Join thousands of providers earning with FixitQuick
+              </p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Service Provider Card */}
+              <Card 
+                className="relative overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 hover:border-primary/50 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30"
+                onClick={() => setLocation('/provider/register')}
+                data-testid="card-become-service-provider"
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-start space-x-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center shadow-lg">
+                        <Wrench className="w-6 h-6 text-white" />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-bold text-foreground mb-2">
+                        Become a Service Provider
+                      </h3>
+                      <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+                        Offer your skills and expertise. Connect with customers who need professional services.
+                      </p>
+                      <div className="space-y-2 mb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <TrendingUp className="w-3 h-3 mr-2 text-green-500" />
+                          <span>Flexible earnings</span>
+                        </div>
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <Users className="w-3 h-3 mr-2 text-blue-500" />
+                          <span>Growing customer base</span>
+                        </div>
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <Shield className="w-3 h-3 mr-2 text-purple-500" />
+                          <span>Verified platform</span>
+                        </div>
+                      </div>
+                      <Button 
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                        size="sm"
+                        data-testid="button-apply-service-provider"
+                      >
+                        <Briefcase className="w-4 h-4 mr-2" />
+                        Apply Now
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+                {/* Decorative elements */}
+                <div className="absolute top-0 right-0 w-20 h-20 bg-blue-200/20 rounded-full -translate-y-10 translate-x-10"></div>
+                <div className="absolute bottom-0 left-0 w-16 h-16 bg-indigo-200/20 rounded-full translate-y-8 -translate-x-8"></div>
+              </Card>
+
+              {/* Parts Provider Card */}
+              <Card 
+                className="relative overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 hover:border-primary/50 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30"
+                onClick={() => setLocation('/parts-provider/register')}
+                data-testid="card-become-parts-provider"
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-start space-x-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center shadow-lg">
+                        <Package className="w-6 h-6 text-white" />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-bold text-foreground mb-2">
+                        Become a Parts Provider
+                      </h3>
+                      <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+                        Sell genuine parts and accessories. Reach customers across your city and beyond.
+                      </p>
+                      <div className="space-y-2 mb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <TrendingUp className="w-3 h-3 mr-2 text-green-500" />
+                          <span>Steady income stream</span>
+                        </div>
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <Truck className="w-3 h-3 mr-2 text-orange-500" />
+                          <span>Wide delivery network</span>
+                        </div>
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <ShoppingCart className="w-3 h-3 mr-2 text-blue-500" />
+                          <span>Easy inventory management</span>
+                        </div>
+                      </div>
+                      <Button 
+                        className="w-full bg-green-600 hover:bg-green-700 text-white font-medium"
+                        size="sm"
+                        data-testid="button-apply-parts-provider"
+                      >
+                        <Package className="w-4 h-4 mr-2" />
+                        Start Selling
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+                {/* Decorative elements */}
+                <div className="absolute top-0 right-0 w-20 h-20 bg-green-200/20 rounded-full -translate-y-10 translate-x-10"></div>
+                <div className="absolute bottom-0 left-0 w-16 h-16 bg-emerald-200/20 rounded-full translate-y-8 -translate-x-8"></div>
+              </Card>
+            </div>
+          </motion.div>
+        )}
 
         {/* Quick Settings */}
         <motion.div

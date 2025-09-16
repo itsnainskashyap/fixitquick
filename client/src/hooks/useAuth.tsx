@@ -21,13 +21,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     retry: false,
     // In development, try dev endpoints if regular auth fails
     retryOnMount: false,
-    // Better error handling for development
-    onError: (error) => {
-      if (import.meta.env.DEV && error instanceof Error) {
-        console.log('💡 Auth error in dev mode:', error.message);
-        console.log('💡 Consider using dev auth: POST /api/dev/login/:userId');
-      }
-    },
   });
 
   const signIn = () => {

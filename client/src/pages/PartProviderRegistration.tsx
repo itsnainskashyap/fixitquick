@@ -45,7 +45,10 @@ import {
   Mail,
   CreditCard,
   Award,
-  Briefcase
+  Briefcase,
+  Package,
+  Truck,
+  ShoppingCart
 } from 'lucide-react';
 
 // Form schemas for each step
@@ -55,7 +58,7 @@ const personalDetailsSchema = z.object({
   email: z.string().email('Valid email is required'),
   phone: z.string().min(10, 'Valid phone number is required'),
   alternatePhone: z.string().optional(),
-  businessType: z.enum(['individual', 'partnership', 'company'], {
+  businessType: z.enum(['individual', 'partnership', 'private_limited', 'public_limited', 'llp'], {
     required_error: 'Please select business type'
   }),
 });
@@ -63,17 +66,19 @@ const personalDetailsSchema = z.object({
 const businessDetailsSchema = z.object({
   description: z.string().min(50, 'Business description must be at least 50 characters'),
   experience: z.number().min(0, 'Experience must be 0 or more years').max(50, 'Experience cannot exceed 50 years'),
-  serviceRadius: z.number().min(1, 'Service radius must be at least 1 km').max(100, 'Service radius cannot exceed 100 km'),
-  emergencyServices: z.boolean(),
-  priceRange: z.enum(['budget', 'mid', 'premium'], {
-    required_error: 'Please select price range'
-  }),
+  gstNumber: z.string().optional(),
+  panNumber: z.string().optional(),
+  minOrderValue: z.number().min(0, 'Minimum order value must be 0 or more'),
+  maxOrderValue: z.number().min(0, 'Maximum order value must be 0 or more'),
+  processingTime: z.number().min(1, 'Processing time must be at least 1 hour').max(720, 'Processing time cannot exceed 720 hours'),
+  shippingAreas: z.array(z.string()).min(1, 'Please add at least one shipping area'),
 });
 
-const servicesSchema = z.object({
-  selectedCategories: z.array(z.string()).min(1, 'Please select at least one service category'),
-  skills: z.array(z.string()).min(1, 'Please add at least one skill'),
+const inventorySchema = z.object({
+  selectedCategories: z.array(z.string()).min(1, 'Please select at least one parts category'),
   specializations: z.array(z.string()),
+  brandsDeal: z.array(z.string()).min(1, 'Please add at least one brand you deal with'),
+  qualityCertifications: z.array(z.string()),
 });
 
 const documentsSchema = z.object({
@@ -81,32 +86,24 @@ const documentsSchema = z.object({
   aadharBack: z.boolean(),
   photo: z.boolean(),
   businessLicense: z.boolean().optional(),
-  insurance: z.boolean().optional(),
+  gstCertificate: z.boolean().optional(),
+  bankStatement: z.boolean().optional(),
 });
 
 type PersonalDetailsForm = z.infer<typeof personalDetailsSchema>;
 type BusinessDetailsForm = z.infer<typeof businessDetailsSchema>;
-type ServicesForm = z.infer<typeof servicesSchema>;
+type InventoryForm = z.infer<typeof inventorySchema>;
 type DocumentsForm = z.infer<typeof documentsSchema>;
 
-interface ServiceCategory {
+interface PartsCategory {
   id: string;
   name: string;
   description: string;
   icon?: string;
 }
 
-interface DocumentUploadStatus {
-  aadharFront?: { uploaded: boolean; url?: string; filename?: string };
-  aadharBack?: { uploaded: boolean; url?: string; filename?: string };
-  photo?: { uploaded: boolean; url?: string; filename?: string };
-  businessLicense?: { uploaded: boolean; url?: string; filename?: string };
-  insurance?: { uploaded: boolean; url?: string; filename?: string };
-  portfolio?: { uploaded: boolean; url?: string; filename?: string }[];
-}
-
 // Enhanced document types for the DocumentUpload component
-const providerDocumentTypes: DocumentType[] = [
+const partsProviderDocumentTypes: DocumentType[] = [
   {
     id: 'aadhar_front',
     name: 'Aadhaar Card (Front)',
@@ -149,7 +146,7 @@ const providerDocumentTypes: DocumentType[] = [
     ]
   },
   {
-    id: 'license',
+    id: 'business_license',
     name: 'Business License',
     description: 'Valid business license or registration certificate',
     required: false,
@@ -162,29 +159,29 @@ const providerDocumentTypes: DocumentType[] = [
     ]
   },
   {
-    id: 'insurance',
-    name: 'Insurance Certificate',
-    description: 'Liability or business insurance certificate',
+    id: 'gst_certificate',
+    name: 'GST Certificate',
+    description: 'GST registration certificate for tax compliance',
     required: false,
     allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
     maxSize: 10 * 1024 * 1024,
     tips: [
-      'Ensure certificate is current and valid',
-      'Include coverage details',
-      'Check expiry date'
+      'Ensure GST number is clearly visible',
+      'Include issuing authority details',
+      'Check certificate validity'
     ]
   },
   {
-    id: 'certificate',
-    name: 'Training Certificates',
-    description: 'Professional certifications and training certificates',
+    id: 'bank_statement',
+    name: 'Bank Statement',
+    description: 'Recent bank statement for account verification',
     required: false,
     allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
     maxSize: 10 * 1024 * 1024,
     tips: [
-      'Upload relevant skill certificates',
-      'Ensure certificate details are readable',
-      'Include issuing authority information'
+      'Use recent statement (within 3 months)',
+      'Ensure account details are visible',
+      'Hide sensitive information if needed'
     ]
   }
 ];
@@ -192,12 +189,12 @@ const providerDocumentTypes: DocumentType[] = [
 const STEPS = [
   { id: 1, title: 'Personal Details', icon: User },
   { id: 2, title: 'Business Info', icon: Building },
-  { id: 3, title: 'Services & Skills', icon: Star },
+  { id: 3, title: 'Inventory & Categories', icon: Package },
   { id: 4, title: 'Documents', icon: FileText },
   { id: 5, title: 'Review', icon: CheckCircle },
 ];
 
-export default function ProviderRegistration() {
+export default function PartProviderRegistration() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -212,7 +209,7 @@ export default function ProviderRegistration() {
     resolver: zodResolver(personalDetailsSchema),
     defaultValues: {
       businessName: '',
-      contactPerson: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
+      contactPerson: user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : '',
       email: user?.email || '',
       phone: user?.phone || '',
       alternatePhone: '',
@@ -225,18 +222,22 @@ export default function ProviderRegistration() {
     defaultValues: {
       description: '',
       experience: 0,
-      serviceRadius: 10,
-      emergencyServices: false,
-      priceRange: 'mid',
+      gstNumber: '',
+      panNumber: '',
+      minOrderValue: 500,
+      maxOrderValue: 100000,
+      processingTime: 24,
+      shippingAreas: [],
     },
   });
 
-  const servicesForm = useForm<ServicesForm>({
-    resolver: zodResolver(servicesSchema),
+  const inventoryForm = useForm<InventoryForm>({
+    resolver: zodResolver(inventorySchema),
     defaultValues: {
       selectedCategories: [],
-      skills: [],
       specializations: [],
+      brandsDeal: [],
+      qualityCertifications: [],
     },
   });
 
@@ -247,14 +248,15 @@ export default function ProviderRegistration() {
       aadharBack: false,
       photo: false,
       businessLicense: false,
-      insurance: false,
+      gstCertificate: false,
+      bankStatement: false,
     },
   });
 
-  // Fetch service categories
+  // Fetch parts categories
   const { data: categories } = useQuery({
-    queryKey: ['/api/v1/categories'],
-    queryFn: () => fetch('/api/v1/categories').then(res => res.json()),
+    queryKey: ['/api/v1/parts-categories'],
+    queryFn: () => fetch('/api/v1/parts-categories').then(res => res.json()),
   });
 
   // Document upload handlers
@@ -284,13 +286,13 @@ export default function ProviderRegistration() {
   // Final registration mutation
   const registerMutation = useMutation({
     mutationFn: async (data: any) => {
-      const response = await apiRequest('POST', '/api/v1/providers/apply', data);
+      const response = await apiRequest('POST', '/api/v1/parts-provider/apply', data);
       return response.json();
     },
     onSuccess: () => {
       toast({
         title: 'Registration successful!',
-        description: 'Your provider application has been submitted for verification.',
+        description: 'Your parts provider application has been submitted for verification.',
       });
       setLocation('/provider-pending');
     },
@@ -305,7 +307,7 @@ export default function ProviderRegistration() {
 
   // Check if required documents are uploaded
   const getRequiredDocumentsStatus = () => {
-    const requiredTypes = providerDocumentTypes.filter(type => type.required).map(type => type.id);
+    const requiredTypes = partsProviderDocumentTypes.filter(type => type.required).map(type => type.id);
     const uploadedTypes = uploadedDocuments.map(doc => doc.documentType);
     return requiredTypes.every(type => uploadedTypes.includes(type));
   };
@@ -334,8 +336,8 @@ export default function ProviderRegistration() {
     nextStep();
   };
 
-  const handleServicesSubmit = (data: ServicesForm) => {
-    console.log('Services:', data);
+  const handleInventorySubmit = (data: InventoryForm) => {
+    console.log('Inventory:', data);
     nextStep();
   };
 
@@ -350,14 +352,15 @@ export default function ProviderRegistration() {
     
     const personalData = personalForm.getValues();
     const businessData = businessForm.getValues();
-    const servicesData = servicesForm.getValues();
+    const inventoryData = inventoryForm.getValues();
     
     const registrationData = {
       ...personalData,
       ...businessData,
-      serviceCategories: servicesData.selectedCategories,
-      skills: servicesData.skills,
-      specializations: servicesData.specializations,
+      partsCategories: inventoryData.selectedCategories,
+      specializations: inventoryData.specializations,
+      brandsDeal: inventoryData.brandsDeal,
+      qualityCertifications: inventoryData.qualityCertifications,
     };
 
     registerMutation.mutate(registrationData);
@@ -370,8 +373,8 @@ export default function ProviderRegistration() {
     return null;
   }
 
-  if (user.role === 'service_provider') {
-    setLocation('/provider');
+  if (user.role === 'parts_provider') {
+    setLocation('/parts-provider-dashboard');
     return null;
   }
 
@@ -384,9 +387,9 @@ export default function ProviderRegistration() {
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Become a Service Provider</h1>
+              <h1 className="text-2xl font-bold text-foreground">Become a Parts Provider</h1>
               <p className="text-sm text-muted-foreground">
-                Complete your registration to start earning with FixitQuick
+                Complete your registration to start selling parts on FixitQuick
               </p>
             </div>
             <Button 
@@ -479,7 +482,7 @@ export default function ProviderRegistration() {
                               <FormLabel>Business Name *</FormLabel>
                               <FormControl>
                                 <Input 
-                                  placeholder="Your business or service name" 
+                                  placeholder="Your business or store name" 
                                   {...field} 
                                   data-testid="input-business-name"
                                 />
@@ -577,7 +580,9 @@ export default function ProviderRegistration() {
                                 <SelectContent>
                                   <SelectItem value="individual">Individual/Freelancer</SelectItem>
                                   <SelectItem value="partnership">Partnership</SelectItem>
-                                  <SelectItem value="company">Company/Corporation</SelectItem>
+                                  <SelectItem value="private_limited">Private Limited</SelectItem>
+                                  <SelectItem value="public_limited">Public Limited</SelectItem>
+                                  <SelectItem value="llp">LLP</SelectItem>
                                 </SelectContent>
                               </Select>
                               <FormMessage />
@@ -618,7 +623,7 @@ export default function ProviderRegistration() {
                             <FormLabel>Business Description *</FormLabel>
                             <FormControl>
                               <Textarea 
-                                placeholder="Describe your business, services offered, and what makes you unique..." 
+                                placeholder="Describe your business, types of parts you deal with, and what makes you unique..." 
                                 className="min-h-[120px]"
                                 {...field} 
                                 data-testid="textarea-description"
@@ -646,7 +651,7 @@ export default function ProviderRegistration() {
                                   max="50"
                                   placeholder="5" 
                                   {...field}
-                                  onChange={e => field.onChange(parseInt(e.target.value) || 0)}
+                                  onChange={(e) => field.onChange(Number(e.target.value))}
                                   data-testid="input-experience"
                                 />
                               </FormControl>
@@ -657,23 +662,23 @@ export default function ProviderRegistration() {
 
                         <FormField
                           control={businessForm.control}
-                          name="serviceRadius"
+                          name="processingTime"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Service Radius (km) *</FormLabel>
+                              <FormLabel>Order Processing Time (hours) *</FormLabel>
                               <FormControl>
                                 <Input 
                                   type="number"
                                   min="1"
-                                  max="100"
-                                  placeholder="10" 
+                                  max="720"
+                                  placeholder="24" 
                                   {...field}
-                                  onChange={e => field.onChange(parseInt(e.target.value) || 10)}
-                                  data-testid="input-service-radius"
+                                  onChange={(e) => field.onChange(Number(e.target.value))}
+                                  data-testid="input-processing-time"
                                 />
                               </FormControl>
                               <FormDescription>
-                                How far are you willing to travel for services?
+                                Average time to process and prepare orders for shipping
                               </FormDescription>
                               <FormMessage />
                             </FormItem>
@@ -682,22 +687,20 @@ export default function ProviderRegistration() {
 
                         <FormField
                           control={businessForm.control}
-                          name="priceRange"
+                          name="minOrderValue"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Price Range *</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-price-range">
-                                    <SelectValue placeholder="Select price range" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="budget">Budget-friendly</SelectItem>
-                                  <SelectItem value="mid">Mid-range</SelectItem>
-                                  <SelectItem value="premium">Premium</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              <FormLabel>Minimum Order Value (₹) *</FormLabel>
+                              <FormControl>
+                                <Input 
+                                  type="number"
+                                  min="0"
+                                  placeholder="500" 
+                                  {...field}
+                                  onChange={(e) => field.onChange(Number(e.target.value))}
+                                  data-testid="input-min-order"
+                                />
+                              </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -705,39 +708,72 @@ export default function ProviderRegistration() {
 
                         <FormField
                           control={businessForm.control}
-                          name="emergencyServices"
+                          name="maxOrderValue"
                           render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                            <FormItem>
+                              <FormLabel>Maximum Order Value (₹) *</FormLabel>
                               <FormControl>
-                                <Checkbox
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="checkbox-emergency-services"
+                                <Input 
+                                  type="number"
+                                  min="0"
+                                  placeholder="100000" 
+                                  {...field}
+                                  onChange={(e) => field.onChange(Number(e.target.value))}
+                                  data-testid="input-max-order"
                                 />
                               </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel>Emergency Services</FormLabel>
-                                <FormDescription>
-                                  I can provide 24/7 emergency services
-                                </FormDescription>
-                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={businessForm.control}
+                          name="gstNumber"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>GST Number</FormLabel>
+                              <FormControl>
+                                <Input 
+                                  placeholder="e.g., 22AAAAA0000A1Z5" 
+                                  {...field} 
+                                  data-testid="input-gst"
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                GST registration is recommended for business compliance
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={businessForm.control}
+                          name="panNumber"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>PAN Number</FormLabel>
+                              <FormControl>
+                                <Input 
+                                  placeholder="e.g., ABCDE1234F" 
+                                  {...field} 
+                                  data-testid="input-pan"
+                                />
+                              </FormControl>
+                              <FormMessage />
                             </FormItem>
                           )}
                         />
                       </div>
 
                       <div className="flex justify-between">
-                        <Button 
-                          type="button" 
-                          variant="outline" 
-                          onClick={prevStep}
-                          data-testid="button-back-business"
-                        >
+                        <Button type="button" variant="outline" onClick={prevStep} data-testid="button-prev-business">
                           <ArrowLeft className="w-4 h-4 mr-2" />
-                          Back
+                          Previous
                         </Button>
                         <Button type="submit" data-testid="button-next-business">
-                          Next: Services & Skills
+                          Next: Inventory & Categories
                           <ArrowRight className="w-4 h-4 ml-2" />
                         </Button>
                       </div>
@@ -747,125 +783,78 @@ export default function ProviderRegistration() {
               </Card>
             )}
 
-            {/* Step 3: Services & Skills */}
+            {/* Step 3: Inventory & Categories */}
             {currentStep === 3 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center">
-                    <Star className="w-5 h-5 mr-2" />
-                    Services & Skills
+                    <Package className="w-5 h-5 mr-2" />
+                    Inventory & Categories
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Form {...servicesForm}>
-                    <form onSubmit={servicesForm.handleSubmit(handleServicesSubmit)} className="space-y-6">
-                      {/* Service Categories */}
-                      <FormField
-                        control={servicesForm.control}
-                        name="selectedCategories"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Service Categories *</FormLabel>
-                            <FormDescription>
-                              Select the categories of services you provide
-                            </FormDescription>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              {categories?.map((category: ServiceCategory) => (
-                                <div key={category.id} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`category-${category.id}`}
-                                    checked={field.value.includes(category.id)}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        field.onChange([...field.value, category.id]);
-                                      } else {
-                                        field.onChange(field.value.filter((id) => id !== category.id));
-                                      }
-                                    }}
-                                    data-testid={`checkbox-category-${category.id}`}
-                                  />
-                                  <Label 
-                                    htmlFor={`category-${category.id}`} 
-                                    className="text-sm font-normal cursor-pointer"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))}
-                            </div>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                  <Form {...inventoryForm}>
+                    <form onSubmit={inventoryForm.handleSubmit(handleInventorySubmit)} className="space-y-6">
+                      <div className="space-y-4">
+                        <div>
+                          <Label className="text-base font-medium">Parts Categories *</Label>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Select the categories of parts you deal with
+                          </p>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {['Automotive', 'Electronics', 'Home Appliances', 'Mobile & Gadgets', 'Tools & Hardware', 'Others'].map((category) => (
+                              <div key={category} className="flex items-center space-x-2">
+                                <Checkbox id={category} data-testid={`checkbox-category-${category.toLowerCase()}`} />
+                                <Label htmlFor={category} className="text-sm">{category}</Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
-                      {/* Skills */}
-                      <FormField
-                        control={servicesForm.control}
-                        name="skills"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Your Skills *</FormLabel>
-                            <FormControl>
-                              <Textarea 
-                                placeholder="List your key skills, separated by commas. E.g., Plumbing, Pipe fitting, Leak repair, Bathroom installation..." 
-                                className="min-h-[80px]"
-                                {...field}
-                                onChange={(e) => {
-                                  const skills = e.target.value.split(',').map(skill => skill.trim()).filter(Boolean);
-                                  field.onChange(skills);
-                                }}
-                                value={field.value.join(', ')}
-                                data-testid="textarea-skills"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Separate multiple skills with commas
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                        <div>
+                          <Label className="text-base font-medium">Brands You Deal With *</Label>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Add brands you sell parts for (one per line)
+                          </p>
+                          <Textarea 
+                            placeholder="e.g., Bosch, Philips, Samsung, LG, Maruti Suzuki, etc."
+                            className="min-h-[100px]"
+                            data-testid="textarea-brands"
+                          />
+                        </div>
 
-                      {/* Specializations */}
-                      <FormField
-                        control={servicesForm.control}
-                        name="specializations"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Specializations</FormLabel>
-                            <FormControl>
-                              <Textarea 
-                                placeholder="Any special certifications or areas of expertise..." 
-                                className="min-h-[80px]"
-                                {...field}
-                                onChange={(e) => {
-                                  const specs = e.target.value.split(',').map(spec => spec.trim()).filter(Boolean);
-                                  field.onChange(specs);
-                                }}
-                                value={field.value.join(', ')}
-                                data-testid="textarea-specializations"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Optional: Specialized areas or certifications
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                        <div>
+                          <Label className="text-base font-medium">Specializations</Label>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Any specific areas of expertise (optional)
+                          </p>
+                          <Textarea 
+                            placeholder="e.g., Genuine parts, Aftermarket parts, Refurbished parts, etc."
+                            className="min-h-[80px]"
+                            data-testid="textarea-specializations"
+                          />
+                        </div>
+
+                        <div>
+                          <Label className="text-base font-medium">Quality Certifications</Label>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Any quality certifications you have (optional)
+                          </p>
+                          <Textarea 
+                            placeholder="e.g., ISO 9001, OEM Certified, Authorized Dealer, etc."
+                            className="min-h-[80px]"
+                            data-testid="textarea-certifications"
+                          />
+                        </div>
+                      </div>
 
                       <div className="flex justify-between">
-                        <Button 
-                          type="button" 
-                          variant="outline" 
-                          onClick={prevStep}
-                          data-testid="button-back-services"
-                        >
+                        <Button type="button" variant="outline" onClick={prevStep} data-testid="button-prev-inventory">
                           <ArrowLeft className="w-4 h-4 mr-2" />
-                          Back
+                          Previous
                         </Button>
-                        <Button type="submit" data-testid="button-next-services">
-                          Next: Upload Documents
+                        <Button type="submit" data-testid="button-next-inventory">
+                          Next: Documents
                           <ArrowRight className="w-4 h-4 ml-2" />
                         </Button>
                       </div>
@@ -881,44 +870,32 @@ export default function ProviderRegistration() {
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <FileText className="w-5 h-5 mr-2" />
-                    Required Documents
+                    Document Upload
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    <div className="text-sm text-muted-foreground">
-                      Please upload clear, high-quality images of your documents. All required documents must be uploaded before you can submit your application.
-                    </div>
-
-                    {/* Document Upload Component */}
                     <DocumentUpload
                       documents={uploadedDocuments}
-                      onChange={setUploadedDocuments}
-                      documentTypes={providerDocumentTypes}
-                      endpoint="/api/v1/providers/documents/upload"
+                      onChange={handleDocumentUpload}
+                      documentTypes={partsProviderDocumentTypes}
+                      endpoint="/api/v1/parts-provider/documents/upload"
                       showStatus={true}
                       allowReupload={true}
-                      className="w-full"
+                      data-testid="document-upload"
                     />
 
-
                     <div className="flex justify-between">
-                      <Button 
-                        type="button" 
-                        variant="outline" 
-                        onClick={prevStep}
-                        data-testid="button-back-documents"
-                      >
+                      <Button type="button" variant="outline" onClick={prevStep} data-testid="button-prev-documents">
                         <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back
+                        Previous
                       </Button>
                       <Button 
-                        type="button"
                         onClick={nextStep}
                         disabled={!getRequiredDocumentsStatus()}
                         data-testid="button-next-documents"
                       >
-                        Review Application
+                        Next: Review & Submit
                         <ArrowRight className="w-4 h-4 ml-2" />
                       </Button>
                     </div>
@@ -933,124 +910,74 @@ export default function ProviderRegistration() {
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <CheckCircle className="w-5 h-5 mr-2" />
-                    Review Your Application
+                    Review & Submit
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    <div className="text-sm text-muted-foreground">
-                      Please review all information before submitting your application. You can go back to edit any section.
+                    <div className="text-center">
+                      <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+                      <h3 className="text-xl font-semibold mb-2">Ready to Submit Application</h3>
+                      <p className="text-muted-foreground">
+                        Please review your information and submit your application for verification.
+                      </p>
                     </div>
 
-                    {/* Review Personal Details */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground flex items-center">
-                        <User className="w-4 h-4 mr-2" />
-                        Personal Details
-                      </h3>
-                      <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div><strong>Business Name:</strong> {personalForm.getValues('businessName')}</div>
-                        <div><strong>Contact Person:</strong> {personalForm.getValues('contactPerson')}</div>
-                        <div><strong>Email:</strong> {personalForm.getValues('email')}</div>
-                        <div><strong>Phone:</strong> {personalForm.getValues('phone')}</div>
-                        <div><strong>Business Type:</strong> {personalForm.getValues('businessType')}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Personal Details</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {personalForm.getValues().businessName} • {personalForm.getValues().email}
+                        </p>
                       </div>
-                    </div>
-
-                    {/* Review Business Details */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground flex items-center">
-                        <Building className="w-4 h-4 mr-2" />
-                        Business Information
-                      </h3>
-                      <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div><strong>Experience:</strong> {businessForm.getValues('experience')} years</div>
-                        <div><strong>Service Radius:</strong> {businessForm.getValues('serviceRadius')} km</div>
-                        <div><strong>Price Range:</strong> {businessForm.getValues('priceRange')}</div>
-                        <div><strong>Emergency Services:</strong> {businessForm.getValues('emergencyServices') ? 'Yes' : 'No'}</div>
-                        <div><strong>Description:</strong> {businessForm.getValues('description').substring(0, 100)}...</div>
+                      
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Business Type</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {personalForm.getValues().businessType}
+                        </p>
                       </div>
-                    </div>
 
-                    {/* Review Services */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground flex items-center">
-                        <Star className="w-4 h-4 mr-2" />
-                        Services & Skills
-                      </h3>
-                      <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div><strong>Categories:</strong> {servicesForm.getValues('selectedCategories').length} selected</div>
-                        <div><strong>Skills:</strong> {servicesForm.getValues('skills').join(', ')}</div>
-                        {servicesForm.getValues('specializations').length > 0 && (
-                          <div><strong>Specializations:</strong> {servicesForm.getValues('specializations').join(', ')}</div>
-                        )}
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Processing Time</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {businessForm.getValues().processingTime} hours
+                        </p>
                       </div>
-                    </div>
 
-                    {/* Review Documents */}
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-foreground flex items-center">
-                        <FileText className="w-4 h-4 mr-2" />
-                        Documents
-                      </h3>
-                      <div className="bg-muted p-4 rounded-lg space-y-2">
-                        {uploadedDocuments.map((doc) => (
-                          <div key={doc.id} className="flex items-center space-x-2">
-                            <CheckCircle className={`w-4 h-4 ${
-                              doc.status === 'approved' ? 'text-green-600' : 
-                              doc.status === 'rejected' ? 'text-red-600' :
-                              doc.status === 'under_review' ? 'text-blue-600' : 'text-yellow-600'
-                            }`} />
-                            <span>{providerDocumentTypes.find(type => type.id === doc.documentType)?.name} - {doc.filename}</span>
-                            {doc.status !== 'pending' && (
-                              <Badge variant="outline" className="text-xs">
-                                {doc.status.replace('_', ' ')}
-                              </Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Terms and conditions */}
-                    <div className="border rounded-lg p-4">
-                      <div className="flex items-start space-x-3">
-                        <Checkbox required data-testid="checkbox-terms" />
-                        <div className="text-sm">
-                          <p className="font-medium">I agree to the Terms and Conditions</p>
-                          <p className="text-muted-foreground mt-1">
-                            By submitting this application, I agree to FixitQuick's Terms of Service and Privacy Policy. 
-                            I confirm that all information provided is accurate and I have the right to use the uploaded documents.
-                          </p>
-                        </div>
+                      <div className="p-4 border rounded-lg">
+                        <h4 className="font-medium mb-2">Documents</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {uploadedDocuments.length} documents uploaded
+                        </p>
                       </div>
                     </div>
 
                     <div className="flex justify-between">
-                      <Button 
-                        type="button" 
-                        variant="outline" 
-                        onClick={prevStep}
-                        data-testid="button-back-review"
-                      >
+                      <Button type="button" variant="outline" onClick={prevStep} data-testid="button-prev-review">
                         <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back to Documents
+                        Previous
                       </Button>
                       <Button 
-                        type="button"
                         onClick={handleFinalSubmit}
                         disabled={isSubmitting || registerMutation.isPending}
                         data-testid="button-submit-application"
                       >
                         {isSubmitting || registerMutation.isPending ? (
                           <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                              className="w-4 h-4 mr-2"
+                            >
+                              <Upload className="w-4 h-4" />
+                            </motion.div>
                             Submitting...
                           </>
                         ) : (
                           <>
+                            <CheckCircle className="w-4 h-4 mr-2" />
                             Submit Application
-                            <CheckCircle className="w-4 h-4 ml-2" />
                           </>
                         )}
                       </Button>

@@ -103,7 +103,6 @@ import {
   Percent,
   IndianRupee,
   Calendar as CalendarIcon,
-  User,
   Building,
   Store,
   Briefcase,

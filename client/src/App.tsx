@@ -42,6 +42,7 @@ import Admin from "@/pages/Admin";
 import Subcategories from "@/pages/Subcategories";
 import NotFound from "@/pages/not-found";
 import ProviderRegistration from "@/pages/ProviderRegistration";
+import PartProviderRegistration from "@/pages/PartProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
 import ServiceProviderDashboard from "@/pages/ProviderDashboard";
 import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
@@ -204,6 +205,10 @@ function Router() {
       <Route 
         path="/provider/register" 
         component={() => <ProtectedRoute component={ProviderRegistration} />} 
+      />
+      <Route 
+        path="/parts-provider/register" 
+        component={() => <ProtectedRoute component={PartProviderRegistration} />} 
       />
       <Route 
         path="/provider-pending" 
