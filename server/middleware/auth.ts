@@ -98,13 +98,30 @@ export const authMiddleware = async (
           return next();
         }
       } catch (adminAuthError) {
-        console.error('❌ authMiddleware: Admin cookie token invalid:', adminAuthError);
-        // Clear invalid admin cookie
+        console.error('❌ authMiddleware: Admin cookie token expired/invalid:', adminAuthError);
+        // Clear invalid/expired admin cookie and continue to session auth
         res.clearCookie('adminToken', { path: '/', httpOnly: true });
-        return res.status(401).json({ 
-          message: 'Invalid admin token - please login again' 
-        });
+        console.log('🔄 authMiddleware: Cleared expired admin cookie, continuing to session auth...');
+        // Don't return here - fall through to session authentication
       }
+    }
+
+    // Clear any other potentially expired JWT cookies to prevent blocking
+    const commonJwtCookieNames = ['accessToken', 'token', 'userToken', 'authToken'];
+    let clearedExpiredCookies = false;
+    for (const cookieName of commonJwtCookieNames) {
+      if (req.cookies?.[cookieName]) {
+        try {
+          await jwtService.verifyAccessToken(req.cookies[cookieName]);
+        } catch (cookieJwtError) {
+          console.log(`🗑️ authMiddleware: Clearing expired JWT cookie: ${cookieName}`);
+          res.clearCookie(cookieName, { path: '/' });
+          clearedExpiredCookies = true;
+        }
+      }
+    }
+    if (clearedExpiredCookies) {
+      console.log('🧹 authMiddleware: Cleared expired JWT cookies, continuing to session auth...');
     }
 
     // PRIORITY 2: Handle Replit session authentication
@@ -127,7 +144,7 @@ export const authMiddleware = async (
         
         try {
           // Get user data from database to enrich session user object
-          const user = await storage.getUser(userId);
+          const user = await storage.getUser(userId!); // userId is guaranteed to be defined by the if check above
           if (!user || !user.isActive) {
             console.error(`❌ authMiddleware: Session user ${userId} not found or inactive`);
             return res.status(404).json({ 
@@ -222,137 +239,119 @@ export const authMiddleware = async (
     if (authHeader && authHeader.startsWith('Bearer ')) {
       token = authHeader.split('Bearer ')[1]?.trim();
       console.log('📱 authMiddleware: Found token in Authorization header');
-    }
-    
-    // No authentication token found
-    if (!token) {
-      return res.status(401).json({ 
-        message: 'Unauthorized - No authentication token provided' 
-      });
-    }
-
-    // Try JWT verification first (for SMS auth users)
-    try {
-      const jwtPayload = await jwtService.verifyAccessToken(token);
-      if (jwtPayload) {
-        console.log(`🔑 authMiddleware: JWT token verified for userId: ${jwtPayload.userId}`);
-        // Get user data from database
-        const user = await storage.getUser(jwtPayload.userId);
-        if (!user || !user.isActive) {
-          console.error(`❌ authMiddleware: User ${jwtPayload.userId} not found or inactive`);
-          return res.status(404).json({ 
-            message: 'User not found or inactive' 
-          });
-        }
-
-        // Attach user data to request in compatible format
-        req.user = {
-          id: user.id,
-          email: user.email || undefined,
-          phone: user.phone || undefined,
-          role: user.role || 'user',
-          isVerified: user.isVerified || false,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          profileImageUrl: user.profileImageUrl,
-          walletBalance: user.walletBalance,
-          fixiPoints: user.fixiPoints,
-          location: user.location,
-          isActive: user.isActive,
-          lastLoginAt: user.lastLoginAt,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        };
-
-        console.log(`✅ authMiddleware: User ${user.id} authenticated with role: ${user.role}`);
-
-        // Update last active timestamp
-        try {
-          await storage.updateUser(user.id, { lastLoginAt: new Date() });
-        } catch (updateError) {
-          console.error('Error updating last login:', updateError);
-          // Don't fail the request if we can't update last login
-        }
-
-        return next();
-      }
-    } catch (jwtError) {
-      console.log('JWT verification failed, trying Firebase auth...');
-    }
-
-    // Fallback to Firebase authentication for existing users
-    try {
-      const decodedToken = await auth.verifyIdToken(token);
       
-      // Get additional user data from Firestore
-      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-      
-      if (!userDoc.exists) {
-        return res.status(404).json({ 
-          message: 'User not found' 
-        });
-      }
-
-      const userData = userDoc.data();
-      
-      // Check if user is active
-      if (userData?.isActive === false) {
-        return res.status(403).json({ 
-          message: 'Account suspended' 
-        });
-      }
-
-      // Attach user data to request  
-      req.user = {
-        id: decodedToken.uid, // Firebase uses uid for user ID
-        email: decodedToken.email,
-        role: userData?.role || 'user',
-        isVerified: userData?.isVerified || false,
-        displayName: userData?.displayName,
-        photoURL: userData?.photoURL,
-        ...userData,
-      };
-
-      // Update last active timestamp
+      // Try JWT verification first (for SMS auth users)
       try {
-        await db.collection('users').doc(decodedToken.uid).update({
-          lastActive: new Date(),
-        });
-      } catch (updateError) {
-        console.error('Error updating last active:', updateError);
-        // Don't fail the request if we can't update last active
-      }
+        const jwtPayload = await jwtService.verifyAccessToken(token);
+        if (jwtPayload) {
+          console.log(`🔑 authMiddleware: JWT token verified for userId: ${jwtPayload.userId}`);
+          // Get user data from database
+          const user = await storage.getUser(jwtPayload.userId);
+          if (!user || !user.isActive) {
+            console.error(`❌ authMiddleware: User ${jwtPayload.userId} not found or inactive`);
+            return res.status(404).json({ 
+              message: 'User not found or inactive' 
+            });
+          }
 
-      next();
-    } catch (firebaseError: any) {
-      console.error('Firebase authentication failed:', firebaseError);
-      
-      if (firebaseError?.code === 'auth/id-token-expired') {
-        return res.status(401).json({ 
-          message: 'Token expired - Please login again' 
-        });
-      }
-      
-      if (firebaseError?.code === 'auth/id-token-revoked') {
-        return res.status(401).json({ 
-          message: 'Token revoked - Please login again' 
-        });
-      }
-      
-      if (firebaseError?.code === 'auth/invalid-id-token') {
-        return res.status(401).json({ 
-          message: 'Invalid token' 
-        });
-      }
+          // Attach user data to request in compatible format
+          req.user = {
+            id: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: user.role || 'user',
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          };
 
-      return res.status(401).json({ 
-        message: 'Authentication failed' 
-      });
+          console.log(`✅ authMiddleware: User ${user.id} authenticated with role: ${user.role}`);
+
+          // Update last active timestamp
+          try {
+            await storage.updateUser(user.id, { lastLoginAt: new Date() });
+          } catch (updateError) {
+            console.error('Error updating last login:', updateError);
+            // Don't fail the request if we can't update last login
+          }
+
+          return next();
+        }
+      } catch (jwtError) {
+        console.log('❌ authMiddleware: JWT token verification failed:', jwtError);
+        // Don't return here - continue to try Firebase auth and then session fallback
+      }
     }
-  } catch (error) {
-    console.error('Authentication error:', error);
+
+    // Try Firebase authentication if we have a token
+    if (token) {
+      try {
+        const decodedToken = await auth.verifyIdToken(token);
+        
+        // Get additional user data from Firestore
+        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+        
+        if (!userDoc.exists) {
+          console.log('❌ authMiddleware: Firebase user not found in Firestore');
+          // Don't return error - continue to session fallback
+        } else {
+          const userData = userDoc.data();
+          
+          // Check if user is active
+          if (userData?.isActive === false) {
+            return res.status(403).json({ 
+              message: 'Account suspended' 
+            });
+          }
+
+          // Attach user data to request  
+          req.user = {
+            id: decodedToken.uid, // Firebase uses uid for user ID
+            email: decodedToken.email,
+            role: userData?.role || 'user',
+            isVerified: userData?.isVerified || false,
+            displayName: userData?.displayName,
+            photoURL: userData?.photoURL,
+            ...userData,
+          };
+
+          console.log(`✅ authMiddleware: Firebase user ${decodedToken.uid} authenticated`);
+
+          // Update last active timestamp
+          try {
+            await db.collection('users').doc(decodedToken.uid).update({
+              lastActive: new Date(),
+            });
+          } catch (updateError) {
+            console.error('Error updating Firebase last active:', updateError);
+            // Don't fail the request if we can't update last active
+          }
+
+          return next();
+        }
+      } catch (firebaseError: any) {
+        console.log('❌ authMiddleware: Firebase authentication failed:', firebaseError.code);
+        // Don't return error - continue to session fallback
+      }
+    }
+
+    // FINAL FALLBACK: No valid authentication found - return 401
+    console.log('❌ authMiddleware: No valid authentication method found (no session, no valid JWT, no valid Firebase token)');
     return res.status(401).json({ 
-      message: 'Authentication failed' 
+      message: 'Unauthorized - Please login to access this resource' 
+    });
+  } catch (error) {
+    console.error('❌ authMiddleware: Unexpected authentication error:', error);
+    return res.status(401).json({ 
+      message: 'Authentication processing failed' 
     });
   }
 };
@@ -444,7 +443,7 @@ export const requireRole = (allowedRoles: string | string[]) => {
     
     console.log(`🔐 requireRole: User ${req.user.id} has role "${userRole}", required: [${roles.join(', ')}]`);
 
-    if (!roles.includes(userRole)) {
+    if (!userRole || !roles.includes(userRole)) {
       console.error(`🚫 requireRole: Access denied for user ${req.user.id}. User role "${userRole}" not in required roles: [${roles.join(', ')}]`);
       return res.status(403).json({ 
         message: `Access denied. Required role: ${roles.join(' or ')}. Current role: ${userRole}` 
@@ -552,7 +551,7 @@ export async function adminSessionMiddleware(req: Request, res: Response, next: 
 
     console.log(`🔍 adminSessionMiddleware: Fetching user data for ${userId} (auth method: ${authMethod})`);
     // Get user from database to check current role
-    const user = await storage.getUser(userId);
+    const user = await storage.getUser(userId!); // userId is guaranteed to be defined by the checks above
     
     if (!user || !user.isActive) {
       console.log(`🚫 adminSessionMiddleware: User ${userId} not found or inactive in database`);
@@ -670,10 +669,10 @@ export const rateLimitByUser = (maxRequests: number = 100, windowMs: number = 15
     const userId = req.user?.id || req.ip;
     const now = Date.now();
 
-    const userLimit = userRequests.get(userId);
+    const userLimit = userRequests.get(userId!);
 
     if (!userLimit || now > userLimit.resetTime) {
-      userRequests.set(userId, {
+      userRequests.set(userId!, {
         count: 1,
         resetTime: now + windowMs,
       });

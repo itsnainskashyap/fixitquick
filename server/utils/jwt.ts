@@ -31,7 +31,7 @@ interface SessionInfo {
 }
 
 class JWTService {
-  private readonly ACCESS_TOKEN_EXPIRY = 15 * 60; // 15 minutes in seconds
+  private readonly ACCESS_TOKEN_EXPIRY = 2 * 60 * 60; // 2 hours in seconds
   private readonly REFRESH_TOKEN_EXPIRY = 30 * 24 * 60 * 60; // 30 days in seconds
   
   private get SECRET(): string {

@@ -714,25 +714,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   // Note: Apply rate limiting selectively to specific routes, not globally
 
-  // Auth routes
-  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  // Auth routes - Enhanced to handle session authentication and expired JWT gracefully
+  app.get('/api/auth/user', async (req: AuthenticatedRequest, res) => {
     try {
-      const userId = req.user?.id || req.user?.claims?.sub;
-      const user = await storage.getUser(userId);
+      let userId: string | undefined;
+      let user: any = null;
       
-      if (user) {
-        // Add displayName field by combining firstName and lastName
-        const userWithDisplayName = {
-          ...user,
-          displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
-        };
-        res.json(userWithDisplayName);
-      } else {
-        res.json(null);
+      console.log('🔍 /api/auth/user: Checking authentication methods...');
+      
+      // PRIORITY 1: Check if user is already authenticated via Replit session
+      if (req.user) {
+        // Extract user ID from Replit session
+        userId = req.user.id || req.user.claims?.sub;
+        if (userId) {
+          console.log(`🔐 /api/auth/user: Session authentication found for userId: ${userId}`);
+          user = await storage.getUser(userId);
+          
+          if (user && user.isActive) {
+            console.log(`✅ /api/auth/user: Session user ${userId} authenticated successfully`);
+            const userWithDisplayName = {
+              ...user,
+              displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
+            };
+            return res.json(userWithDisplayName);
+          } else if (user && !user.isActive) {
+            console.log(`❌ /api/auth/user: Session user ${userId} is inactive`);
+            return res.json(null);
+          }
+        }
       }
+      
+      // PRIORITY 2: Check for JWT token in Authorization header (fallback for SMS auth)
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split('Bearer ')[1]?.trim();
+        if (token) {
+          console.log('📱 /api/auth/user: Found token in Authorization header, attempting JWT verification...');
+          try {
+            const jwtPayload = await jwtService.verifyAccessToken(token);
+            if (jwtPayload) {
+              console.log(`🔑 /api/auth/user: JWT token verified for userId: ${jwtPayload.userId}`);
+              user = await storage.getUser(jwtPayload.userId);
+              
+              if (user && user.isActive) {
+                console.log(`✅ /api/auth/user: JWT user ${jwtPayload.userId} authenticated successfully`);
+                const userWithDisplayName = {
+                  ...user,
+                  displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
+                };
+                return res.json(userWithDisplayName);
+              }
+            }
+          } catch (jwtError) {
+            console.log('❌ /api/auth/user: JWT token verification failed (expired/invalid):', jwtError);
+            // Continue to return null instead of error - let frontend handle redirect
+          }
+        }
+      }
+      
+      // PRIORITY 3: Check for admin JWT token in cookies (for admin users)  
+      if (req.cookies?.adminToken) {
+        console.log('🍪 /api/auth/user: Found admin token in cookie, attempting verification...');
+        try {
+          const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
+          if (jwtPayload) {
+            console.log(`🔑 /api/auth/user: Admin JWT token verified for userId: ${jwtPayload.userId}`);
+            user = await storage.getUser(jwtPayload.userId);
+            
+            if (user && user.isActive && user.role === 'admin') {
+              console.log(`✅ /api/auth/user: Admin user ${jwtPayload.userId} authenticated successfully`);
+              const userWithDisplayName = {
+                ...user,
+                displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Admin User'
+              };
+              return res.json(userWithDisplayName);
+            }
+          }
+        } catch (adminJwtError) {
+          console.log('❌ /api/auth/user: Admin JWT token expired/invalid, clearing cookie...');
+          // Clear expired admin cookie
+          res.clearCookie('adminToken', { path: '/', httpOnly: true });
+        }
+      }
+      
+      // No valid authentication found - return null (not an error)
+      console.log('ℹ️ /api/auth/user: No valid authentication found, returning null');
+      res.json(null);
+      
     } catch (error) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
+      console.error("❌ /api/auth/user: Unexpected error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user data" });
     }
   });
 
@@ -3092,10 +3163,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: conversationResult.response,
             messageType: 'ai',
             metadata: {
-              suggestedServices: conversationResult.suggestedServices || null,
-              extractedInfo: conversationResult.extractedInfo || null,
-              nextStage: conversationResult.nextStage || null,
-              quickReplies: conversationResult.quickReplies || null
+              suggestedServices: conversationResult.suggestedServices || [],
+              extractedInfo: conversationResult.extractedInfo || {},
+              nextStage: conversationResult.nextStage || '',
+              quickReplies: conversationResult.quickReplies || []
             }
           });
         } catch (dbError) {
@@ -3766,8 +3837,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         data: {
           ...service,
-          categoryName: category?.name || 'Uncategorized',
-          categoryPath: category?.categoryPath || ''
+          categoryName: category?.name || 'Uncategorized'
+          // categoryPath property doesn't exist in schema, removed
         }
       });
     } catch (error) {
@@ -4649,16 +4720,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const review = await storage.createReview({
         orderId,
         reviewerId: userId,
-        revieweeId: order.serviceProviderId || order.partsProviderId || '',
+        revieweeId: order.providerId || '',
         rating,
         comment: comment || '',
       });
       
-      // Update order with review info
-      await storage.updateOrder(orderId, { 
-        rating,
-        review: comment || ''
-      });
+      // Note: rating and review fields don't exist in order schema
+      // Review info is stored separately in reviews table
       
       res.json(review);
     } catch (error) {
@@ -5326,14 +5394,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let orders;
       if (userRole === 'service_provider') {
         // Get orders assigned to this provider
-        orders = await storage.getProviderOrders(userId, {
+        orders = await storage.getOrders({ 
+          providerId: userId,
           status: status as string,
           limit: parseInt(limit as string),
           offset: parseInt(offset as string)
         });
       } else {
         // Get orders created by this user
-        orders = await storage.getUserOrders(userId, {
+        orders = await storage.getOrders({ 
+          userId: userId,
           status: status as string,
           limit: parseInt(limit as string),
           offset: parseInt(offset as string)
@@ -8928,7 +8998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Order not found' });
       }
       
-      if (order.paymentStatus !== 'paid') {
+      if ((order.meta as any)?.paymentStatus !== 'paid') {
         return res.status(400).json({ 
           message: 'Order not paid, cannot refund',
           currentStatus: order.paymentStatus
