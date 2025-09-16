@@ -4148,6 +4148,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Service rating endpoints for filtering by ratings - must come before :serviceId route
+  app.get('/api/v1/services/:category/rating/:filter', async (req, res) => {
+    try {
+      const { category, filter } = req.params;
+      
+      let services = [];
+      
+      if (category && category !== 'all') {
+        // Check if this is a main category (level 0) or sub category (level 1)
+        const categoryInfo = await storage.getServiceCategory(category as string);
+        
+        if (categoryInfo && categoryInfo.level === 0) {
+          // For main categories, get ALL services under the category (including subcategories)
+          services = await storage.getAllServicesUnderMainCategory(category as string);
+        } else {
+          // For sub categories, get services directly from that category
+          services = await storage.getServices({
+            categoryId: category as string,
+            isActive: true
+          });
+        }
+      } else {
+        // Get all services when no category filter is applied
+        services = await storage.getServices({
+          isActive: true
+        });
+      }
+      
+      // Apply rating filtering
+      if (filter && filter !== 'all') {
+        services = services.filter(service => {
+          const rating = parseFloat(service.rating || '0');
+          switch (filter) {
+            case 'high': return rating >= 4.0;
+            case 'medium': return rating >= 3.0 && rating < 4.0;
+            case 'low': return rating >= 1.0 && rating < 3.0;
+            default: return true;
+          }
+        });
+      }
+      
+      // Sort by rating (highest first)
+      services.sort((a, b) => parseFloat(b.rating || '0') - parseFloat(a.rating || '0'));
+      
+      res.json(transformServicesForFrontend(services));
+    } catch (error) {
+      console.error('Error fetching services by rating:', error);
+      res.status(500).json({ message: 'Failed to fetch services by rating' });
+    }
+  });
+
   // Get individual service details
   app.get('/api/v1/services/:serviceId', async (req, res) => {
     try {
