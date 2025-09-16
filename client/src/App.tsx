@@ -243,23 +243,23 @@ function Router() {
       {/* Admin Routes */}
       <Route 
         path="/admin" 
-        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
+        component={() => <MinimalLayout><AdminProtectedRoute component={Admin} /></MinimalLayout>} 
       />
       <Route 
         path="/admin/dashboard" 
-        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
+        component={() => <MinimalLayout><AdminProtectedRoute component={Admin} /></MinimalLayout>} 
       />
       <Route 
         path="/admin/users" 
-        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
+        component={() => <MinimalLayout><AdminProtectedRoute component={Admin} /></MinimalLayout>} 
       />
       <Route 
         path="/admin/orders" 
-        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
+        component={() => <MinimalLayout><AdminProtectedRoute component={Admin} /></MinimalLayout>} 
       />
       <Route 
         path="/admin/verifications" 
-        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
+        component={() => <MinimalLayout><AdminProtectedRoute component={Admin} /></MinimalLayout>} 
       />
       
       {/* 404 Fallback */}

@@ -5287,6 +5287,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Helper function to initiate provider search for instant bookings
   async function initiateProviderSearch(booking: any) {
     try {
+      console.log(`🔍 Initiating provider search for booking ${booking.id}`);
+      
       // Find matching providers
       const providers = await storage.findMatchingProviders({
         serviceId: booking.serviceId,
@@ -5300,15 +5302,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxProviders: 5,
       });
 
+      console.log(`📋 Found ${providers.length} eligible providers for booking ${booking.id}`);
+
+      if (providers.length === 0) {
+        console.log(`❌ No providers found for booking ${booking.id}`);
+        await storage.updateServiceBooking(booking.id, {
+          status: 'cancelled',
+          notes: 'No providers available in your area',
+        });
+        return;
+      }
+
+      // Set up 5-minute matching expiry and candidate count
+      const matchingExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+      
+      // Update booking with matching timer and candidate count
+      await storage.updateBookingMatchingExpiry(booking.id, matchingExpiresAt, providers.length);
+      
       // Update booking status
       await storage.updateServiceBooking(booking.id, {
         status: 'provider_search',
       });
 
-      // Send job requests to providers
-      for (const provider of providers) {
+      console.log(`⏰ Set 5-minute timer and updated booking ${booking.id} status to provider_search`);
+
+      // Send job requests to providers with real-time notifications
+      const jobRequestPromises = providers.map(async (provider) => {
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes to respond
         
+        // Create job request
         await storage.createProviderJobRequest({
           bookingId: booking.id,
           providerId: provider.userId,
@@ -5317,14 +5339,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
           estimatedTravelTime: provider.estimatedTravelTime || 0,
         });
 
+        // Send real-time WebSocket notification to provider
+        if (webSocketManager) {
+          webSocketManager.sendToUser(provider.userId, {
+            type: 'job_offer_received',
+            data: {
+              bookingId: booking.id,
+              serviceId: booking.serviceId,
+              serviceLocation: booking.serviceLocation,
+              totalAmount: booking.totalAmount,
+              urgency: booking.urgency,
+              expiresAt,
+              distanceKm: provider.distanceKm,
+              estimatedTravelTime: provider.estimatedTravelTime
+            }
+          });
+        }
+
         // Send push notification to provider
         await notificationService.notifyOrderUpdate(provider.userId, booking.id, 'provider_search');
+        
+        console.log(`📲 Sent job offer to provider ${provider.userId} for booking ${booking.id}`);
+      });
+
+      await Promise.all(jobRequestPromises);
+      console.log(`✅ Sent ${providers.length} job offers for booking ${booking.id}`);
+
+      // Notify user that provider search has started
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'matching_started', 
+          data: {
+            bookingId: booking.id,
+            candidateCount: providers.length,
+            matchingExpiresAt,
+            message: `Finding ${providers.length} nearby providers...`
+          }
+        });
       }
 
       // Set up timeout to handle no provider response
       setTimeout(async () => {
         const currentBooking = await storage.getServiceBooking(booking.id);
         if (currentBooking?.status === 'provider_search') {
+          console.log(`⏰ 5-minute timeout reached for booking ${booking.id}, handling no response`);
           await handleNoProviderResponse(booking.id);
         }
       }, 5 * 60 * 1000); // 5 minutes

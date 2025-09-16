@@ -1225,10 +1225,12 @@ export const serviceBookings = pgTable("service_bookings", {
            "cancelled", "refunded"] 
   }).default("pending"),
   
-  // Provider assignment
+  // Provider assignment and matching
   assignedProviderId: varchar("assigned_provider_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   assignmentMethod: varchar("assignment_method", { enum: ["auto", "manual", "customer_choice"] }),
+  matchingExpiresAt: timestamp("matching_expires_at"), // 5-minute timer for matching
+  candidateCount: integer("candidate_count").default(0), // Number of providers notified
   
   // Pricing and payment
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -1251,6 +1253,7 @@ export const serviceBookings = pgTable("service_bookings", {
   statusIdx: index("sb_status_idx").on(table.status),
   typeIdx: index("sb_type_idx").on(table.bookingType),
   scheduledIdx: index("sb_scheduled_idx").on(table.scheduledAt),
+  matchingExpiresIdx: index("sb_matching_expires_idx").on(table.matchingExpiresAt),
 }));
 
 // Provider Job Requests - Race-to-accept system

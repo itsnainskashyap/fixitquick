@@ -28,7 +28,7 @@ class WebSocketManager {
   private connections = new Map<string, AuthenticatedWebSocket>();
   private rooms = new Map<string, Set<string>>(); // roomId -> Set of userId
   private userConnections = new Map<string, string>(); // userId -> connectionId
-  private pingInterval: NodeJS.Timeout;
+  private pingInterval!: NodeJS.Timeout;
   private rateLimitConfig = {
     maxMessagesPerMinute: 60,
     maxConnectionsPerIP: 5,
@@ -440,7 +440,7 @@ class WebSocketManager {
       if (order.userId === senderId) {
         receiverId = order.serviceProviderId || order.partsProviderId || '';
       } else {
-        receiverId = order.userId;
+        receiverId = order.userId || '';
       }
 
       // Save message to database
@@ -448,6 +448,7 @@ class WebSocketManager {
         orderId,
         senderId,
         receiverId,
+        content: message,
         message,
         messageType,
         attachments,
@@ -598,7 +599,6 @@ class WebSocketManager {
 
       const updatedOrder = await storage.updateOrder(orderId, { 
         status, 
-        updatedAt: new Date(),
         notes: notes || undefined 
       });
 
@@ -622,12 +622,14 @@ class WebSocketManager {
         this.broadcastToRoom(userRoom, updateData);
 
         // Send push notification to customer
-        await this.sendNotificationToUser(updatedOrder.userId, {
-          title: 'Order Updated',
-          body: `Your order status has been updated to ${status}`,
-          type: 'order',
-          data: { orderId, status }
-        });
+        if (updatedOrder.userId) {
+          await this.sendNotificationToUser(updatedOrder.userId, {
+            title: 'Order Updated',
+            body: `Your order status has been updated to ${status}`,
+            type: 'order',
+            data: { orderId, status }
+          });
+        }
 
         console.log(`Order ${orderId} status updated to ${status} by user ${userId}`);
       } else {
@@ -972,6 +974,182 @@ class WebSocketManager {
     }
   }
 
+  // Order Workflow Event Methods
+  public async broadcastOrderCreated(bookingId: string, userId: string, bookingData: any) {
+    // Notify user that order was created
+    await this.sendToUser(userId, {
+      type: 'order.created',
+      data: {
+        bookingId,
+        status: 'pending',
+        ...bookingData,
+        message: 'Order created successfully'
+      }
+    });
+
+    // Broadcast to order room for tracking
+    this.broadcastToRoom(`order:${bookingId}`, {
+      type: 'order.created',
+      data: {
+        bookingId,
+        userId,
+        ...bookingData
+      }
+    });
+  }
+
+  public async broadcastMatchingStarted(bookingId: string, userId: string, candidateCount: number, matchingExpiresAt: Date) {
+    // Notify user that matching has started
+    await this.sendToUser(userId, {
+      type: 'matching.started',
+      data: {
+        bookingId,
+        candidateCount,
+        matchingExpiresAt,
+        message: `Finding ${candidateCount} nearby providers...`
+      }
+    });
+
+    // Broadcast to order room
+    this.broadcastToRoom(`order:${bookingId}`, {
+      type: 'matching.started',
+      data: {
+        bookingId,
+        candidateCount,
+        matchingExpiresAt,
+        status: 'searching'
+      }
+    });
+  }
+
+  public async broadcastProviderRequested(bookingId: string, providerId: string, jobRequestData: any) {
+    // Notify provider about job request
+    await this.sendToUser(providerId, {
+      type: 'provider.requested',
+      data: {
+        bookingId,
+        jobRequestId: jobRequestData.id,
+        serviceId: jobRequestData.serviceId,
+        serviceLocation: jobRequestData.serviceLocation,
+        totalAmount: jobRequestData.totalAmount,
+        urgency: jobRequestData.urgency,
+        expiresAt: jobRequestData.expiresAt,
+        distanceKm: jobRequestData.distanceKm,
+        estimatedTravelTime: jobRequestData.estimatedTravelTime,
+        message: 'New job request received'
+      }
+    });
+
+    // Broadcast to provider room
+    this.broadcastToRoom(`provider:${providerId}`, {
+      type: 'provider.requested',
+      data: {
+        bookingId,
+        ...jobRequestData
+      }
+    });
+  }
+
+  public async broadcastProviderAccepted(bookingId: string, providerId: string, userId: string, providerDetails: any) {
+    // Notify user that provider accepted
+    await this.sendToUser(userId, {
+      type: 'provider.accepted',
+      data: {
+        bookingId,
+        providerId,
+        providerName: providerDetails.name,
+        providerPhone: providerDetails.phone,
+        providerRating: providerDetails.rating,
+        estimatedArrival: providerDetails.estimatedArrival,
+        message: `${providerDetails.name} accepted your service request`
+      }
+    });
+
+    // Notify provider about acceptance confirmation
+    await this.sendToUser(providerId, {
+      type: 'provider.accepted',
+      data: {
+        bookingId,
+        message: 'Job request accepted successfully'
+      }
+    });
+
+    // Broadcast to order room
+    this.broadcastToRoom(`order:${bookingId}`, {
+      type: 'provider.accepted',
+      data: {
+        bookingId,
+        providerId,
+        providerDetails,
+        status: 'assigned'
+      }
+    });
+  }
+
+  public async broadcastOrderAssigned(bookingId: string, userId: string, providerId: string, assignmentDetails: any) {
+    // Notify user about final assignment
+    await this.sendToUser(userId, {
+      type: 'order.assigned',
+      data: {
+        bookingId,
+        providerId,
+        providerName: assignmentDetails.providerName,
+        providerPhone: assignmentDetails.providerPhone,
+        providerRating: assignmentDetails.providerRating,
+        estimatedArrival: assignmentDetails.estimatedArrival,
+        assignedAt: new Date().toISOString(),
+        message: `Service provider ${assignmentDetails.providerName} has been assigned to your order`
+      }
+    });
+
+    // Notify provider about assignment confirmation
+    await this.sendToUser(providerId, {
+      type: 'order.assigned',
+      data: {
+        bookingId,
+        customerName: assignmentDetails.customerName,
+        serviceLocation: assignmentDetails.serviceLocation,
+        serviceDetails: assignmentDetails.serviceDetails,
+        assignedAt: new Date().toISOString(),
+        message: 'You have been assigned to this service request'
+      }
+    });
+
+    // Broadcast to order room
+    this.broadcastToRoom(`order:${bookingId}`, {
+      type: 'order.assigned',
+      data: {
+        bookingId,
+        userId,
+        providerId,
+        ...assignmentDetails,
+        status: 'assigned'
+      }
+    });
+  }
+
+  public async broadcastOrderTimeout(bookingId: string, userId: string) {
+    // Notify user about timeout
+    await this.sendToUser(userId, {
+      type: 'order.timeout',
+      data: {
+        bookingId,
+        status: 'timeout',
+        message: 'No providers responded within the time limit. Your order has been cancelled.'
+      }
+    });
+
+    // Broadcast to order room
+    this.broadcastToRoom(`order:${bookingId}`, {
+      type: 'order.timeout',
+      data: {
+        bookingId,
+        userId,
+        status: 'timeout'
+      }
+    });
+  }
+
   // Utility methods
   private generateConnectionId(): string {
     return `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -989,7 +1167,7 @@ class WebSocketManager {
 
       // Get user details for role validation
       const user = await storage.getUser(userId);
-      if (!user || !user.isActive) {
+      if (!user || user.isActive !== true) {
         console.warn(`Invalid or inactive user for order access: ${userId}`);
         return false;
       }
@@ -1017,8 +1195,13 @@ class WebSocketManager {
       // Operation-specific checks
       if (operation === 'update') {
         // Only providers and admins can update order status
-        return ['service_provider', 'parts_provider', 'admin'].includes(user.role) &&
-               (order.serviceProviderId === userId || order.partsProviderId === userId || user.role === 'admin');
+        if (user.role != null && (['service_provider', 'parts_provider', 'admin'] as const).includes(user.role as any)) {
+          // Admin has full access
+          if (user.role === 'admin') return true;
+          // Providers can only update their assigned orders
+          return order.serviceProviderId === userId || order.partsProviderId === userId;
+        }
+        return false;
       }
 
       console.warn(`Access denied: User ${userId} (${user.role}) attempting ${operation} on order ${orderId}`);
@@ -1041,7 +1224,30 @@ class WebSocketManager {
         }
         // Additional check: verify user exists and has provider role in database
         const user = await storage.getUser(userId);
-        return user && user.isActive && ['service_provider', 'parts_provider'].includes(user.role);
+        return user != null && user.isActive === true && user.role != null && ['service_provider', 'parts_provider'].includes(user.role);
+      }
+
+      // Provider-specific rooms: provider:{providerId} - allows providers to have their own rooms
+      if (roomId.startsWith('provider:')) {
+        const roomProviderId = roomId.split(':')[1];
+        if (!roomProviderId || roomProviderId.length < 8) {
+          console.warn(`Invalid provider ID in room: ${roomId}`);
+          return false;
+        }
+        
+        // Only the provider themselves or admins can access provider-specific rooms
+        if (roomProviderId === userId && ['service_provider', 'parts_provider'].includes(userRole)) {
+          const user = await storage.getUser(userId);
+          return user != null && user.isActive === true && user.role != null && ['service_provider', 'parts_provider'].includes(user.role);
+        }
+        
+        // Admin can access any provider room for monitoring
+        if (userRole === 'admin') {
+          const user = await storage.getUser(userId);
+          return user != null && user.isActive === true && user.role === 'admin';
+        }
+        
+        return false;
       }
       
       // Admin rooms - verify admin role
@@ -1051,7 +1257,7 @@ class WebSocketManager {
         }
         // Additional check: verify admin role in database
         const user = await storage.getUser(userId);
-        return user && user.isActive && user.role === 'admin';
+        return user != null && user.isActive === true && user.role === 'admin';
       }
       
       // Order rooms - use comprehensive order access validation

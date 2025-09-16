@@ -907,6 +907,10 @@ export interface IStorage {
   }): Promise<ServiceBooking[]>;
   validateBookingStatusUpdate(bookingId: string, newStatus: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
   canCancelServiceBooking(bookingId: string, userId: string, userRole: string): Promise<{ allowed: boolean; reason?: string }>;
+  
+  // Background matching methods
+  listOrdersNeedingMatching(limit?: number): Promise<ServiceBooking[]>;
+  updateBookingMatchingExpiry(bookingId: string, expiresAt: Date, candidateCount: number): Promise<ServiceBooking | undefined>;
 
   // Provider Job Request methods
   createProviderJobRequest(request: InsertProviderJobRequest): Promise<ProviderJobRequest>;
@@ -5414,6 +5418,37 @@ export class PostgresStorage implements IStorage {
     const result = await db.update(serviceBookings)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(serviceBookings.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // Background matching methods
+  async listOrdersNeedingMatching(limit: number = 50): Promise<ServiceBooking[]> {
+    const now = new Date();
+    const result = await db.select()
+      .from(serviceBookings)
+      .where(or(
+        // Orders currently in provider_search status
+        eq(serviceBookings.status, 'provider_search'),
+        // Orders with expired matchingExpiresAt that need re-matching
+        and(
+          eq(serviceBookings.status, 'pending'),
+          lte(serviceBookings.matchingExpiresAt, now)
+        )
+      ))
+      .orderBy(asc(serviceBookings.requestedAt))
+      .limit(limit);
+    return result;
+  }
+
+  async updateBookingMatchingExpiry(bookingId: string, expiresAt: Date, candidateCount: number): Promise<ServiceBooking | undefined> {
+    const result = await db.update(serviceBookings)
+      .set({ 
+        matchingExpiresAt: expiresAt,
+        candidateCount,
+        updatedAt: new Date()
+      })
+      .where(eq(serviceBookings.id, bookingId))
       .returning();
     return result[0];
   }
