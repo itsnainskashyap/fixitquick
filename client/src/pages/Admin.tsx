@@ -339,8 +339,8 @@ const PromotionalMediaManagementSystem = () => {
     }
   };
 
-  const media = mediaData?.media || [];
-  const stats = statsData?.statistics || {};
+  const media = (mediaData as any)?.media || [];
+  const stats = (statsData as any)?.statistics || {};
 
   const filteredMedia = media.filter((item: any) => {
     const matchesSearch = !searchTerm || 
@@ -925,10 +925,10 @@ const TaxManagementSystem = () => {
     locationBased: false,
     compoundable: false,
     priority: 1,
-    rate: 0,
-    minOrderValue: 0,
+    rate: '0',
+    minOrderValue: '0',
     roundingRule: 'round',
-    gstType: 'none',
+    gstType: null,
     taxableBaseIncludes: {
       serviceAmount: true,
       shippingAmount: false,
@@ -943,7 +943,7 @@ const TaxManagementSystem = () => {
     isActive: true,
     priority: 1,
     displayOrder: 0,
-    defaultRate: 0
+    defaultRate: '0'
   });
 
   const { toast } = useToast();
@@ -998,10 +998,7 @@ const TaxManagementSystem = () => {
 
   // Create tax mutation
   const createTaxMutation = useMutation({
-    mutationFn: async (taxData: InsertTax) => await apiRequest('/api/v1/admin/taxes', {
-      method: 'POST',
-      body: JSON.stringify(taxData)
-    }),
+    mutationFn: async (taxData: InsertTax) => await apiRequest('POST', '/api/v1/admin/taxes', taxData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
@@ -1021,10 +1018,7 @@ const TaxManagementSystem = () => {
   // Update tax mutation
   const updateTaxMutation = useMutation({
     mutationFn: async ({ id, taxData }: { id: string; taxData: Partial<InsertTax> }) => 
-      await apiRequest(`/api/v1/admin/taxes/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(taxData)
-      }),
+      await apiRequest('PUT', `/api/v1/admin/taxes/${id}`, taxData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
@@ -1044,9 +1038,7 @@ const TaxManagementSystem = () => {
 
   // Delete tax mutation
   const deleteTaxMutation = useMutation({
-    mutationFn: async (id: string) => await apiRequest(`/api/v1/admin/taxes/${id}`, {
-      method: 'DELETE'
-    }),
+    mutationFn: async (id: string) => await apiRequest('DELETE', `/api/v1/admin/taxes/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
@@ -1063,10 +1055,7 @@ const TaxManagementSystem = () => {
 
   // Create tax category mutation
   const createCategoryMutation = useMutation({
-    mutationFn: async (categoryData: InsertTaxCategory) => await apiRequest('/api/v1/admin/tax-categories', {
-      method: 'POST',
-      body: JSON.stringify(categoryData)
-    }),
+    mutationFn: async (categoryData: InsertTaxCategory) => await apiRequest('POST', '/api/v1/admin/tax-categories', categoryData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-tax-categories'] });
       queryClient.invalidateQueries({ queryKey: ['admin-tax-category-statistics'] });
@@ -1086,10 +1075,7 @@ const TaxManagementSystem = () => {
   // Bulk operations mutation
   const bulkOperationMutation = useMutation({
     mutationFn: async ({ operation, taxIds }: { operation: string; taxIds: string[] }) => 
-      await apiRequest(`/api/v1/admin/taxes/bulk-${operation}`, {
-        method: 'POST',
-        body: JSON.stringify({ taxIds })
-      }),
+      await apiRequest('POST', `/api/v1/admin/taxes/bulk-${operation}`, { taxIds }),
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
@@ -1118,10 +1104,10 @@ const TaxManagementSystem = () => {
       locationBased: false,
       compoundable: false,
       priority: 1,
-      rate: 0,
-      minOrderValue: 0,
+      rate: '0',
+      minOrderValue: '0',
       roundingRule: 'round',
-      gstType: 'none',
+      gstType: null,
       taxableBaseIncludes: {
         serviceAmount: true,
         shippingAmount: false,
@@ -1139,7 +1125,7 @@ const TaxManagementSystem = () => {
       isActive: true,
       priority: 1,
       displayOrder: 0,
-      defaultRate: 0
+      defaultRate: '0'
     });
   };
 
@@ -1167,10 +1153,10 @@ const TaxManagementSystem = () => {
     }
   };
 
-  const taxes = taxesData?.taxes || [];
-  const categories = categoriesData?.categories || [];
-  const stats = statsData?.statistics || {};
-  const categoryStats = categoryStatsData?.statistics || {};
+  const taxes = (taxesData as any)?.taxes || [];
+  const categories = (categoriesData as any)?.categories || [];
+  const stats = (statsData as any)?.statistics || {};
+  const categoryStats = (categoryStatsData as any)?.statistics || {};
 
   const filteredTaxes = taxes.filter((tax: Tax) => {
     const matchesSearch = !searchTerm || 
@@ -1769,7 +1755,7 @@ const TaxManagementSystem = () => {
                   id="tax-rate"
                   type="number"
                   value={taxForm.rate || 0}
-                  onChange={(e) => setTaxForm({ ...taxForm, rate: Number(e.target.value) })}
+                  onChange={(e) => setTaxForm({ ...taxForm, rate: e.target.value })}
                   min="0"
                   step={taxForm.type === 'percentage' ? '0.01' : '1'}
                   data-testid="tax-rate-input"
@@ -1803,7 +1789,7 @@ const TaxManagementSystem = () => {
                   id="min-order-value"
                   type="number"
                   value={taxForm.minOrderValue || 0}
-                  onChange={(e) => setTaxForm({ ...taxForm, minOrderValue: Number(e.target.value) })}
+                  onChange={(e) => setTaxForm({ ...taxForm, minOrderValue: e.target.value })}
                   min="0"
                   data-testid="min-order-value-input"
                 />
@@ -1826,7 +1812,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="is-active"
-                  checked={taxForm.isActive}
+                  checked={!!taxForm.isActive}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, isActive: checked })}
                   data-testid="is-active-switch"
                 />
@@ -1836,7 +1822,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="is-primary"
-                  checked={taxForm.isPrimary}
+                  checked={!!taxForm.isPrimary}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, isPrimary: checked })}
                   data-testid="is-primary-switch"
                 />
@@ -1848,7 +1834,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="combinable"
-                  checked={taxForm.combinable}
+                  checked={!!taxForm.combinable}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, combinable: checked })}
                   data-testid="combinable-switch"
                 />
@@ -1858,7 +1844,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="location-based"
-                  checked={taxForm.locationBased}
+                  checked={!!taxForm.locationBased}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, locationBased: checked })}
                   data-testid="location-based-switch"
                 />
@@ -1958,7 +1944,7 @@ const TaxManagementSystem = () => {
                   id="edit-tax-rate"
                   type="number"
                   value={taxForm.rate || 0}
-                  onChange={(e) => setTaxForm({ ...taxForm, rate: Number(e.target.value) })}
+                  onChange={(e) => setTaxForm({ ...taxForm, rate: e.target.value })}
                   min="0"
                   step={taxForm.type === 'percentage' ? '0.01' : '1'}
                   data-testid="edit-tax-rate-input"
@@ -1970,7 +1956,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="edit-is-active"
-                  checked={taxForm.isActive}
+                  checked={!!taxForm.isActive}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, isActive: checked })}
                   data-testid="edit-is-active-switch"
                 />
@@ -1980,7 +1966,7 @@ const TaxManagementSystem = () => {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="edit-is-primary"
-                  checked={taxForm.isPrimary}
+                  checked={!!taxForm.isPrimary}
                   onCheckedChange={(checked) => setTaxForm({ ...taxForm, isPrimary: checked })}
                   data-testid="edit-is-primary-switch"
                 />
@@ -2063,8 +2049,8 @@ const TaxManagementSystem = () => {
                 <Input
                   id="default-rate"
                   type="number"
-                  value={categoryForm.defaultRate || 0}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: Number(e.target.value) })}
+                  value={categoryForm.defaultRate || '0'}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: e.target.value })}
                   min="0"
                   max="100"
                   step="0.01"
@@ -2088,7 +2074,7 @@ const TaxManagementSystem = () => {
             <div className="flex items-center space-x-2">
               <Switch
                 id="category-active"
-                checked={categoryForm.isActive}
+                checked={!!categoryForm.isActive}
                 onCheckedChange={(checked) => setCategoryForm({ ...categoryForm, isActive: checked })}
                 data-testid="category-active-switch"
               />
@@ -2154,8 +2140,8 @@ const TaxManagementSystem = () => {
                 <Input
                   id="edit-default-rate"
                   type="number"
-                  value={categoryForm.defaultRate || 0}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: Number(e.target.value) })}
+                  value={categoryForm.defaultRate || '0'}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: e.target.value })}
                   min="0"
                   max="100"
                   step="0.01"
@@ -2179,7 +2165,7 @@ const TaxManagementSystem = () => {
             <div className="flex items-center space-x-2">
               <Switch
                 id="edit-category-active"
-                checked={categoryForm.isActive}
+                checked={!!categoryForm.isActive}
                 onCheckedChange={(checked) => setCategoryForm({ ...categoryForm, isActive: checked })}
                 data-testid="edit-category-active-switch"
               />
@@ -2260,23 +2246,20 @@ const CouponManagementSystem = () => {
       params.append('limit', '20');
       params.append('offset', ((currentPage - 1) * 20).toString());
       
-      return apiRequest(`/api/v1/admin/coupons?${params.toString()}`);
+      return apiRequest('GET', `/api/v1/admin/coupons?${params.toString()}`);
     }
   });
   
   // Fetch coupon statistics
   const { data: statisticsData } = useQuery({
     queryKey: ['admin-coupon-statistics'],
-    queryFn: () => apiRequest('/api/v1/admin/coupons/statistics')
+    queryFn: () => apiRequest('GET', '/api/v1/admin/coupons/statistics')
   });
   
   // Create coupon mutation
   const createCouponMutation = useMutation({
     mutationFn: (couponData: InsertCoupon) => 
-      apiRequest('/api/v1/admin/coupons', {
-        method: 'POST',
-        body: couponData
-      }),
+      apiRequest('POST', '/api/v1/admin/coupons', couponData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
@@ -2299,10 +2282,7 @@ const CouponManagementSystem = () => {
   // Update coupon mutation
   const updateCouponMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<InsertCoupon> }) =>
-      apiRequest(`/api/v1/admin/coupons/${id}`, {
-        method: 'PUT',
-        body: data
-      }),
+      apiRequest('PUT', `/api/v1/admin/coupons/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
@@ -2326,9 +2306,7 @@ const CouponManagementSystem = () => {
   // Delete coupon mutation
   const deleteCouponMutation = useMutation({
     mutationFn: (couponId: string) =>
-      apiRequest(`/api/v1/admin/coupons/${couponId}`, {
-        method: 'DELETE'
-      }),
+      apiRequest('DELETE', `/api/v1/admin/coupons/${couponId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
@@ -2349,10 +2327,7 @@ const CouponManagementSystem = () => {
   // Bulk update mutation
   const bulkUpdateMutation = useMutation({
     mutationFn: (data: { couponIds: string[]; updates: { isActive?: boolean } }) =>
-      apiRequest('/api/v1/admin/coupons/bulk-update', {
-        method: 'POST',
-        body: data
-      }),
+      apiRequest('POST', '/api/v1/admin/coupons/bulk-update', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
@@ -2374,11 +2349,8 @@ const CouponManagementSystem = () => {
   // Generate coupon code
   const generateCodeMutation = useMutation({
     mutationFn: (pattern?: string) =>
-      apiRequest('/api/v1/admin/coupons/generate-code', {
-        method: 'POST',
-        body: { pattern }
-      }),
-    onSuccess: (data) => {
+      apiRequest('POST', '/api/v1/admin/coupons/generate-code', { pattern }),
+    onSuccess: (data: any) => {
       setCouponForm(prev => ({ ...prev, code: data.code }));
     }
   });
@@ -2430,11 +2402,11 @@ const CouponManagementSystem = () => {
       title: coupon.title,
       description: coupon.description || '',
       type: coupon.type as 'percentage' | 'fixed_amount',
-      value: parseFloat(coupon.value.toString()),
-      maxDiscountAmount: coupon.maxDiscountAmount ? parseFloat(coupon.maxDiscountAmount.toString()) : null,
-      minOrderAmount: coupon.minOrderAmount ? parseFloat(coupon.minOrderAmount.toString()) : null,
-      validFrom: coupon.validFrom.toString().split('T')[0],
-      validUntil: coupon.validUntil.toString().split('T')[0],
+      value: coupon.value.toString(),
+      maxDiscountAmount: coupon.maxDiscountAmount ? coupon.maxDiscountAmount.toString() : null,
+      minOrderAmount: coupon.minOrderAmount ? coupon.minOrderAmount.toString() : null,
+      validFrom: new Date(coupon.validFrom).toISOString().split('T')[0],
+      validUntil: new Date(coupon.validUntil).toISOString().split('T')[0],
       usageLimit: coupon.usageLimit,
       maxUsagePerUser: coupon.maxUsagePerUser,
       isActive: coupon.isActive,
@@ -2454,9 +2426,9 @@ const CouponManagementSystem = () => {
     setSelectedCoupon(null);
   };
   
-  const statistics = statisticsData?.statistics;
-  const coupons = couponsData?.coupons || [];
-  const totalCoupons = couponsData?.total || 0;
+  const statistics = (statisticsData as any)?.statistics;
+  const coupons = (couponsData as any)?.coupons || [];
+  const totalCoupons = (couponsData as any)?.total || 0;
   
   return (
     <div className="space-y-6">
@@ -2623,7 +2595,7 @@ const CouponManagementSystem = () => {
                         checked={selectedCoupons.length === coupons.length}
                         onCheckedChange={(checked) => {
                           if (checked) {
-                            setSelectedCoupons(coupons.map(c => c.id));
+                            setSelectedCoupons(coupons.map((c: any) => c.id));
                           } else {
                             setSelectedCoupons([]);
                           }
@@ -2642,7 +2614,7 @@ const CouponManagementSystem = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {coupons.map((coupon) => {
+                  {coupons.map((coupon: any) => {
                     const isExpired = new Date(coupon.validUntil) < new Date();
                     const usagePercentage = coupon.usageLimit ? 
                       (coupon.usageCount / coupon.usageLimit) * 100 : 0;
@@ -2880,7 +2852,7 @@ const CouponManagementSystem = () => {
                   id="coupon-value"
                   type="number"
                   value={couponForm.value || ''}
-                  onChange={(e) => setCouponForm(prev => ({ ...prev, value: parseFloat(e.target.value) || 0 }))}
+                  onChange={(e) => setCouponForm(prev => ({ ...prev, value: e.target.value || '0' }))}
                   placeholder="0"
                   min="0"
                   max={couponForm.type === 'percentage' ? '100' : undefined}
@@ -2897,7 +2869,7 @@ const CouponManagementSystem = () => {
                     value={couponForm.maxDiscountAmount || ''}
                     onChange={(e) => setCouponForm(prev => ({ 
                       ...prev, 
-                      maxDiscountAmount: parseFloat(e.target.value) || null 
+                      maxDiscountAmount: e.target.value || null 
                     }))}
                     placeholder="No limit"
                     min="0"
@@ -2972,7 +2944,7 @@ const CouponManagementSystem = () => {
                   value={couponForm.minOrderAmount || ''}
                   onChange={(e) => setCouponForm(prev => ({ 
                     ...prev, 
-                    minOrderAmount: parseFloat(e.target.value) || null 
+                    minOrderAmount: e.target.value || null 
                   }))}
                   placeholder="No minimum"
                   min="0"
@@ -2984,7 +2956,7 @@ const CouponManagementSystem = () => {
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="is-active"
-                checked={couponForm.isActive}
+                checked={!!couponForm.isActive}
                 onCheckedChange={(checked) => setCouponForm(prev => ({ ...prev, isActive: !!checked }))}
                 data-testid="create-coupon-active-checkbox"
               />
@@ -3091,7 +3063,7 @@ const CouponManagementSystem = () => {
                   id="edit-coupon-value"
                   type="number"
                   value={couponForm.value || ''}
-                  onChange={(e) => setCouponForm(prev => ({ ...prev, value: parseFloat(e.target.value) || 0 }))}
+                  onChange={(e) => setCouponForm(prev => ({ ...prev, value: e.target.value || '0' }))}
                   placeholder="0"
                   min="0"
                   max={couponForm.type === 'percentage' ? '100' : undefined}
@@ -3108,7 +3080,7 @@ const CouponManagementSystem = () => {
                     value={couponForm.maxDiscountAmount || ''}
                     onChange={(e) => setCouponForm(prev => ({ 
                       ...prev, 
-                      maxDiscountAmount: parseFloat(e.target.value) || null 
+                      maxDiscountAmount: e.target.value || null 
                     }))}
                     placeholder="No limit"
                     min="0"
@@ -3183,7 +3155,7 @@ const CouponManagementSystem = () => {
                   value={couponForm.minOrderAmount || ''}
                   onChange={(e) => setCouponForm(prev => ({ 
                     ...prev, 
-                    minOrderAmount: parseFloat(e.target.value) || null 
+                    minOrderAmount: e.target.value || null 
                   }))}
                   placeholder="No minimum"
                   min="0"
@@ -3195,7 +3167,7 @@ const CouponManagementSystem = () => {
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="edit-is-active"
-                checked={couponForm.isActive}
+                checked={!!couponForm.isActive}
                 onCheckedChange={(checked) => setCouponForm(prev => ({ ...prev, isActive: !!checked }))}
                 data-testid="edit-coupon-active-checkbox"
               />
