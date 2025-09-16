@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, Reorder } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
@@ -180,7 +180,8 @@ import {
   Calculator,
   CheckSquare,
   Square,
-  MoreHorizontal
+  MoreHorizontal,
+  GripVertical
 } from 'lucide-react';
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
@@ -4376,13 +4377,26 @@ export default function Admin() {
   });
 
   // Fetch main categories
-  const { data: mainCategories } = useQuery<Category[]>({
+  const { data: mainCategories, isLoading: mainCategoriesLoading } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/main'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/categories/main');
     },
     enabled: !!user,
   });
+
+  // Local state for drag-drop reordering (critical fix for production)
+  const [localCategories, setLocalCategories] = useState<Category[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragEndTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastOrderRef = useRef<string[]>([]);
+
+  // Sync local categories with React Query data
+  useEffect(() => {
+    if (mainCategories && !isDragging) {
+      setLocalCategories(mainCategories);
+    }
+  }, [mainCategories, isDragging]);
 
   // Fetch services
   const { data: services } = useQuery<Service[]>({
@@ -4674,6 +4688,51 @@ export default function Admin() {
     },
   });
 
+  const reorderCategoriesMutation = useMutation({
+    mutationFn: async ({ categoryIds, startSortOrder = 0 }: { categoryIds: string[]; startSortOrder?: number }) => {
+      return await apiRequest('POST', '/api/v1/admin/categories/reorder', { categoryIds, startSortOrder });
+    },
+    onMutate: async ({ categoryIds }) => {
+      // Cancel any outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['/api/v1/admin/categories/main'] });
+      
+      // Snapshot previous value for rollback
+      const previousCategories = queryClient.getQueryData(['/api/v1/admin/categories/main']);
+      
+      // Optimistically update categories in React Query cache
+      queryClient.setQueryData(['/api/v1/admin/categories/main'], (old: Category[] = []) => {
+        const reorderedCategories = categoryIds.map(id => old.find(cat => cat.id === id)).filter(Boolean) as Category[];
+        return reorderedCategories;
+      });
+      
+      return { previousCategories };
+    },
+    onSuccess: () => {
+      // Re-fetch to ensure server state is accurate
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      toast({
+        title: "Categories reordered",
+        description: "Category order has been updated successfully.",
+      });
+    },
+    onError: (error: any, variables, context) => {
+      // Rollback to previous state on error
+      if (context?.previousCategories) {
+        queryClient.setQueryData(['/api/v1/admin/categories/main'], context.previousCategories);
+        setLocalCategories(context.previousCategories as Category[]);
+      }
+      toast({
+        title: "Reorder failed",
+        description: error.message || "Failed to reorder categories",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setIsDragging(false);
+    },
+  });
+
   const handleUpdateUser = (userId: string, updates: any) => {
     updateUserMutation.mutate({ userId, updates });
   };
@@ -4947,6 +5006,46 @@ export default function Admin() {
     setCategoryFormData({ name: '', description: '', icon: '', parentId: '', isActive: true });
     setSelectedCategory(null);
   };
+
+  // New drag-drop implementation with drag-end detection (PRODUCTION FIX)
+  const handleCategoryReorder = useCallback((newOrder: Category[]) => {
+    // Update local state immediately for smooth UX (no API calls during drag)
+    setLocalCategories(newOrder);
+    setIsDragging(true);
+    
+    // Clear any existing timeout
+    if (dragEndTimeoutRef.current) {
+      clearTimeout(dragEndTimeoutRef.current);
+    }
+    
+    // Set up drag-end detection with debounce
+    dragEndTimeoutRef.current = setTimeout(() => {
+      const categoryIds = newOrder.map(category => category.id);
+      const previousOrder = lastOrderRef.current;
+      
+      // Only trigger mutation if order actually changed
+      if (JSON.stringify(categoryIds) !== JSON.stringify(previousOrder)) {
+        lastOrderRef.current = categoryIds;
+        
+        // Trigger mutation only once when dragging stops
+        reorderCategoriesMutation.mutate({ 
+          categoryIds, 
+          startSortOrder: 0 
+        });
+      } else {
+        setIsDragging(false);
+      }
+    }, 300); // 300ms debounce for drag-end detection
+  }, [reorderCategoriesMutation]);
+  
+  // Cleanup timeout on component unmount
+  useEffect(() => {
+    return () => {
+      if (dragEndTimeoutRef.current) {
+        clearTimeout(dragEndTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Service handler functions
   const handleCreateService = () => {
@@ -6438,11 +6537,26 @@ export default function Admin() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {mainCategories && mainCategories.length > 0 ? (
-                    <div className="space-y-3">
-                      {mainCategories.map((category) => (
-                        <div key={category.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  {/* Production Fix: Use local state instead of React Query data */}
+                  {localCategories && localCategories.length > 0 ? (
+                    <div className={`transition-opacity duration-200 ${isDragging ? 'opacity-75' : 'opacity-100'}`}>
+                      <Reorder.Group 
+                        axis="y" 
+                        values={localCategories} 
+                        onReorder={handleCategoryReorder}
+                        className="space-y-3"
+                      >
+                        {localCategories.map((category) => (
+                        <Reorder.Item 
+                          key={category.id} 
+                          value={category}
+                          className="flex items-center justify-between p-3 border rounded-lg bg-background cursor-move hover:shadow-md transition-shadow"
+                          data-testid={`category-item-${category.id}`}
+                        >
                           <div className="flex items-center space-x-3">
+                            <div className="cursor-grab active:cursor-grabbing">
+                              <GripVertical className="w-4 h-4 text-muted-foreground" />
+                            </div>
                             {category.icon && <span className="text-xl">{category.icon}</span>}
                             <div>
                               <div className="font-medium">{category.name}</div>
@@ -6466,6 +6580,34 @@ export default function Admin() {
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
+                          </div>
+                        </Reorder.Item>
+                        ))}
+                      </Reorder.Group>
+                      {/* Visual feedback during reorder operations */}
+                      {reorderCategoriesMutation.isPending && (
+                        <div className="flex items-center justify-center p-2 mt-2 text-sm text-muted-foreground">
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Saving order...
+                        </div>
+                      )}
+                    </div>
+                  ) : mainCategoriesLoading ? (
+                    <div className="space-y-3">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <Skeleton className="h-4 w-4" />
+                            <Skeleton className="h-6 w-6 rounded" />
+                            <div>
+                              <Skeleton className="h-4 w-32 mb-1" />
+                              <Skeleton className="h-3 w-24" />
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Skeleton className="h-5 w-12" />
+                            <Skeleton className="h-5 w-16" />
+                            <Skeleton className="h-8 w-8" />
                           </div>
                         </div>
                       ))}
