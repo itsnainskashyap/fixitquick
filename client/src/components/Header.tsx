@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AISearchBar } from './AISearchBar';
 import { NotificationCenter } from './NotificationCenter';
+import PromotionalMediaCarousel from './PromotionalMediaCarousel';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { RegionSelector } from './RegionSelector';
@@ -303,6 +304,64 @@ export function Header({
               </motion.div>
             </div>
           </div>
+
+          {/* User Greeting and Promotional Media Section */}
+          {isAuthenticated && user && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.5 }}
+              className="mb-4"
+            >
+              {/* User Greeting */}
+              <div className="mb-3">
+                <motion.div
+                  className="flex items-center space-x-2"
+                  whileHover={{ scale: 1.01 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                >
+                  <span className="text-lg font-semibold text-foreground">
+                    Hello, {user.firstName || 'User'}! 👋
+                  </span>
+                  {user.role && user.role !== 'user' && (
+                    <Badge variant="secondary" className="text-xs">
+                      {user.role === 'service_provider' ? 'Provider' :
+                       user.role === 'parts_provider' ? 'Parts Provider' :
+                       user.role === 'admin' ? 'Admin' : user.role}
+                    </Badge>
+                  )}
+                </motion.div>
+              </div>
+
+              {/* Promotional Media Carousel */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.5, duration: 0.5 }}
+                className="promotional-media-section"
+              >
+                <PromotionalMediaCarousel
+                  placement="header"
+                  userId={user.id}
+                  className="w-full h-48 md:h-56 rounded-xl shadow-lg border border-border/50"
+                  showNavigation={true}
+                  showIndicators={true}
+                  autoAdvance={true}
+                  autoAdvanceDelay={6000}
+                  maxItems={5}
+                  onMediaClick={(media) => {
+                    console.log('Promotional media clicked:', media.title);
+                    // Media click is already tracked in the component
+                  }}
+                  onMediaView={(mediaId) => {
+                    console.log('Promotional media viewed:', mediaId);
+                    // Media view is already tracked in the component
+                  }}
+                  data-testid="header-promotional-media"
+                />
+              </motion.div>
+            </motion.div>
+          )}
 
           {/* Enhanced AI Search Bar with integrated chat functionality */}
           <AISearchBar 

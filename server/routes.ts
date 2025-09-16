@@ -51,7 +51,12 @@ import {
   insertTaxCategorySchema,
   insertTaxSchema,
   taxes,
-  taxCategories
+  taxCategories,
+  // Promotional media schemas
+  insertPromotionalMediaSchema,
+  insertPromotionalMediaAnalyticsSchema,
+  promotionalMedia,
+  promotionalMediaAnalytics
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -12031,6 +12036,706 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: false,
         message: 'Failed to fetch taxes by location',
         error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // PROMOTIONAL MEDIA ENDPOINTS
+  // ============================
+
+  // Rate limiters for promotional media endpoints
+  const promotionalMediaLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // 100 requests per 15 minutes
+    message: 'Too many promotional media requests. Please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const analyticsTrackingLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 1000, // 1000 tracking requests per minute for high-volume analytics
+    message: 'Too many analytics tracking requests. Please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // ============================
+  // ADMIN PROMOTIONAL MEDIA ENDPOINTS
+  // ============================
+
+  // GET /api/v1/admin/promotional-media - List all media with filters and pagination
+  app.get('/api/v1/admin/promotional-media', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        isActive,
+        placement,
+        mediaType,
+        status,
+        moderationStatus,
+        campaignId,
+        search,
+        dateFrom,
+        dateTo,
+        limit = '20',
+        offset = '0',
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+
+      const filters: any = {};
+      
+      if (isActive !== undefined) filters.isActive = isActive === 'true';
+      if (placement) filters.placement = placement as string;
+      if (mediaType) filters.mediaType = mediaType as string;
+      if (status) filters.status = status as string;
+      if (moderationStatus) filters.moderationStatus = moderationStatus as string;
+      if (campaignId) filters.campaignId = campaignId as string;
+      if (search) filters.search = search as string;
+      if (dateFrom) filters.dateFrom = dateFrom as string;
+      if (dateTo) filters.dateTo = dateTo as string;
+      
+      filters.limit = parseInt(limit as string);
+      filters.offset = parseInt(offset as string);
+      filters.sortBy = sortBy as string;
+      filters.sortOrder = sortOrder as string;
+
+      const result = await storage.getPromotionalMedia(filters);
+
+      res.json({
+        success: true,
+        media: result.media,
+        total: result.total,
+        currentPage: Math.floor(filters.offset / filters.limit) + 1,
+        totalPages: Math.ceil(result.total / filters.limit),
+        hasMore: (filters.offset + filters.limit) < result.total
+      });
+    } catch (error) {
+      console.error('Error fetching promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/promotional-media/upload - Upload media files to object storage
+  const promotionalMediaUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 50 * 1024 * 1024, // 50MB max for videos
+      files: 1
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedMimeTypes = [
+        'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
+        'video/mp4', 'video/webm', 'video/quicktime'
+      ];
+      
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Invalid file type. Only images (JPG, PNG, WebP) and videos (MP4, WebM, MOV) are allowed.'));
+      }
+    }
+  });
+
+  app.post('/api/v1/admin/promotional-media/upload', 
+    adminSessionMiddleware, 
+    promotionalMediaLimiter,
+    promotionalMediaUpload.single('file'),
+    validateUpload,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({
+            success: false,
+            message: 'No file uploaded',
+            error: 'NO_FILE'
+          });
+        }
+
+        const { mediaType, generateThumbnail } = req.body;
+        const file = req.file;
+        const isVideo = file.mimetype.startsWith('video/');
+        const isImage = file.mimetype.startsWith('image/');
+
+        // Validate file size based on type
+        const maxSize = isImage ? 5 * 1024 * 1024 : 50 * 1024 * 1024; // 5MB for images, 50MB for videos
+        if (file.size > maxSize) {
+          return res.status(400).json({
+            success: false,
+            message: `File size exceeds ${isImage ? '5MB' : '50MB'} limit`,
+            error: 'FILE_TOO_LARGE'
+          });
+        }
+
+        // Generate unique filename
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(2, 15);
+        const extension = file.originalname.split('.').pop();
+        const filename = `promotional-media-${timestamp}-${randomId}.${extension}`;
+
+        // Upload to object storage
+        const uploadResult = await objectStorageService.uploadFile({
+          file: file.buffer,
+          filename,
+          mimeType: file.mimetype,
+          size: file.size,
+          directory: 'public/promotional-media'
+        });
+
+        let thumbnailUrl = '';
+
+        // Generate thumbnail for videos
+        if (isVideo && generateThumbnail === 'true') {
+          try {
+            const thumbnailFilename = `thumb-${timestamp}-${randomId}.jpg`;
+            const thumbnailResult = await objectStorageService.generateVideoThumbnail({
+              videoUrl: uploadResult.url,
+              filename: thumbnailFilename,
+              directory: 'public/promotional-media/thumbnails',
+              timestamp: 1.0 // Capture frame at 1 second
+            });
+            thumbnailUrl = thumbnailResult.url;
+          } catch (thumbError) {
+            console.warn('Failed to generate video thumbnail:', thumbError);
+            // Continue without thumbnail - not critical
+          }
+        }
+
+        // For images, use the main URL as thumbnail
+        if (isImage) {
+          thumbnailUrl = uploadResult.url;
+        }
+
+        res.status(200).json({
+          success: true,
+          message: 'File uploaded successfully',
+          mediaUrl: uploadResult.url,
+          thumbnailUrl,
+          filename,
+          originalName: file.originalname,
+          size: file.size,
+          mimeType: file.mimetype,
+          mediaType: isVideo ? 'video' : 'image'
+        });
+
+      } catch (error) {
+        console.error('Error uploading promotional media file:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to upload file',
+          error: 'UPLOAD_ERROR'
+        });
+      }
+    }
+  );
+
+  // POST /api/v1/admin/promotional-media - Create new promotional media record
+  app.post('/api/v1/admin/promotional-media', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const validatedData = insertPromotionalMediaSchema.parse({
+        ...req.body,
+        createdBy: req.user!.id,
+        lastModifiedBy: req.user!.id
+      });
+
+      const media = await storage.createPromotionalMedia({
+        ...validatedData,
+        createdBy: req.user!.id
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Promotional media created successfully',
+        media
+      });
+    } catch (error) {
+      console.error('Error creating promotional media:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid media data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/promotional-media/:id - Get specific media details
+  app.get('/api/v1/admin/promotional-media/:id', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const media = await storage.getPromotionalMediaItem(id);
+      if (!media) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promotional media not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        media
+      });
+    } catch (error) {
+      console.error('Error fetching promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/promotional-media/:id - Update promotional media
+  app.put('/api/v1/admin/promotional-media/:id', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      // Check if media exists
+      const existingMedia = await storage.getPromotionalMediaItem(id);
+      if (!existingMedia) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promotional media not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      const updateData = {
+        ...req.body,
+        lastModifiedBy: req.user!.id
+      };
+
+      const media = await storage.updatePromotionalMedia(id, updateData);
+
+      res.json({
+        success: true,
+        message: 'Promotional media updated successfully',
+        media
+      });
+    } catch (error) {
+      console.error('Error updating promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // DELETE /api/v1/admin/promotional-media/:id - Delete promotional media
+  app.delete('/api/v1/admin/promotional-media/:id', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const result = await storage.deletePromotionalMedia(id);
+
+      if (!result.success) {
+        return res.status(404).json({
+          success: false,
+          message: result.message,
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error('Error deleting promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/promotional-media/bulk - Bulk operations on promotional media
+  app.post('/api/v1/admin/promotional-media/bulk', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { operation, mediaIds, data } = req.body;
+
+      if (!Array.isArray(mediaIds) || mediaIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Media IDs array is required',
+          error: 'INVALID_INPUT'
+        });
+      }
+
+      if (!['activate', 'deactivate', 'archive', 'delete', 'update_priority'].includes(operation)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid operation. Must be one of: activate, deactivate, archive, delete, update_priority',
+          error: 'INVALID_OPERATION'
+        });
+      }
+
+      const result = await storage.bulkOperatePromotionalMedia({
+        operation,
+        mediaIds,
+        data
+      });
+
+      res.json({
+        success: result.success,
+        message: `Bulk ${operation} completed. ${result.updated} items updated.`,
+        updated: result.updated,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error performing bulk operation:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to perform bulk operation',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/promotional-media/statistics - Analytics and statistics
+  app.get('/api/v1/admin/promotional-media/statistics', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { dateFrom, dateTo, campaignId, placement, mediaType } = req.query;
+
+      const filters: any = {};
+      if (dateFrom) filters.dateFrom = dateFrom as string;
+      if (dateTo) filters.dateTo = dateTo as string;
+      if (campaignId) filters.campaignId = campaignId as string;
+      if (placement) filters.placement = placement as string;
+      if (mediaType) filters.mediaType = mediaType as string;
+
+      const statistics = await storage.getPromotionalMediaStatistics(filters);
+
+      res.json({
+        success: true,
+        statistics
+      });
+    } catch (error) {
+      console.error('Error fetching promotional media statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch promotional media statistics',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/promotional-media/:id/moderation - Update moderation status
+  app.post('/api/v1/admin/promotional-media/:id/moderation', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, notes, action } = req.body;
+
+      if (!['pending', 'approved', 'rejected'].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid moderation status. Must be one of: pending, approved, rejected',
+          error: 'INVALID_STATUS'
+        });
+      }
+
+      let media;
+      
+      if (action === 'approve') {
+        media = await storage.approveMedia(id, req.user!.id);
+      } else if (action === 'reject') {
+        if (!notes) {
+          return res.status(400).json({
+            success: false,
+            message: 'Rejection notes are required when rejecting media',
+            error: 'MISSING_NOTES'
+          });
+        }
+        media = await storage.rejectMedia(id, notes, req.user!.id);
+      } else {
+        media = await storage.updateModerationStatus(id, status, notes);
+      }
+
+      if (!media) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promotional media not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: `Media moderation status updated to ${status}`,
+        media
+      });
+    } catch (error) {
+      console.error('Error updating moderation status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update moderation status',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/promotional-media/:id/performance - Get media performance report
+  app.get('/api/v1/admin/promotional-media/:id/performance', adminSessionMiddleware, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { dateFrom, dateTo } = req.query;
+
+      const dateRange = (dateFrom && dateTo) ? {
+        from: dateFrom as string,
+        to: dateTo as string
+      } : undefined;
+
+      const report = await storage.getMediaPerformanceReport(id, dateRange);
+
+      res.json({
+        success: true,
+        report
+      });
+    } catch (error) {
+      console.error('Error fetching media performance report:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch media performance report',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // PUBLIC PROMOTIONAL MEDIA ENDPOINTS
+  // ============================
+
+  // GET /api/v1/promotional-media/active - Get active media for display
+  app.get('/api/v1/promotional-media/active', optionalAuth, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { placement, limit = '10' } = req.query;
+      const userId = req.user?.id;
+
+      const filters: any = {
+        placement: placement as string,
+        userId,
+        limit: parseInt(limit as string)
+      };
+
+      // Add user context for targeting
+      if (req.user) {
+        filters.userRole = req.user.role;
+        // TODO: Add geographic targeting based on user location
+      }
+
+      const media = await storage.getActivePromotionalMedia(filters);
+
+      // Track impressions for returned media
+      if (media.length > 0 && userId) {
+        // Use Promise.allSettled to not block response for analytics failures
+        Promise.allSettled(
+          media.map(item => 
+            storage.trackMediaImpression(item.id, {
+              userId,
+              placement: placement as string,
+              deviceType: req.get('User-Agent')?.includes('Mobile') ? 'mobile' : 'desktop',
+              userAgent: req.get('User-Agent'),
+              ipAddress: req.ip,
+              metadata: { 
+                endpoint: 'active-media',
+                timestamp: new Date().toISOString()
+              }
+            })
+          )
+        ).catch(err => console.error('Analytics tracking failed:', err));
+      }
+
+      res.json({
+        success: true,
+        media: media.map(item => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          mediaType: item.mediaType,
+          mediaUrl: item.mediaUrl,
+          thumbnailUrl: item.thumbnailUrl,
+          placement: item.placement,
+          displayOrder: item.displayOrder,
+          autoPlay: item.autoPlay,
+          loopEnabled: item.loopEnabled,
+          targetUrl: item.targetUrl,
+          displaySettings: item.displaySettings,
+          // Don't expose admin-only fields
+        })),
+        count: media.length
+      });
+    } catch (error) {
+      console.error('Error fetching active promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/promotional-media/placement/:placement - Get media by placement
+  app.get('/api/v1/promotional-media/placement/:placement', optionalAuth, promotionalMediaLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { placement } = req.params;
+      const { limit = '5' } = req.query;
+      const userId = req.user?.id;
+
+      const media = await storage.getActiveMediaByPlacement(placement, userId);
+
+      // Track impressions for placement-specific media
+      if (media.length > 0 && userId) {
+        Promise.allSettled(
+          media.slice(0, parseInt(limit as string)).map(item => 
+            storage.trackMediaImpression(item.id, {
+              userId,
+              placement,
+              deviceType: req.get('User-Agent')?.includes('Mobile') ? 'mobile' : 'desktop',
+              userAgent: req.get('User-Agent'),
+              ipAddress: req.ip,
+              metadata: { 
+                endpoint: 'placement-media',
+                placement,
+                timestamp: new Date().toISOString()
+              }
+            })
+          )
+        ).catch(err => console.error('Analytics tracking failed:', err));
+      }
+
+      res.json({
+        success: true,
+        placement,
+        media: media.slice(0, parseInt(limit as string)).map(item => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          mediaType: item.mediaType,
+          mediaUrl: item.mediaUrl,
+          thumbnailUrl: item.thumbnailUrl,
+          autoPlay: item.autoPlay,
+          loopEnabled: item.loopEnabled,
+          targetUrl: item.targetUrl,
+          displaySettings: item.displaySettings,
+        })),
+        count: Math.min(media.length, parseInt(limit as string))
+      });
+    } catch (error) {
+      console.error('Error fetching placement promotional media:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch placement promotional media',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/promotional-media/track-impression - Track media impressions
+  app.post('/api/v1/promotional-media/track-impression', optionalAuth, analyticsTrackingLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { mediaId, placement, sessionId, viewportSize, metadata } = req.body;
+
+      if (!mediaId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Media ID is required',
+          error: 'MISSING_MEDIA_ID'
+        });
+      }
+
+      const context = {
+        userId: req.user?.id,
+        sessionId,
+        placement,
+        deviceType: req.get('User-Agent')?.includes('Mobile') ? 'mobile' : 'desktop',
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        viewportSize,
+        metadata: {
+          ...metadata,
+          timestamp: new Date().toISOString(),
+          endpoint: 'track-impression'
+        }
+      };
+
+      // Track impression asynchronously
+      storage.trackMediaImpression(mediaId, context).catch(err => 
+        console.error('Failed to track impression:', err)
+      );
+
+      res.json({
+        success: true,
+        message: 'Impression tracked successfully'
+      });
+    } catch (error) {
+      console.error('Error tracking impression:', error);
+      // Don't fail the request for analytics failures
+      res.json({
+        success: true,
+        message: 'Impression tracking attempted'
+      });
+    }
+  });
+
+  // POST /api/v1/promotional-media/track-click - Track media clicks
+  app.post('/api/v1/promotional-media/track-click', optionalAuth, analyticsTrackingLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { mediaId, placement, sessionId, clickPosition, metadata } = req.body;
+
+      if (!mediaId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Media ID is required',
+          error: 'MISSING_MEDIA_ID'
+        });
+      }
+
+      const context = {
+        userId: req.user?.id,
+        sessionId,
+        placement,
+        clickPosition,
+        deviceType: req.get('User-Agent')?.includes('Mobile') ? 'mobile' : 'desktop',
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        metadata: {
+          ...metadata,
+          timestamp: new Date().toISOString(),
+          endpoint: 'track-click'
+        }
+      };
+
+      // Track click asynchronously
+      storage.trackMediaClick(mediaId, context).catch(err => 
+        console.error('Failed to track click:', err)
+      );
+
+      res.json({
+        success: true,
+        message: 'Click tracked successfully'
+      });
+    } catch (error) {
+      console.error('Error tracking click:', error);
+      // Don't fail the request for analytics failures
+      res.json({
+        success: true,
+        message: 'Click tracking attempted'
       });
     }
   });

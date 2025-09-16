@@ -146,6 +146,763 @@ import {
 } from 'lucide-react';
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+// Comprehensive Promotional Media Management System Component
+const PromotionalMediaManagementSystem = () => {
+  // State management for promotional media
+  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [placementFilter, setPlacementFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activeSubTab, setActiveSubTab] = useState('media');
+  const [isCreateMediaDialogOpen, setIsCreateMediaDialogOpen] = useState(false);
+  const [isEditMediaDialogOpen, setIsEditMediaDialogOpen] = useState(false);
+  const [selectedMediaItem, setSelectedMediaItem] = useState<any>(null);
+  const [isSchedulingDialogOpen, setIsSchedulingDialogOpen] = useState(false);
+  const [isAnalyticsDialogOpen, setIsAnalyticsDialogOpen] = useState(false);
+  
+  // Form state for media creation/editing
+  const [mediaForm, setMediaForm] = useState({
+    title: '',
+    description: '',
+    mediaType: 'image',
+    placement: 'header',
+    isActive: true,
+    autoPlay: true,
+    loopEnabled: true,
+    displayOrder: 1,
+    targetAudience: 'all',
+    startDate: '',
+    endDate: '',
+    isScheduled: false,
+  });
+
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch promotional media with filtering
+  const { data: mediaData, isLoading: mediaLoading } = useQuery({
+    queryKey: ['admin-promotional-media', {
+      search: searchTerm,
+      isActive: statusFilter === 'active' ? true : statusFilter === 'inactive' ? false : undefined,
+      mediaType: typeFilter === 'all' ? undefined : typeFilter,
+      placement: placementFilter === 'all' ? undefined : placementFilter,
+      limit: 20,
+      offset: (currentPage - 1) * 20
+    }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchTerm) params.append('search', searchTerm);
+      if (statusFilter !== 'all') params.append('isActive', statusFilter === 'active' ? 'true' : 'false');
+      if (typeFilter !== 'all') params.append('mediaType', typeFilter);
+      if (placementFilter !== 'all') params.append('placement', placementFilter);
+      params.append('limit', '20');
+      params.append('offset', String((currentPage - 1) * 20));
+
+      return await apiRequest(`/api/v1/admin/promotional-media?${params.toString()}`);
+    }
+  });
+
+  // Fetch media statistics
+  const { data: statsData, isLoading: statsLoading } = useQuery({
+    queryKey: ['admin-promotional-media-statistics'],
+    queryFn: async () => await apiRequest('/api/v1/admin/promotional-media/statistics')
+  });
+
+  // Create media mutation
+  const createMediaMutation = useMutation({
+    mutationFn: async (mediaData: any) => await apiRequest('/api/v1/admin/promotional-media', {
+      method: 'POST',
+      body: JSON.stringify(mediaData)
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
+      setIsCreateMediaDialogOpen(false);
+      resetMediaForm();
+      toast({ title: 'Media created successfully', description: 'The promotional media has been added.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error creating media', 
+        description: error.message || 'Failed to create promotional media', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Update media mutation
+  const updateMediaMutation = useMutation({
+    mutationFn: async ({ id, mediaData }: { id: string; mediaData: any }) => 
+      await apiRequest(`/api/v1/admin/promotional-media/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(mediaData)
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
+      setIsEditMediaDialogOpen(false);
+      setSelectedMediaItem(null);
+      resetMediaForm();
+      toast({ title: 'Media updated successfully', description: 'The promotional media has been updated.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error updating media', 
+        description: error.message || 'Failed to update promotional media', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Delete media mutation
+  const deleteMediaMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest(`/api/v1/admin/promotional-media/${id}`, {
+      method: 'DELETE'
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
+      toast({ title: 'Media deleted successfully', description: 'The promotional media has been removed.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error deleting media', 
+        description: error.message || 'Failed to delete promotional media', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Bulk operations mutation
+  const bulkOperationMutation = useMutation({
+    mutationFn: async ({ operation, mediaIds }: { operation: string; mediaIds: string[] }) => 
+      await apiRequest(`/api/v1/admin/promotional-media/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ operation, mediaIds })
+      }),
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
+      setSelectedMedia([]);
+      toast({ 
+        title: `Bulk ${variables.operation} completed`, 
+        description: `Successfully ${variables.operation}d ${variables.mediaIds.length} media items.` 
+      });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error in bulk operation', 
+        description: error.message || 'Failed to complete bulk operation', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Utility functions
+  const resetMediaForm = () => {
+    setMediaForm({
+      title: '',
+      description: '',
+      mediaType: 'image',
+      placement: 'header',
+      isActive: true,
+      autoPlay: true,
+      loopEnabled: true,
+      displayOrder: 1,
+      targetAudience: 'all',
+      startDate: '',
+      endDate: '',
+      isScheduled: false,
+    });
+  };
+
+  const handleEditMedia = (media: any) => {
+    setSelectedMediaItem(media);
+    setMediaForm(media);
+    setIsEditMediaDialogOpen(true);
+  };
+
+  const handleBulkActivate = () => {
+    if (selectedMedia.length > 0) {
+      bulkOperationMutation.mutate({ operation: 'activate', mediaIds: selectedMedia });
+    }
+  };
+
+  const handleBulkDeactivate = () => {
+    if (selectedMedia.length > 0) {
+      bulkOperationMutation.mutate({ operation: 'deactivate', mediaIds: selectedMedia });
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedMedia.length > 0) {
+      bulkOperationMutation.mutate({ operation: 'delete', mediaIds: selectedMedia });
+    }
+  };
+
+  const media = mediaData?.media || [];
+  const stats = statsData?.statistics || {};
+
+  const filteredMedia = media.filter((item: any) => {
+    const matchesSearch = !searchTerm || 
+      item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.description?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Promotional Media Management Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Promotional Media Management</h2>
+          <p className="text-muted-foreground">Manage promotional content, campaigns, and analytics</p>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <Button
+            onClick={() => setIsSchedulingDialogOpen(true)}
+            variant="outline"
+            size="sm"
+            data-testid="schedule-campaigns"
+          >
+            <Calendar className="w-4 h-4 mr-2" />
+            Schedule Campaigns
+          </Button>
+          <Button
+            onClick={() => setIsAnalyticsDialogOpen(true)}
+            variant="outline"
+            size="sm"
+            data-testid="view-analytics"
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Analytics
+          </Button>
+          <Button
+            onClick={() => setIsCreateMediaDialogOpen(true)}
+            size="sm"
+            data-testid="create-promotional-media"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Create Media
+          </Button>
+        </div>
+      </div>
+
+      {/* Media Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Video className="w-8 h-8 text-blue-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : stats.totalMedia || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Total Media</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Zap className="w-8 h-8 text-green-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : stats.activeMedia || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Active Media</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Eye className="w-8 h-8 text-purple-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : `${stats.totalImpressions || 0}`}
+                </div>
+                <div className="text-xs text-muted-foreground">Total Impressions</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Target className="w-8 h-8 text-orange-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : `${stats.clickThroughRate || 0}%`}
+                </div>
+                <div className="text-xs text-muted-foreground">Click Rate</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Media Management Tabs */}
+      <Tabs value={activeSubTab} onValueChange={setActiveSubTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="media" data-testid="media-subtab">
+            <Video className="w-4 h-4 mr-2" />
+            Media Library
+          </TabsTrigger>
+          <TabsTrigger value="campaigns" data-testid="campaigns-subtab">
+            <Calendar className="w-4 h-4 mr-2" />
+            Campaigns
+          </TabsTrigger>
+          <TabsTrigger value="analytics" data-testid="analytics-subtab">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Analytics
+          </TabsTrigger>
+          <TabsTrigger value="settings" data-testid="settings-subtab">
+            <Settings className="w-4 h-4 mr-2" />
+            Settings
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Media Library Tab Content */}
+        <TabsContent value="media" className="space-y-4">
+          {/* Filters and Search */}
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <Input
+                placeholder="Search media by title or description..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-sm"
+                data-testid="media-search"
+              />
+            </div>
+            
+            <div className="flex gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-32" data-testid="status-filter">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="w-32" data-testid="type-filter">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="image">Images</SelectItem>
+                  <SelectItem value="video">Videos</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={placementFilter} onValueChange={setPlacementFilter}>
+                <SelectTrigger className="w-32" data-testid="placement-filter">
+                  <SelectValue placeholder="Placement" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Placements</SelectItem>
+                  <SelectItem value="header">Header</SelectItem>
+                  <SelectItem value="sidebar">Sidebar</SelectItem>
+                  <SelectItem value="footer">Footer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Bulk Actions */}
+          {selectedMedia.length > 0 && (
+            <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+              <span className="text-sm text-muted-foreground">
+                {selectedMedia.length} media items selected
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkActivate}
+                data-testid="bulk-activate"
+              >
+                <Zap className="w-4 h-4 mr-2" />
+                Activate
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDeactivate}
+                data-testid="bulk-deactivate"
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Deactivate
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDelete}
+                data-testid="bulk-delete"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+              </Button>
+            </div>
+          )}
+
+          {/* Media Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {mediaLoading ? (
+              [...Array(8)].map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-32 w-full mb-4" />
+                    <Skeleton className="h-4 w-full mb-2" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              filteredMedia.map((item: any) => (
+                <Card key={item.id} className="overflow-hidden">
+                  <CardContent className="p-0">
+                    {/* Media Preview */}
+                    <div className="relative h-32 bg-muted">
+                      {item.mediaType === 'video' ? (
+                        <video
+                          src={item.mediaUrl}
+                          poster={item.thumbnailUrl}
+                          className="w-full h-full object-cover"
+                          muted
+                          loop
+                          playsInline
+                        />
+                      ) : (
+                        <img
+                          src={item.mediaUrl}
+                          alt={item.title}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                      
+                      {/* Media Type Badge */}
+                      <Badge 
+                        className="absolute top-2 left-2"
+                        variant={item.mediaType === 'video' ? 'default' : 'secondary'}
+                      >
+                        {item.mediaType === 'video' ? <Video className="w-3 h-3 mr-1" /> : <Image className="w-3 h-3 mr-1" />}
+                        {item.mediaType}
+                      </Badge>
+
+                      {/* Status Badge */}
+                      <Badge 
+                        className="absolute top-2 right-2"
+                        variant={item.isActive ? 'default' : 'secondary'}
+                      >
+                        {item.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+
+                      {/* Selection Checkbox */}
+                      <Checkbox
+                        className="absolute bottom-2 left-2"
+                        checked={selectedMedia.includes(item.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedMedia([...selectedMedia, item.id]);
+                          } else {
+                            setSelectedMedia(selectedMedia.filter(id => id !== item.id));
+                          }
+                        }}
+                        data-testid={`select-media-${item.id}`}
+                      />
+                    </div>
+
+                    {/* Media Info */}
+                    <div className="p-4">
+                      <h3 className="font-semibold text-foreground mb-1 line-clamp-1">{item.title}</h3>
+                      <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{item.description}</p>
+                      
+                      {/* Stats */}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
+                        <span>{item.impressions || 0} views</span>
+                        <span>{item.clicks || 0} clicks</span>
+                        <span>#{item.displayOrder}</span>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEditMedia(item)}
+                          data-testid={`edit-media-${item.id}`}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => deleteMediaMutation.mutate(item.id)}
+                          data-testid={`delete-media-${item.id}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`view-analytics-${item.id}`}
+                        >
+                          <BarChart3 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+
+          {/* Empty State */}
+          {!mediaLoading && filteredMedia.length === 0 && (
+            <div className="text-center py-12">
+              <Video className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+              <h3 className="font-medium text-foreground mb-2">No promotional media found</h3>
+              <p className="text-sm text-muted-foreground mb-4">Create your first promotional media to get started</p>
+              <Button onClick={() => setIsCreateMediaDialogOpen(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Create Media
+              </Button>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Other tab contents would go here - campaigns, analytics, settings */}
+        <TabsContent value="campaigns" className="space-y-4">
+          <div className="text-center py-12">
+            <Calendar className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+            <h3 className="font-medium text-foreground mb-2">Campaign Management</h3>
+            <p className="text-sm text-muted-foreground">Campaign scheduling and management coming soon</p>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-4">
+          <div className="text-center py-12">
+            <BarChart3 className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+            <h3 className="font-medium text-foreground mb-2">Detailed Analytics</h3>
+            <p className="text-sm text-muted-foreground">Advanced analytics dashboard coming soon</p>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-4">
+          <div className="text-center py-12">
+            <Settings className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+            <h3 className="font-medium text-foreground mb-2">Media Settings</h3>
+            <p className="text-sm text-muted-foreground">Global media settings and preferences coming soon</p>
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {/* Create Media Dialog */}
+      <Dialog open={isCreateMediaDialogOpen} onOpenChange={setIsCreateMediaDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create Promotional Media</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="title">Title</Label>
+                <Input
+                  id="title"
+                  value={mediaForm.title}
+                  onChange={(e) => setMediaForm({ ...mediaForm, title: e.target.value })}
+                  placeholder="Enter media title"
+                  data-testid="media-title"
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="mediaType">Media Type</Label>
+                <Select value={mediaForm.mediaType} onValueChange={(value) => setMediaForm({ ...mediaForm, mediaType: value })}>
+                  <SelectTrigger data-testid="media-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="image">Image</SelectItem>
+                    <SelectItem value="video">Video</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={mediaForm.description}
+                onChange={(e) => setMediaForm({ ...mediaForm, description: e.target.value })}
+                placeholder="Enter media description"
+                rows={3}
+                data-testid="media-description"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="placement">Placement</Label>
+                <Select value={mediaForm.placement} onValueChange={(value) => setMediaForm({ ...mediaForm, placement: value })}>
+                  <SelectTrigger data-testid="media-placement">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="header">Header</SelectItem>
+                    <SelectItem value="sidebar">Sidebar</SelectItem>
+                    <SelectItem value="footer">Footer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="targetAudience">Target Audience</Label>
+                <Select value={mediaForm.targetAudience} onValueChange={(value) => setMediaForm({ ...mediaForm, targetAudience: value })}>
+                  <SelectTrigger data-testid="target-audience">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Users</SelectItem>
+                    <SelectItem value="new">New Users</SelectItem>
+                    <SelectItem value="returning">Returning Users</SelectItem>
+                    <SelectItem value="premium">Premium Users</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="displayOrder">Display Order</Label>
+                <Input
+                  id="displayOrder"
+                  type="number"
+                  value={mediaForm.displayOrder}
+                  onChange={(e) => setMediaForm({ ...mediaForm, displayOrder: parseInt(e.target.value) || 1 })}
+                  min="1"
+                  data-testid="display-order"
+                />
+              </div>
+            </div>
+
+            {/* Media Upload Area */}
+            <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+              <Upload className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <h4 className="font-medium text-foreground mb-2">Upload Media File</h4>
+              <p className="text-sm text-muted-foreground mb-4">
+                {mediaForm.mediaType === 'video' 
+                  ? 'Support for MP4, WebM files up to 50MB' 
+                  : 'Support for JPG, PNG, WebP files up to 5MB'}
+              </p>
+              <Button variant="outline" data-testid="upload-media-file">
+                <Upload className="w-4 h-4 mr-2" />
+                Choose File
+              </Button>
+            </div>
+
+            {/* Settings */}
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="isActive"
+                    checked={mediaForm.isActive}
+                    onCheckedChange={(checked) => setMediaForm({ ...mediaForm, isActive: !!checked })}
+                    data-testid="media-active"
+                  />
+                  <Label htmlFor="isActive">Active</Label>
+                </div>
+                
+                {mediaForm.mediaType === 'video' && (
+                  <>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="autoPlay"
+                        checked={mediaForm.autoPlay}
+                        onCheckedChange={(checked) => setMediaForm({ ...mediaForm, autoPlay: !!checked })}
+                        data-testid="media-autoplay"
+                      />
+                      <Label htmlFor="autoPlay">Auto-play</Label>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="loopEnabled"
+                        checked={mediaForm.loopEnabled}
+                        onCheckedChange={(checked) => setMediaForm({ ...mediaForm, loopEnabled: !!checked })}
+                        data-testid="media-loop"
+                      />
+                      <Label htmlFor="loopEnabled">Loop</Label>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button 
+                variant="outline" 
+                onClick={() => setIsCreateMediaDialogOpen(false)}
+                data-testid="cancel-create-media"
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={() => createMediaMutation.mutate(mediaForm)}
+                disabled={createMediaMutation.isPending}
+                data-testid="confirm-create-media"
+              >
+                {createMediaMutation.isPending ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Create Media
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Media Dialog - Similar to create but with existing data */}
+      <Dialog open={isEditMediaDialogOpen} onOpenChange={setIsEditMediaDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Promotional Media</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 pt-4">
+            {/* Similar content to create dialog but with edit functionality */}
+            <div className="text-center py-8">
+              <Edit className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">Edit functionality will be implemented here</p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
 // Comprehensive Tax Management System Component
 const TaxManagementSystem = () => {
   // State management for taxes
@@ -4494,7 +5251,7 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-12 lg:grid-cols-13">
+          <TabsList className="grid w-full grid-cols-12 lg:grid-cols-14">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -4527,6 +5284,10 @@ export default function Admin() {
             </TabsTrigger>
             <TabsTrigger value="media" data-testid="media-tab">
               Media
+            </TabsTrigger>
+            <TabsTrigger value="promotional-media" data-testid="promotional-media-tab">
+              <Video className="h-4 w-4 mr-2" />
+              Promotional
             </TabsTrigger>
             <TabsTrigger value="analytics" data-testid="analytics-tab">Analytics</TabsTrigger>
             <TabsTrigger value="settings" data-testid="settings-tab">Settings</TabsTrigger>
@@ -5289,6 +6050,11 @@ export default function Admin() {
           {/* ===== COMPREHENSIVE TAX MANAGEMENT SYSTEM ===== */}
           <TabsContent value="taxes" className="mt-6">
             <TaxManagementSystem />
+          </TabsContent>
+
+          {/* ===== COMPREHENSIVE PROMOTIONAL MEDIA MANAGEMENT SYSTEM ===== */}
+          <TabsContent value="promotional-media" className="mt-6">
+            <PromotionalMediaManagementSystem />
           </TabsContent>
 
           <TabsContent value="services" className="mt-6">

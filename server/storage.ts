@@ -102,6 +102,22 @@ import {
   taxes,
   insertTaxCategorySchema,
   insertTaxSchema,
+  // Promotional media imports
+  type PromotionalMedia,
+  type InsertPromotionalMedia,
+  type PromotionalMediaAnalytics,
+  type InsertPromotionalMediaAnalytics,
+  promotionalMedia,
+  promotionalMediaAnalytics,
+  insertPromotionalMediaSchema,
+  insertPromotionalMediaAnalyticsSchema,
+  type PromotionalMediaCreateData,
+  type PromotionalMediaUpdateData,
+  type PromotionalMediaFiltersData,
+  type PromotionalMediaBulkOperationData,
+  type PromotionalMediaAnalyticsCreateData,
+  type PromotionalMediaActiveQueryData,
+  type PromotionalMediaStatisticsData,
   serviceBookings,
   providerJobRequests,
   users,
@@ -1023,6 +1039,177 @@ export interface IStorage {
   updateAccountDeletionRequest(id: string, data: Partial<InsertAccountDeletionRequest>): Promise<AccountDeletionRequest | undefined>;
   cancelAccountDeletion(userId: string): Promise<boolean>;
   processAccountDeletion(id: string): Promise<boolean>;
+
+  // Promotional Media methods
+  // Core CRUD operations
+  getPromotionalMedia(filters?: {
+    isActive?: boolean;
+    placement?: string;
+    mediaType?: string;
+    status?: string;
+    moderationStatus?: string;
+    campaignId?: string;
+    tags?: string[];
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: string;
+    sortOrder?: string;
+  }): Promise<{ media: PromotionalMedia[]; total: number }>;
+  getPromotionalMediaItem(id: string): Promise<PromotionalMedia | undefined>;
+  createPromotionalMedia(data: PromotionalMediaCreateData & { createdBy: string }): Promise<PromotionalMedia>;
+  updatePromotionalMedia(id: string, data: Partial<PromotionalMediaUpdateData> & { lastModifiedBy: string }): Promise<PromotionalMedia | undefined>;
+  deletePromotionalMedia(id: string): Promise<{ success: boolean; message: string }>;
+  archivePromotionalMedia(id: string): Promise<PromotionalMedia | undefined>;
+
+  // Active media queries for public display
+  getActivePromotionalMedia(filters?: {
+    placement?: string;
+    userId?: string;
+    userRole?: string;
+    country?: string;
+    state?: string;
+    city?: string;
+    limit?: number;
+  }): Promise<PromotionalMedia[]>;
+  getActiveMediaByPlacement(placement: string, userId?: string): Promise<PromotionalMedia[]>;
+  getTargetedMediaForUser(userId: string, placement?: string): Promise<PromotionalMedia[]>;
+
+  // Analytics and tracking
+  createPromotionalMediaAnalytics(data: PromotionalMediaAnalyticsCreateData): Promise<PromotionalMediaAnalytics>;
+  trackMediaImpression(mediaId: string, context: {
+    userId?: string;
+    sessionId?: string;
+    placement?: string;
+    deviceType?: string;
+    userAgent?: string;
+    ipAddress?: string;
+    viewportSize?: { width: number; height: number };
+    metadata?: Record<string, any>;
+  }): Promise<void>;
+  trackMediaClick(mediaId: string, context: {
+    userId?: string;
+    sessionId?: string;
+    placement?: string;
+    clickPosition?: { x: number; y: number };
+    deviceType?: string;
+    userAgent?: string;
+    ipAddress?: string;
+    metadata?: Record<string, any>;
+  }): Promise<void>;
+  trackMediaEvent(mediaId: string, eventType: string, context: any): Promise<void>;
+
+  // Bulk operations
+  bulkOperatePromotionalMedia(operation: PromotionalMediaBulkOperationData): Promise<{
+    success: boolean;
+    updated: number;
+    errors: string[];
+  }>;
+  bulkActivateMedia(mediaIds: string[]): Promise<{ success: boolean; activated: number; errors: string[] }>;
+  bulkDeactivateMedia(mediaIds: string[]): Promise<{ success: boolean; deactivated: number; errors: string[] }>;
+  bulkArchiveMedia(mediaIds: string[]): Promise<{ success: boolean; archived: number; errors: string[] }>;
+
+  // Analytics and statistics
+  getPromotionalMediaStatistics(filters?: PromotionalMediaStatisticsData): Promise<{
+    totalMedia: number;
+    activeMedia: number;
+    totalImpressions: number;
+    totalClicks: number;
+    averageCTR: number;
+    topPerformingMedia: Array<{
+      id: string;
+      title: string;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    performanceByType: Array<{
+      mediaType: string;
+      count: number;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    performanceByPlacement: Array<{
+      placement: string;
+      count: number;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    timeSeriesData: Array<{
+      date: string;
+      impressions: number;
+      clicks: number;
+      uniqueViews: number;
+    }>;
+  }>;
+  getMediaPerformanceReport(mediaId: string, dateRange?: { from: string; to: string }): Promise<{
+    media: PromotionalMedia;
+    totalImpressions: number;
+    totalClicks: number;
+    uniqueViews: number;
+    averageCTR: number;
+    averageViewDuration: number;
+    deviceBreakdown: Array<{ deviceType: string; count: number; percentage: number }>;
+    timeSeriesData: Array<{
+      date: string;
+      impressions: number;
+      clicks: number;
+      viewDuration: number;
+    }>;
+  }>;
+
+  // Moderation and approval
+  updateModerationStatus(mediaId: string, status: string, notes?: string): Promise<PromotionalMedia | undefined>;
+  getMediaForModeration(limit?: number): Promise<PromotionalMedia[]>;
+  approveMedia(mediaId: string, approvedBy: string): Promise<PromotionalMedia | undefined>;
+  rejectMedia(mediaId: string, rejectionNotes: string, rejectedBy: string): Promise<PromotionalMedia | undefined>;
+
+  // Scheduling and automation
+  getScheduledMedia(dateRange?: { from: string; to: string }): Promise<PromotionalMedia[]>;
+  activateScheduledMedia(): Promise<{ activated: number; deactivated: number }>;
+  expireOutdatedMedia(): Promise<{ expired: number; archived: number }>;
+
+  // Campaign management
+  getMediaByCampaign(campaignId: string, activeOnly?: boolean): Promise<PromotionalMedia[]>;
+  getCampaignStatistics(campaignId: string): Promise<{
+    totalMedia: number;
+    activeMedia: number;
+    totalImpressions: number;
+    totalClicks: number;
+    averageCTR: number;
+    campaignPeriod: { startDate: string; endDate: string };
+  }>;
+
+  // Targeting and personalization
+  checkMediaTargeting(mediaId: string, userContext: {
+    userId?: string;
+    userRole?: string;
+    orderCount?: number;
+    location?: { country?: string; state?: string; city?: string };
+  }): Promise<{ eligible: boolean; reasons: string[] }>;
+  getPersonalizedMedia(userId: string, placement?: string): Promise<PromotionalMedia[]>;
+
+  // Cache and performance optimization
+  updateMediaMetrics(mediaId: string, metrics: {
+    impressions?: number;
+    clicks?: number;
+    uniqueViews?: number;
+    avgViewDuration?: number;
+    lastDisplayed?: Date;
+  }): Promise<void>;
+  getMediaCacheStatus(mediaId: string): Promise<{
+    cached: boolean;
+    cacheExpiry: Date;
+    loadTime: number;
+  }>;
+  
+  // Content management
+  duplicateMedia(mediaId: string, modifications?: Partial<PromotionalMediaCreateData>): Promise<PromotionalMedia>;
+  generateMediaPreview(mediaId: string): Promise<{ thumbnailUrl: string; previewUrl: string }>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -8550,6 +8737,1242 @@ export class PostgresStorage implements IStorage {
   async validateTaxIntegrity(): Promise<{ valid: boolean; issues: string[]; fixedIssues: string[] }> {
     // Implementation would validate tax data integrity
     return { valid: true, issues: [], fixedIssues: [] };
+  }
+
+  // Promotional Media Implementation
+
+  // Core CRUD operations
+  async getPromotionalMedia(filters?: {
+    isActive?: boolean;
+    placement?: string;
+    mediaType?: string;
+    status?: string;
+    moderationStatus?: string;
+    campaignId?: string;
+    tags?: string[];
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: string;
+    sortOrder?: string;
+  }): Promise<{ media: PromotionalMedia[]; total: number }> {
+    try {
+      console.log('🔍 storage.getPromotionalMedia: Fetching promotional media with filters:', filters);
+      
+      const conditions: SQL[] = [];
+      
+      if (filters?.isActive !== undefined) {
+        conditions.push(eq(promotionalMedia.isActive, filters.isActive));
+      }
+      
+      if (filters?.placement) {
+        conditions.push(eq(promotionalMedia.placement, filters.placement));
+      }
+      
+      if (filters?.mediaType) {
+        conditions.push(eq(promotionalMedia.mediaType, filters.mediaType));
+      }
+      
+      if (filters?.status) {
+        conditions.push(eq(promotionalMedia.status, filters.status));
+      }
+      
+      if (filters?.moderationStatus) {
+        conditions.push(eq(promotionalMedia.moderationStatus, filters.moderationStatus));
+      }
+      
+      if (filters?.campaignId) {
+        conditions.push(eq(promotionalMedia.campaignId, filters.campaignId));
+      }
+      
+      if (filters?.search) {
+        const searchTerm = `%${filters.search.toLowerCase()}%`;
+        conditions.push(
+          or(
+            ilike(promotionalMedia.title, searchTerm),
+            ilike(promotionalMedia.description, searchTerm),
+            ilike(promotionalMedia.campaignName, searchTerm)
+          )
+        );
+      }
+      
+      if (filters?.dateFrom) {
+        conditions.push(gte(promotionalMedia.createdAt, new Date(filters.dateFrom)));
+      }
+      
+      if (filters?.dateTo) {
+        conditions.push(lte(promotionalMedia.createdAt, new Date(filters.dateTo)));
+      }
+
+      // Build the query
+      let query = db.select().from(promotionalMedia);
+      
+      if (conditions.length > 0) {
+        query = query.where(combineConditions(conditions));
+      }
+
+      // Apply sorting
+      const sortBy = filters?.sortBy || 'createdAt';
+      const sortOrder = filters?.sortOrder || 'desc';
+      
+      if (sortOrder === 'desc') {
+        query = query.orderBy(desc(promotionalMedia[sortBy as keyof typeof promotionalMedia]));
+      } else {
+        query = query.orderBy(asc(promotionalMedia[sortBy as keyof typeof promotionalMedia]));
+      }
+
+      // Apply pagination
+      if (filters?.limit) {
+        query = query.limit(filters.limit);
+      }
+      if (filters?.offset) {
+        query = query.offset(filters.offset);
+      }
+
+      const media = await query;
+
+      // Get total count
+      let countQuery = db.select({ count: count() }).from(promotionalMedia);
+      if (conditions.length > 0) {
+        countQuery = countQuery.where(combineConditions(conditions));
+      }
+      const [{ count: total }] = await countQuery;
+
+      console.log(`✅ storage.getPromotionalMedia: Found ${media.length} media items (total: ${total})`);
+      return { media, total };
+    } catch (error) {
+      console.error('❌ storage.getPromotionalMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async getPromotionalMediaItem(id: string): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`🔍 storage.getPromotionalMediaItem: Looking for media with id: "${id}"`);
+      const result = await db.select().from(promotionalMedia).where(eq(promotionalMedia.id, id)).limit(1);
+      console.log(`✅ storage.getPromotionalMediaItem: Found ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.getPromotionalMediaItem: Error:', error);
+      throw error;
+    }
+  }
+
+  async createPromotionalMedia(data: PromotionalMediaCreateData & { createdBy: string }): Promise<PromotionalMedia> {
+    try {
+      console.log('🔨 storage.createPromotionalMedia: Creating promotional media:', data.title);
+      
+      const result = await db.insert(promotionalMedia).values({
+        ...data,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }).returning();
+      
+      console.log('✅ storage.createPromotionalMedia: Media created successfully:', result[0].id);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.createPromotionalMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async updatePromotionalMedia(id: string, data: Partial<PromotionalMediaUpdateData> & { lastModifiedBy: string }): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`🔧 storage.updatePromotionalMedia: Updating media ${id}`);
+      
+      const result = await db.update(promotionalMedia)
+        .set({ 
+          ...data, 
+          updatedAt: new Date(),
+          lastModifiedBy: data.lastModifiedBy 
+        })
+        .where(eq(promotionalMedia.id, id))
+        .returning();
+      
+      console.log(`✅ storage.updatePromotionalMedia: Updated ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.updatePromotionalMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async deletePromotionalMedia(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      console.log(`🗑️ storage.deletePromotionalMedia: Deleting media ${id}`);
+      
+      // Check if media exists
+      const existingMedia = await this.getPromotionalMediaItem(id);
+      if (!existingMedia) {
+        return { success: false, message: 'Media not found' };
+      }
+
+      // Soft delete by archiving
+      await this.archivePromotionalMedia(id);
+      
+      console.log(`✅ storage.deletePromotionalMedia: Media ${id} archived successfully`);
+      return { success: true, message: 'Media archived successfully' };
+    } catch (error) {
+      console.error('❌ storage.deletePromotionalMedia: Error:', error);
+      return { success: false, message: 'Failed to delete media' };
+    }
+  }
+
+  async archivePromotionalMedia(id: string): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`📦 storage.archivePromotionalMedia: Archiving media ${id}`);
+      
+      const result = await db.update(promotionalMedia)
+        .set({ 
+          status: 'archived',
+          isActive: false,
+          archivedAt: new Date(),
+          updatedAt: new Date()
+        })
+        .where(eq(promotionalMedia.id, id))
+        .returning();
+      
+      console.log(`✅ storage.archivePromotionalMedia: Archived ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.archivePromotionalMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  // Active media queries for public display
+  async getActivePromotionalMedia(filters?: {
+    placement?: string;
+    userId?: string;
+    userRole?: string;
+    country?: string;
+    state?: string;
+    city?: string;
+    limit?: number;
+  }): Promise<PromotionalMedia[]> {
+    try {
+      console.log('🎯 storage.getActivePromotionalMedia: Fetching active media with filters:', filters);
+      
+      const conditions: SQL[] = [
+        eq(promotionalMedia.isActive, true),
+        eq(promotionalMedia.status, 'active'),
+        eq(promotionalMedia.moderationStatus, 'approved')
+      ];
+      
+      if (filters?.placement) {
+        conditions.push(eq(promotionalMedia.placement, filters.placement));
+      }
+
+      // Check scheduling
+      const now = new Date();
+      conditions.push(
+        or(
+          eq(promotionalMedia.isScheduled, false),
+          and(
+            eq(promotionalMedia.isScheduled, true),
+            or(
+              sql`${promotionalMedia.startDate} IS NULL`,
+              lte(promotionalMedia.startDate, now)
+            ),
+            or(
+              sql`${promotionalMedia.endDate} IS NULL`,
+              gte(promotionalMedia.endDate, now)
+            )
+          )
+        )
+      );
+
+      const media = await db.select({
+        id: promotionalMedia.id,
+        title: promotionalMedia.title,
+        description: promotionalMedia.description,
+        mediaType: promotionalMedia.mediaType,
+        mediaUrl: promotionalMedia.mediaUrl,
+        thumbnailUrl: promotionalMedia.thumbnailUrl,
+        autoPlay: promotionalMedia.autoPlay,
+        loopEnabled: promotionalMedia.loopEnabled,
+        mutedByDefault: promotionalMedia.mutedByDefault,
+        showControls: promotionalMedia.showControls,
+        allowPause: promotionalMedia.allowPause,
+        clickAction: promotionalMedia.clickAction,
+        clickUrl: promotionalMedia.clickUrl,
+        placement: promotionalMedia.placement,
+        displayOrder: promotionalMedia.displayOrder,
+        priority: promotionalMedia.priority,
+        isActive: promotionalMedia.isActive,
+        duration: promotionalMedia.duration,
+        dimensions: promotionalMedia.dimensions,
+        fileSize: promotionalMedia.fileSize,
+        mimeType: promotionalMedia.mimeType,
+        isScheduled: promotionalMedia.isScheduled,
+        startDate: promotionalMedia.startDate,
+        endDate: promotionalMedia.endDate,
+        createdAt: promotionalMedia.createdAt,
+        updatedAt: promotionalMedia.updatedAt
+      })
+        .from(promotionalMedia)
+        .where(combineConditions(conditions))
+        .orderBy(desc(promotionalMedia.priority), asc(promotionalMedia.displayOrder))
+        .limit(filters?.limit || 10);
+
+      console.log(`✅ storage.getActivePromotionalMedia: Found ${media.length} active media items`);
+      return media;
+    } catch (error) {
+      console.error('❌ storage.getActivePromotionalMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async getActiveMediaByPlacement(placement: string, userId?: string): Promise<PromotionalMedia[]> {
+    return this.getActivePromotionalMedia({ placement, userId, limit: 5 });
+  }
+
+  async getTargetedMediaForUser(userId: string, placement?: string): Promise<PromotionalMedia[]> {
+    try {
+      console.log(`🎯 storage.getTargetedMediaForUser: Getting targeted media for user ${userId}`);
+      
+      // Get user details for targeting
+      const user = await this.getUser(userId);
+      if (!user) {
+        return [];
+      }
+
+      // Get user order count for targeting
+      const userOrders = await this.getOrdersByUser(userId);
+      const orderCount = userOrders.length;
+
+      const filters = {
+        placement,
+        userId,
+        userRole: user.role,
+        limit: 10
+      };
+
+      // TODO: Add more sophisticated targeting logic based on:
+      // - User behavior
+      // - Order history
+      // - Geographic location
+      // - Audience targeting rules
+      
+      return this.getActivePromotionalMedia(filters);
+    } catch (error) {
+      console.error('❌ storage.getTargetedMediaForUser: Error:', error);
+      return [];
+    }
+  }
+
+  // Analytics and tracking
+  async createPromotionalMediaAnalytics(data: PromotionalMediaAnalyticsCreateData): Promise<PromotionalMediaAnalytics> {
+    try {
+      const result = await db.insert(promotionalMediaAnalytics).values({
+        ...data,
+        createdAt: new Date(),
+      }).returning();
+      
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.createPromotionalMediaAnalytics: Error:', error);
+      throw error;
+    }
+  }
+
+  async trackMediaImpression(mediaId: string, context: {
+    userId?: string;
+    sessionId?: string;
+    placement?: string;
+    deviceType?: string;
+    userAgent?: string;
+    ipAddress?: string;
+    viewportSize?: { width: number; height: number };
+    metadata?: Record<string, any>;
+  }): Promise<void> {
+    try {
+      // Create analytics record
+      await this.createPromotionalMediaAnalytics({
+        mediaId,
+        userId: context.userId,
+        sessionId: context.sessionId,
+        eventType: 'impression',
+        placement: context.placement,
+        deviceType: context.deviceType as any,
+        userAgent: context.userAgent,
+        ipAddress: context.ipAddress,
+        viewportSize: context.viewportSize,
+        metadata: context.metadata || {}
+      });
+
+      // Update media impression count
+      await this.updateMediaMetrics(mediaId, { 
+        impressions: 1,
+        lastDisplayed: new Date()
+      });
+    } catch (error) {
+      console.error('❌ storage.trackMediaImpression: Error:', error);
+      // Don't throw error for analytics tracking failures
+    }
+  }
+
+  async trackMediaClick(mediaId: string, context: {
+    userId?: string;
+    sessionId?: string;
+    placement?: string;
+    clickPosition?: { x: number; y: number };
+    deviceType?: string;
+    userAgent?: string;
+    ipAddress?: string;
+    metadata?: Record<string, any>;
+  }): Promise<void> {
+    try {
+      // Create analytics record
+      await this.createPromotionalMediaAnalytics({
+        mediaId,
+        userId: context.userId,
+        sessionId: context.sessionId,
+        eventType: 'click',
+        placement: context.placement,
+        clickPosition: context.clickPosition,
+        deviceType: context.deviceType as any,
+        userAgent: context.userAgent,
+        ipAddress: context.ipAddress,
+        metadata: context.metadata || {}
+      });
+
+      // Update media click count
+      await this.updateMediaMetrics(mediaId, { clicks: 1 });
+    } catch (error) {
+      console.error('❌ storage.trackMediaClick: Error:', error);
+      // Don't throw error for analytics tracking failures
+    }
+  }
+
+  async trackMediaEvent(mediaId: string, eventType: string, context: any): Promise<void> {
+    try {
+      await this.createPromotionalMediaAnalytics({
+        mediaId,
+        eventType: eventType as any,
+        ...context
+      });
+    } catch (error) {
+      console.error('❌ storage.trackMediaEvent: Error:', error);
+      // Don't throw error for analytics tracking failures
+    }
+  }
+
+  // Bulk operations
+  async bulkOperatePromotionalMedia(operation: PromotionalMediaBulkOperationData): Promise<{
+    success: boolean;
+    updated: number;
+    errors: string[];
+  }> {
+    try {
+      console.log(`🔄 storage.bulkOperatePromotionalMedia: Performing ${operation.operation} on ${operation.mediaIds.length} items`);
+      
+      const errors: string[] = [];
+      let updated = 0;
+
+      for (const mediaId of operation.mediaIds) {
+        try {
+          switch (operation.operation) {
+            case 'activate':
+              await this.updatePromotionalMedia(mediaId, { 
+                isActive: true,
+                status: 'active',
+                lastModifiedBy: 'system'
+              });
+              updated++;
+              break;
+            case 'deactivate':
+              await this.updatePromotionalMedia(mediaId, { 
+                isActive: false,
+                status: 'paused',
+                lastModifiedBy: 'system'
+              });
+              updated++;
+              break;
+            case 'archive':
+              await this.archivePromotionalMedia(mediaId);
+              updated++;
+              break;
+            case 'delete':
+              const deleteResult = await this.deletePromotionalMedia(mediaId);
+              if (deleteResult.success) {
+                updated++;
+              } else {
+                errors.push(`Failed to delete media ${mediaId}: ${deleteResult.message}`);
+              }
+              break;
+            case 'update_priority':
+              if (operation.data?.priority !== undefined) {
+                await this.updatePromotionalMedia(mediaId, { 
+                  priority: operation.data.priority,
+                  lastModifiedBy: 'system'
+                });
+                updated++;
+              }
+              break;
+          }
+        } catch (error) {
+          errors.push(`Failed to update media ${mediaId}: ${error}`);
+        }
+      }
+
+      console.log(`✅ storage.bulkOperatePromotionalMedia: Updated ${updated} items with ${errors.length} errors`);
+      return {
+        success: errors.length === 0,
+        updated,
+        errors,
+      };
+    } catch (error) {
+      console.error('❌ storage.bulkOperatePromotionalMedia: Error:', error);
+      return { success: false, updated: 0, errors: ['Bulk operation failed'] };
+    }
+  }
+
+  async bulkActivateMedia(mediaIds: string[]): Promise<{ success: boolean; activated: number; errors: string[] }> {
+    const result = await this.bulkOperatePromotionalMedia({
+      operation: 'activate',
+      mediaIds,
+    });
+    
+    return {
+      success: result.success,
+      activated: result.updated,
+      errors: result.errors,
+    };
+  }
+
+  async bulkDeactivateMedia(mediaIds: string[]): Promise<{ success: boolean; deactivated: number; errors: string[] }> {
+    const result = await this.bulkOperatePromotionalMedia({
+      operation: 'deactivate',
+      mediaIds,
+    });
+    
+    return {
+      success: result.success,
+      deactivated: result.updated,
+      errors: result.errors,
+    };
+  }
+
+  async bulkArchiveMedia(mediaIds: string[]): Promise<{ success: boolean; archived: number; errors: string[] }> {
+    const result = await this.bulkOperatePromotionalMedia({
+      operation: 'archive',
+      mediaIds,
+    });
+    
+    return {
+      success: result.success,
+      archived: result.updated,
+      errors: result.errors,
+    };
+  }
+
+  // Analytics and statistics
+  async getPromotionalMediaStatistics(filters?: PromotionalMediaStatisticsData): Promise<{
+    totalMedia: number;
+    activeMedia: number;
+    totalImpressions: number;
+    totalClicks: number;
+    averageCTR: number;
+    topPerformingMedia: Array<{
+      id: string;
+      title: string;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    performanceByType: Array<{
+      mediaType: string;
+      count: number;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    performanceByPlacement: Array<{
+      placement: string;
+      count: number;
+      impressions: number;
+      clicks: number;
+      ctr: number;
+    }>;
+    timeSeriesData: Array<{
+      date: string;
+      impressions: number;
+      clicks: number;
+      uniqueViews: number;
+    }>;
+  }> {
+    try {
+      console.log('📊 storage.getPromotionalMediaStatistics: Calculating statistics');
+      
+      // Basic counts
+      const [totalResult] = await db.select({ count: count() }).from(promotionalMedia);
+      const totalMedia = totalResult.count;
+
+      const [activeResult] = await db.select({ count: count() })
+        .from(promotionalMedia)
+        .where(and(eq(promotionalMedia.isActive, true), eq(promotionalMedia.status, 'active')));
+      const activeMedia = activeResult.count;
+
+      // Get media with basic stats
+      const mediaStats = await db.select({
+        id: promotionalMedia.id,
+        title: promotionalMedia.title,
+        mediaType: promotionalMedia.mediaType,
+        placement: promotionalMedia.placement,
+        impressions: promotionalMedia.impressions,
+        clicks: promotionalMedia.clicks,
+      }).from(promotionalMedia);
+
+      const totalImpressions = mediaStats.reduce((sum, item) => sum + (item.impressions || 0), 0);
+      const totalClicks = mediaStats.reduce((sum, item) => sum + (item.clicks || 0), 0);
+      const averageCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+      // Top performing media
+      const topPerformingMedia = mediaStats
+        .map(item => ({
+          id: item.id,
+          title: item.title,
+          impressions: item.impressions || 0,
+          clicks: item.clicks || 0,
+          ctr: (item.impressions || 0) > 0 ? ((item.clicks || 0) / (item.impressions || 0)) * 100 : 0
+        }))
+        .sort((a, b) => b.ctr - a.ctr)
+        .slice(0, 10);
+
+      // Performance by type
+      const typeStats = new Map<string, { count: number; impressions: number; clicks: number }>();
+      mediaStats.forEach(item => {
+        const existing = typeStats.get(item.mediaType) || { count: 0, impressions: 0, clicks: 0 };
+        typeStats.set(item.mediaType, {
+          count: existing.count + 1,
+          impressions: existing.impressions + (item.impressions || 0),
+          clicks: existing.clicks + (item.clicks || 0)
+        });
+      });
+
+      const performanceByType = Array.from(typeStats.entries()).map(([mediaType, stats]) => ({
+        mediaType,
+        count: stats.count,
+        impressions: stats.impressions,
+        clicks: stats.clicks,
+        ctr: stats.impressions > 0 ? (stats.clicks / stats.impressions) * 100 : 0
+      }));
+
+      // Performance by placement
+      const placementStats = new Map<string, { count: number; impressions: number; clicks: number }>();
+      mediaStats.forEach(item => {
+        const existing = placementStats.get(item.placement) || { count: 0, impressions: 0, clicks: 0 };
+        placementStats.set(item.placement, {
+          count: existing.count + 1,
+          impressions: existing.impressions + (item.impressions || 0),
+          clicks: existing.clicks + (item.clicks || 0)
+        });
+      });
+
+      const performanceByPlacement = Array.from(placementStats.entries()).map(([placement, stats]) => ({
+        placement,
+        count: stats.count,
+        impressions: stats.impressions,
+        clicks: stats.clicks,
+        ctr: stats.impressions > 0 ? (stats.clicks / stats.impressions) * 100 : 0
+      }));
+
+      // Time series data (placeholder - would need more complex query)
+      const timeSeriesData: Array<{
+        date: string;
+        impressions: number;
+        clicks: number;
+        uniqueViews: number;
+      }> = [];
+
+      console.log(`✅ storage.getPromotionalMediaStatistics: Calculated stats for ${totalMedia} media items`);
+      
+      return {
+        totalMedia,
+        activeMedia,
+        totalImpressions,
+        totalClicks,
+        averageCTR,
+        topPerformingMedia,
+        performanceByType,
+        performanceByPlacement,
+        timeSeriesData,
+      };
+    } catch (error) {
+      console.error('❌ storage.getPromotionalMediaStatistics: Error:', error);
+      throw error;
+    }
+  }
+
+  async getMediaPerformanceReport(mediaId: string, dateRange?: { from: string; to: string }): Promise<{
+    media: PromotionalMedia;
+    totalImpressions: number;
+    totalClicks: number;
+    uniqueViews: number;
+    averageCTR: number;
+    averageViewDuration: number;
+    deviceBreakdown: Array<{ deviceType: string; count: number; percentage: number }>;
+    timeSeriesData: Array<{
+      date: string;
+      impressions: number;
+      clicks: number;
+      viewDuration: number;
+    }>;
+  }> {
+    try {
+      console.log(`📈 storage.getMediaPerformanceReport: Generating report for media ${mediaId}`);
+      
+      // Get media details
+      const media = await this.getPromotionalMediaItem(mediaId);
+      if (!media) {
+        throw new Error('Media not found');
+      }
+
+      // Get analytics data
+      let analyticsQuery = db.select().from(promotionalMediaAnalytics)
+        .where(eq(promotionalMediaAnalytics.mediaId, mediaId));
+
+      if (dateRange) {
+        analyticsQuery = analyticsQuery.where(
+          and(
+            eq(promotionalMediaAnalytics.mediaId, mediaId),
+            gte(promotionalMediaAnalytics.createdAt, new Date(dateRange.from)),
+            lte(promotionalMediaAnalytics.createdAt, new Date(dateRange.to))
+          )
+        );
+      }
+
+      const analytics = await analyticsQuery;
+
+      // Calculate metrics
+      const impressions = analytics.filter(a => a.eventType === 'impression');
+      const clicks = analytics.filter(a => a.eventType === 'click');
+      const uniqueViews = new Set(analytics.map(a => a.sessionId || a.userId).filter(Boolean)).size;
+      
+      const totalImpressions = impressions.length;
+      const totalClicks = clicks.length;
+      const averageCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+      
+      const viewDurations = analytics
+        .filter(a => a.viewDuration !== null && a.viewDuration !== undefined)
+        .map(a => a.viewDuration || 0);
+      const averageViewDuration = viewDurations.length > 0 
+        ? viewDurations.reduce((sum, duration) => sum + duration, 0) / viewDurations.length 
+        : 0;
+
+      // Device breakdown
+      const deviceStats = new Map<string, number>();
+      analytics.forEach(a => {
+        if (a.deviceType) {
+          deviceStats.set(a.deviceType, (deviceStats.get(a.deviceType) || 0) + 1);
+        }
+      });
+
+      const totalEvents = analytics.length;
+      const deviceBreakdown = Array.from(deviceStats.entries()).map(([deviceType, count]) => ({
+        deviceType,
+        count,
+        percentage: totalEvents > 0 ? (count / totalEvents) * 100 : 0
+      }));
+
+      // Time series data (simplified)
+      const timeSeriesData: Array<{
+        date: string;
+        impressions: number;
+        clicks: number;
+        viewDuration: number;
+      }> = [];
+
+      console.log(`✅ storage.getMediaPerformanceReport: Generated report for media ${mediaId}`);
+      
+      return {
+        media,
+        totalImpressions,
+        totalClicks,
+        uniqueViews,
+        averageCTR,
+        averageViewDuration,
+        deviceBreakdown,
+        timeSeriesData,
+      };
+    } catch (error) {
+      console.error('❌ storage.getMediaPerformanceReport: Error:', error);
+      throw error;
+    }
+  }
+
+  // Moderation and approval
+  async updateModerationStatus(mediaId: string, status: string, notes?: string): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`🛡️ storage.updateModerationStatus: Updating moderation status for ${mediaId} to ${status}`);
+      
+      const result = await db.update(promotionalMedia)
+        .set({ 
+          moderationStatus: status,
+          moderationNotes: notes,
+          updatedAt: new Date()
+        })
+        .where(eq(promotionalMedia.id, mediaId))
+        .returning();
+      
+      console.log(`✅ storage.updateModerationStatus: Updated ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.updateModerationStatus: Error:', error);
+      throw error;
+    }
+  }
+
+  async getMediaForModeration(limit?: number): Promise<PromotionalMedia[]> {
+    try {
+      const media = await db.select()
+        .from(promotionalMedia)
+        .where(eq(promotionalMedia.moderationStatus, 'pending'))
+        .orderBy(asc(promotionalMedia.createdAt))
+        .limit(limit || 20);
+      
+      return media;
+    } catch (error) {
+      console.error('❌ storage.getMediaForModeration: Error:', error);
+      throw error;
+    }
+  }
+
+  async approveMedia(mediaId: string, approvedBy: string): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`✅ storage.approveMedia: Approving media ${mediaId} by ${approvedBy}`);
+      
+      const result = await db.update(promotionalMedia)
+        .set({ 
+          moderationStatus: 'approved',
+          status: 'active',
+          approvedBy,
+          approvedAt: new Date(),
+          updatedAt: new Date()
+        })
+        .where(eq(promotionalMedia.id, mediaId))
+        .returning();
+      
+      console.log(`✅ storage.approveMedia: Approved ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.approveMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async rejectMedia(mediaId: string, rejectionNotes: string, rejectedBy: string): Promise<PromotionalMedia | undefined> {
+    try {
+      console.log(`❌ storage.rejectMedia: Rejecting media ${mediaId} by ${rejectedBy}`);
+      
+      const result = await db.update(promotionalMedia)
+        .set({ 
+          moderationStatus: 'rejected',
+          status: 'draft',
+          moderationNotes: rejectionNotes,
+          lastModifiedBy: rejectedBy,
+          updatedAt: new Date()
+        })
+        .where(eq(promotionalMedia.id, mediaId))
+        .returning();
+      
+      console.log(`✅ storage.rejectMedia: Rejected ${result.length} items`);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.rejectMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  // Scheduling and automation
+  async getScheduledMedia(dateRange?: { from: string; to: string }): Promise<PromotionalMedia[]> {
+    try {
+      let conditions: SQL[] = [eq(promotionalMedia.isScheduled, true)];
+      
+      if (dateRange) {
+        conditions.push(
+          and(
+            gte(promotionalMedia.startDate, new Date(dateRange.from)),
+            lte(promotionalMedia.endDate, new Date(dateRange.to))
+          )
+        );
+      }
+
+      const media = await db.select()
+        .from(promotionalMedia)
+        .where(combineConditions(conditions))
+        .orderBy(asc(promotionalMedia.startDate));
+      
+      return media;
+    } catch (error) {
+      console.error('❌ storage.getScheduledMedia: Error:', error);
+      throw error;
+    }
+  }
+
+  async activateScheduledMedia(): Promise<{ activated: number; deactivated: number }> {
+    try {
+      console.log('⏰ storage.activateScheduledMedia: Processing scheduled media');
+      
+      const now = new Date();
+      let activated = 0;
+      let deactivated = 0;
+
+      // Activate media that should start now
+      const toActivate = await db.select()
+        .from(promotionalMedia)
+        .where(
+          and(
+            eq(promotionalMedia.isScheduled, true),
+            eq(promotionalMedia.status, 'draft'),
+            lte(promotionalMedia.startDate, now),
+            or(
+              sql`${promotionalMedia.endDate} IS NULL`,
+              gte(promotionalMedia.endDate, now)
+            )
+          )
+        );
+
+      for (const media of toActivate) {
+        await this.updatePromotionalMedia(media.id, {
+          status: 'active',
+          isActive: true,
+          lastModifiedBy: 'system'
+        });
+        activated++;
+      }
+
+      // Deactivate media that should end now
+      const toDeactivate = await db.select()
+        .from(promotionalMedia)
+        .where(
+          and(
+            eq(promotionalMedia.isScheduled, true),
+            eq(promotionalMedia.status, 'active'),
+            lte(promotionalMedia.endDate, now)
+          )
+        );
+
+      for (const media of toDeactivate) {
+        await this.updatePromotionalMedia(media.id, {
+          status: 'expired',
+          isActive: false,
+          lastModifiedBy: 'system'
+        });
+        deactivated++;
+      }
+
+      console.log(`✅ storage.activateScheduledMedia: Activated ${activated}, deactivated ${deactivated}`);
+      return { activated, deactivated };
+    } catch (error) {
+      console.error('❌ storage.activateScheduledMedia: Error:', error);
+      return { activated: 0, deactivated: 0 };
+    }
+  }
+
+  async expireOutdatedMedia(): Promise<{ expired: number; archived: number }> {
+    try {
+      console.log('🕰️ storage.expireOutdatedMedia: Processing outdated media');
+      
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      
+      let expired = 0;
+      let archived = 0;
+
+      // Expire active media that has passed end date
+      const toExpire = await db.select()
+        .from(promotionalMedia)
+        .where(
+          and(
+            eq(promotionalMedia.status, 'active'),
+            lte(promotionalMedia.endDate, now)
+          )
+        );
+
+      for (const media of toExpire) {
+        await this.updatePromotionalMedia(media.id, {
+          status: 'expired',
+          isActive: false,
+          lastModifiedBy: 'system'
+        });
+        expired++;
+      }
+
+      // Archive very old expired media
+      const toArchive = await db.select()
+        .from(promotionalMedia)
+        .where(
+          and(
+            eq(promotionalMedia.status, 'expired'),
+            lte(promotionalMedia.updatedAt, thirtyDaysAgo)
+          )
+        );
+
+      for (const media of toArchive) {
+        await this.archivePromotionalMedia(media.id);
+        archived++;
+      }
+
+      console.log(`✅ storage.expireOutdatedMedia: Expired ${expired}, archived ${archived}`);
+      return { expired, archived };
+    } catch (error) {
+      console.error('❌ storage.expireOutdatedMedia: Error:', error);
+      return { expired: 0, archived: 0 };
+    }
+  }
+
+  // Campaign management
+  async getMediaByCampaign(campaignId: string, activeOnly?: boolean): Promise<PromotionalMedia[]> {
+    try {
+      let conditions: SQL[] = [eq(promotionalMedia.campaignId, campaignId)];
+      
+      if (activeOnly) {
+        conditions.push(
+          and(
+            eq(promotionalMedia.isActive, true),
+            eq(promotionalMedia.status, 'active')
+          )
+        );
+      }
+
+      const media = await db.select()
+        .from(promotionalMedia)
+        .where(combineConditions(conditions))
+        .orderBy(asc(promotionalMedia.displayOrder));
+      
+      return media;
+    } catch (error) {
+      console.error('❌ storage.getMediaByCampaign: Error:', error);
+      throw error;
+    }
+  }
+
+  async getCampaignStatistics(campaignId: string): Promise<{
+    totalMedia: number;
+    activeMedia: number;
+    totalImpressions: number;
+    totalClicks: number;
+    averageCTR: number;
+    campaignPeriod: { startDate: string; endDate: string };
+  }> {
+    try {
+      const campaignMedia = await this.getMediaByCampaign(campaignId);
+      
+      const totalMedia = campaignMedia.length;
+      const activeMedia = campaignMedia.filter(m => m.isActive && m.status === 'active').length;
+      const totalImpressions = campaignMedia.reduce((sum, m) => sum + (m.impressions || 0), 0);
+      const totalClicks = campaignMedia.reduce((sum, m) => sum + (m.clicks || 0), 0);
+      const averageCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+      // Calculate campaign period
+      const startDates = campaignMedia.map(m => m.startDate).filter(Boolean) as Date[];
+      const endDates = campaignMedia.map(m => m.endDate).filter(Boolean) as Date[];
+      
+      const campaignPeriod = {
+        startDate: startDates.length > 0 ? new Date(Math.min(...startDates.map(d => d.getTime()))).toISOString() : '',
+        endDate: endDates.length > 0 ? new Date(Math.max(...endDates.map(d => d.getTime()))).toISOString() : ''
+      };
+
+      return {
+        totalMedia,
+        activeMedia,
+        totalImpressions,
+        totalClicks,
+        averageCTR,
+        campaignPeriod,
+      };
+    } catch (error) {
+      console.error('❌ storage.getCampaignStatistics: Error:', error);
+      throw error;
+    }
+  }
+
+  // Targeting and personalization
+  async checkMediaTargeting(mediaId: string, userContext: {
+    userId?: string;
+    userRole?: string;
+    orderCount?: number;
+    location?: { country?: string; state?: string; city?: string };
+  }): Promise<{ eligible: boolean; reasons: string[] }> {
+    try {
+      const media = await this.getPromotionalMediaItem(mediaId);
+      if (!media) {
+        return { eligible: false, reasons: ['Media not found'] };
+      }
+
+      const reasons: string[] = [];
+
+      // Check basic eligibility
+      if (!media.isActive) {
+        reasons.push('Media is not active');
+      }
+
+      if (media.status !== 'active') {
+        reasons.push(`Media status is ${media.status}`);
+      }
+
+      if (media.moderationStatus !== 'approved') {
+        reasons.push('Media is not approved');
+      }
+
+      // Check targeting rules
+      const targetAudience = media.targetAudience as any;
+      
+      if (targetAudience?.userRoles && userContext.userRole) {
+        if (!targetAudience.userRoles.includes(userContext.userRole)) {
+          reasons.push(`User role ${userContext.userRole} not in target audience`);
+        }
+      }
+
+      if (targetAudience?.minimumOrderCount && userContext.orderCount !== undefined) {
+        if (userContext.orderCount < targetAudience.minimumOrderCount) {
+          reasons.push(`User order count ${userContext.orderCount} below minimum ${targetAudience.minimumOrderCount}`);
+        }
+      }
+
+      if (targetAudience?.excludeUserIds && userContext.userId) {
+        if (targetAudience.excludeUserIds.includes(userContext.userId)) {
+          reasons.push('User is excluded from target audience');
+        }
+      }
+
+      // Check geographic targeting
+      const geoTargeting = media.geographicTargeting as any;
+      
+      if (geoTargeting?.countries && userContext.location?.country) {
+        if (!geoTargeting.countries.includes(userContext.location.country)) {
+          reasons.push(`Country ${userContext.location.country} not in target countries`);
+        }
+      }
+
+      return { eligible: reasons.length === 0, reasons };
+    } catch (error) {
+      console.error('❌ storage.checkMediaTargeting: Error:', error);
+      return { eligible: false, reasons: ['Targeting check failed'] };
+    }
+  }
+
+  async getPersonalizedMedia(userId: string, placement?: string): Promise<PromotionalMedia[]> {
+    return this.getTargetedMediaForUser(userId, placement);
+  }
+
+  // Cache and performance optimization
+  async updateMediaMetrics(mediaId: string, metrics: {
+    impressions?: number;
+    clicks?: number;
+    uniqueViews?: number;
+    avgViewDuration?: number;
+    lastDisplayed?: Date;
+  }): Promise<void> {
+    try {
+      const updateData: any = { updatedAt: new Date() };
+      
+      if (metrics.impressions !== undefined) {
+        updateData.impressions = sql`${promotionalMedia.impressions} + ${metrics.impressions}`;
+      }
+      
+      if (metrics.clicks !== undefined) {
+        updateData.clicks = sql`${promotionalMedia.clicks} + ${metrics.clicks}`;
+      }
+      
+      if (metrics.uniqueViews !== undefined) {
+        updateData.uniqueViews = sql`${promotionalMedia.uniqueViews} + ${metrics.uniqueViews}`;
+      }
+      
+      if (metrics.avgViewDuration !== undefined) {
+        updateData.avgViewDuration = metrics.avgViewDuration;
+      }
+      
+      if (metrics.lastDisplayed) {
+        updateData.lastDisplayed = metrics.lastDisplayed;
+      }
+
+      await db.update(promotionalMedia)
+        .set(updateData)
+        .where(eq(promotionalMedia.id, mediaId));
+    } catch (error) {
+      console.error('❌ storage.updateMediaMetrics: Error:', error);
+      // Don't throw error for metrics updates
+    }
+  }
+
+  async getMediaCacheStatus(mediaId: string): Promise<{
+    cached: boolean;
+    cacheExpiry: Date;
+    loadTime: number;
+  }> {
+    // Placeholder implementation
+    return {
+      cached: true,
+      cacheExpiry: new Date(Date.now() + 3600000), // 1 hour from now
+      loadTime: 0
+    };
+  }
+
+  // Content management
+  async duplicateMedia(mediaId: string, modifications?: Partial<PromotionalMediaCreateData>): Promise<PromotionalMedia> {
+    try {
+      console.log(`📋 storage.duplicateMedia: Duplicating media ${mediaId}`);
+      
+      const originalMedia = await this.getPromotionalMediaItem(mediaId);
+      if (!originalMedia) {
+        throw new Error('Original media not found');
+      }
+
+      const newMediaData: PromotionalMediaCreateData & { createdBy: string } = {
+        ...originalMedia,
+        id: undefined as any,
+        title: `${originalMedia.title} (Copy)`,
+        status: 'draft',
+        moderationStatus: 'pending',
+        isActive: false,
+        impressions: 0,
+        clicks: 0,
+        uniqueViews: 0,
+        conversionRate: 0,
+        avgViewDuration: 0,
+        lastDisplayed: undefined,
+        loadTime: 0,
+        errorRate: 0,
+        bounceRate: 0,
+        approvedBy: undefined,
+        approvedAt: undefined,
+        archivedAt: undefined,
+        changeHistory: [],
+        createdAt: undefined,
+        updatedAt: undefined,
+        createdBy: originalMedia.createdBy,
+        ...modifications,
+      };
+
+      return await this.createPromotionalMedia(newMediaData);
+    } catch (error) {
+      console.error(`❌ storage.duplicateMedia: Error duplicating media ${mediaId}:`, error);
+      throw error;
+    }
+  }
+
+  async generateMediaPreview(mediaId: string): Promise<{ thumbnailUrl: string; previewUrl: string }> {
+    try {
+      const media = await this.getPromotionalMediaItem(mediaId);
+      if (!media) {
+        throw new Error('Media not found');
+      }
+
+      // For now, return the existing URLs
+      // In a real implementation, this would generate optimized previews
+      return {
+        thumbnailUrl: media.thumbnailUrl || media.mediaUrl,
+        previewUrl: media.mediaUrl
+      };
+    } catch (error) {
+      console.error('❌ storage.generateMediaPreview: Error:', error);
+      throw error;
+    }
   }
 
 }

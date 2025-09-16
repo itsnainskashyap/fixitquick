@@ -2259,6 +2259,226 @@ export const taxes = pgTable("taxes", {
   gstTypeIdx: index("tax_gst_type_idx").on(table.gstType),
 }));
 
+// Promotional Media System for marketing and user engagement
+export const promotionalMedia = pgTable("promotional_media", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Basic info
+  title: varchar("title").notNull(),
+  description: text("description"),
+  mediaType: varchar("media_type", { enum: ["image", "video"] }).notNull(),
+  mediaUrl: text("media_url").notNull(), // Object storage URL
+  thumbnailUrl: text("thumbnail_url"), // Thumbnail for videos, compressed for images
+  originalFileName: varchar("original_file_name"), // Original uploaded file name
+  
+  // Media properties
+  fileSize: integer("file_size"), // File size in bytes
+  duration: integer("duration"), // Video duration in seconds (null for images)
+  dimensions: jsonb("dimensions").$type<{
+    width: number;
+    height: number;
+  }>(),
+  mimeType: varchar("mime_type"), // image/jpeg, video/mp4, etc.
+  
+  // Configuration and display settings
+  isActive: boolean("is_active").default(true),
+  displayOrder: integer("display_order").default(0), // Order in carousel
+  placement: varchar("placement", { 
+    enum: ["header", "profile", "sidebar", "banner", "modal", "fullscreen"] 
+  }).default("header"),
+  
+  // Auto-play and interaction settings
+  autoPlay: boolean("auto_play").default(true), // For videos
+  loopEnabled: boolean("loop_enabled").default(true), // Seamless looping
+  mutedByDefault: boolean("muted_by_default").default(true), // Browser compliance
+  showControls: boolean("show_controls").default(false), // Video controls visibility
+  allowPause: boolean("allow_pause").default(false), // Whether users can pause
+  clickAction: varchar("click_action", {
+    enum: ["none", "open_url", "show_modal", "track_only"]
+  }).default("track_only"),
+  clickUrl: text("click_url"), // URL to open on click
+  
+  // Targeting and audience
+  targetAudience: jsonb("target_audience").$type<{
+    userRoles?: string[]; // ["user", "service_provider", "admin"]
+    newUsersOnly?: boolean; // Show only to new users
+    returningUsersOnly?: boolean; // Show only to returning users
+    minimumOrderCount?: number; // Minimum orders user should have
+    excludeUserIds?: string[]; // Specific users to exclude
+  }>().default(sql`'{}'::jsonb`),
+  
+  // Geographic targeting
+  geographicTargeting: jsonb("geographic_targeting").$type<{
+    countries?: string[]; // Country codes
+    states?: string[]; // State names
+    cities?: string[]; // City names
+    excludeLocations?: string[]; // Locations to exclude
+  }>().default(sql`'{}'::jsonb`),
+  
+  // Scheduling configuration
+  isScheduled: boolean("is_scheduled").default(false),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  schedulingRules: jsonb("scheduling_rules").$type<{
+    timeRanges?: Array<{ start: string; end: string }>; // ["09:00", "18:00"]
+    daysOfWeek?: number[]; // [0, 1, 2, 3, 4] for Mon-Fri
+    excludeDates?: string[]; // Specific dates to exclude
+    timezoneOffset?: number; // UTC offset for scheduling
+  }>().default(sql`'{}'::jsonb`),
+  
+  // Campaign management
+  campaignId: varchar("campaign_id"), // Group related media items
+  campaignName: varchar("campaign_name"),
+  tags: jsonb("tags").$type<string[]>().default(sql`'[]'::jsonb`),
+  priority: integer("priority").default(0), // Higher priority shows first
+  weight: integer("weight").default(1), // For weighted random selection
+  
+  // Analytics and tracking
+  impressions: integer("impressions").default(0), // How many times displayed
+  clicks: integer("clicks").default(0), // User interactions
+  uniqueViews: integer("unique_views").default(0), // Unique user views
+  conversionRate: decimal("conversion_rate", { precision: 5, scale: 2 }).default("0.00"),
+  avgViewDuration: integer("avg_view_duration").default(0), // Average seconds viewed
+  lastDisplayed: timestamp("last_displayed"),
+  
+  // Performance metrics
+  loadTime: integer("load_time").default(0), // Average load time in ms
+  errorRate: decimal("error_rate", { precision: 5, scale: 2 }).default("0.00"),
+  bounceRate: decimal("bounce_rate", { precision: 5, scale: 2 }).default("0.00"),
+  
+  // A/B Testing
+  variant: varchar("variant").default("default"), // A, B, C, etc.
+  testGroup: varchar("test_group"), // Test group identifier
+  conversionGoal: varchar("conversion_goal"), // What success looks like
+  
+  // Business rules and compliance
+  requiresAgeVerification: boolean("requires_age_verification").default(false),
+  contentRating: varchar("content_rating", {
+    enum: ["general", "teen", "mature", "adult"]
+  }).default("general"),
+  complianceFlags: jsonb("compliance_flags").$type<{
+    gdprCompliant?: boolean;
+    coppaCompliant?: boolean;
+    accessibilityCompliant?: boolean;
+    adStandards?: boolean;
+  }>().default(sql`'{"gdprCompliant": true, "coppaCompliant": true}'::jsonb`),
+  
+  // Optimization settings
+  preloadStrategy: varchar("preload_strategy", {
+    enum: ["none", "metadata", "auto"]
+  }).default("metadata"),
+  compressionLevel: integer("compression_level").default(80), // 0-100
+  enableLazyLoading: boolean("enable_lazy_loading").default(true),
+  cacheTtl: integer("cache_ttl").default(3600), // Cache TTL in seconds
+  
+  // Status and lifecycle
+  status: varchar("status", {
+    enum: ["draft", "pending_review", "approved", "active", "paused", "expired", "archived"]
+  }).default("draft"),
+  moderationStatus: varchar("moderation_status", {
+    enum: ["pending", "approved", "rejected", "flagged"]
+  }).default("pending"),
+  moderationNotes: text("moderation_notes"),
+  
+  // Audit trail
+  createdBy: varchar("created_by").references(() => users.id).notNull(),
+  lastModifiedBy: varchar("last_modified_by").references(() => users.id),
+  approvedBy: varchar("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  archivedAt: timestamp("archived_at"),
+  
+  // Change tracking
+  changeHistory: jsonb("change_history").$type<Array<{
+    field: string;
+    oldValue: any;
+    newValue: any;
+    changedBy: string;
+    changedAt: string;
+    reason?: string;
+  }>>().default(sql`'[]'::jsonb`),
+  
+  // Metadata
+  metadata: jsonb("metadata").$type<Record<string, any>>().default(sql`'{}'::jsonb`),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
+}, (table) => ({
+  createdByIdx: index("pm_created_by_idx").on(table.createdBy),
+  mediaTypeIdx: index("pm_media_type_idx").on(table.mediaType),
+  isActiveIdx: index("pm_is_active_idx").on(table.isActive),
+  displayOrderIdx: index("pm_display_order_idx").on(table.displayOrder),
+  placementIdx: index("pm_placement_idx").on(table.placement),
+  statusIdx: index("pm_status_idx").on(table.status),
+  scheduledIdx: index("pm_scheduled_idx").on(table.isScheduled, table.startDate, table.endDate),
+  campaignIdx: index("pm_campaign_idx").on(table.campaignId),
+  priorityIdx: index("pm_priority_idx").on(table.priority),
+  impressionsIdx: index("pm_impressions_idx").on(table.impressions),
+  clicksIdx: index("pm_clicks_idx").on(table.clicks),
+  lastDisplayedIdx: index("pm_last_displayed_idx").on(table.lastDisplayed),
+  moderationIdx: index("pm_moderation_idx").on(table.moderationStatus),
+  createdAtIdx: index("pm_created_at_idx").on(table.createdAt),
+  activeContentIdx: index("pm_active_content_idx").on(table.isActive, table.status, table.placement),
+  performanceIdx: index("pm_performance_idx").on(table.impressions, table.clicks, table.conversionRate),
+}));
+
+// Promotional Media Analytics - Detailed tracking table
+export const promotionalMediaAnalytics = pgTable("promotional_media_analytics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  mediaId: varchar("media_id").references(() => promotionalMedia.id).notNull(),
+  userId: varchar("user_id").references(() => users.id), // Can be null for anonymous tracking
+  sessionId: varchar("session_id"), // Browser session identifier
+  
+  // Event tracking
+  eventType: varchar("event_type", {
+    enum: ["impression", "click", "play", "pause", "complete", "error", "load"]
+  }).notNull(),
+  eventValue: decimal("event_value", { precision: 10, scale: 2 }), // Associated value if any
+  
+  // Context information
+  placement: varchar("placement"), // Where it was shown
+  viewportSize: jsonb("viewport_size").$type<{ width: number; height: number }>(),
+  deviceType: varchar("device_type", { enum: ["desktop", "tablet", "mobile"] }),
+  userAgent: text("user_agent"),
+  ipAddress: varchar("ip_address"),
+  
+  // Timing data
+  viewDuration: integer("view_duration"), // How long viewed in seconds
+  timeToFirstByte: integer("time_to_first_byte"), // Load performance
+  domLoadTime: integer("dom_load_time"), // DOM rendering time
+  
+  // User behavior
+  scrollDepth: integer("scroll_depth"), // How far user scrolled
+  clickPosition: jsonb("click_position").$type<{ x: number; y: number }>(),
+  interactionScore: decimal("interaction_score", { precision: 5, scale: 2 }).default("0.00"),
+  
+  // Attribution
+  referrer: text("referrer"), // Previous page
+  source: varchar("source"), // utm_source equivalent
+  medium: varchar("medium"), // utm_medium equivalent  
+  campaign: varchar("campaign"), // utm_campaign equivalent
+  
+  // Geographic data
+  country: varchar("country"),
+  state: varchar("state"),
+  city: varchar("city"),
+  timezone: varchar("timezone"),
+  
+  // Metadata
+  metadata: jsonb("metadata").$type<Record<string, any>>().default(sql`'{}'::jsonb`),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  mediaIdIdx: index("pma_media_id_idx").on(table.mediaId),
+  userIdIdx: index("pma_user_id_idx").on(table.userId),
+  sessionIdIdx: index("pma_session_id_idx").on(table.sessionId),
+  eventTypeIdx: index("pma_event_type_idx").on(table.eventType),
+  createdAtIdx: index("pma_created_at_idx").on(table.createdAt),
+  deviceTypeIdx: index("pma_device_type_idx").on(table.deviceType),
+  geographicIdx: index("pma_geographic_idx").on(table.country, table.state, table.city),
+  performanceIdx: index("pma_performance_idx").on(table.mediaId, table.eventType, table.createdAt),
+}));
+
 // Insert schemas for new tables
 export const insertUserReferralSchema = createInsertSchema(userReferrals).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertReferralRecordSchema = createInsertSchema(referralRecords).omit({ id: true, createdAt: true, updatedAt: true });
@@ -2269,6 +2489,27 @@ export const insertAccountDeletionRequestSchema = createInsertSchema(accountDele
 // Tax management insert schemas
 export const insertTaxCategorySchema = createInsertSchema(taxCategories).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Promotional media insert schemas
+export const insertPromotionalMediaSchema = createInsertSchema(promotionalMedia).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  impressions: true,
+  clicks: true,
+  uniqueViews: true,
+  conversionRate: true,
+  avgViewDuration: true,
+  lastDisplayed: true,
+  loadTime: true,
+  errorRate: true,
+  bounceRate: true,
+  changeHistory: true
+});
+export const insertPromotionalMediaAnalyticsSchema = createInsertSchema(promotionalMediaAnalytics).omit({ 
+  id: true, 
+  createdAt: true 
+});
 
 // Validation schemas for API endpoints
 export const referralCodeGenerateSchema = z.object({
@@ -2443,6 +2684,161 @@ export const taxStatisticsFiltersSchema = z.object({
   typeFilter: z.enum(["percentage", "fixed", "tiered"]).optional(),
 });
 
+// Promotional Media validation schemas
+export const promotionalMediaCreateSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(1000).optional(),
+  mediaType: z.enum(["image", "video"]),
+  mediaUrl: z.string().url(),
+  thumbnailUrl: z.string().url().optional(),
+  originalFileName: z.string().max(255).optional(),
+  fileSize: z.number().int().min(0).optional(),
+  duration: z.number().int().min(0).optional(),
+  dimensions: z.object({
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+  }).optional(),
+  mimeType: z.string().optional(),
+  isActive: z.boolean().default(true),
+  displayOrder: z.number().int().min(0).default(0),
+  placement: z.enum(["header", "profile", "sidebar", "banner", "modal", "fullscreen"]).default("header"),
+  autoPlay: z.boolean().default(true),
+  loopEnabled: z.boolean().default(true),
+  mutedByDefault: z.boolean().default(true),
+  showControls: z.boolean().default(false),
+  allowPause: z.boolean().default(false),
+  clickAction: z.enum(["none", "open_url", "show_modal", "track_only"]).default("track_only"),
+  clickUrl: z.string().url().optional(),
+  targetAudience: z.object({
+    userRoles: z.array(z.string()).optional(),
+    newUsersOnly: z.boolean().optional(),
+    returningUsersOnly: z.boolean().optional(),
+    minimumOrderCount: z.number().int().min(0).optional(),
+    excludeUserIds: z.array(z.string().uuid()).optional(),
+  }).default({}),
+  geographicTargeting: z.object({
+    countries: z.array(z.string()).optional(),
+    states: z.array(z.string()).optional(),
+    cities: z.array(z.string()).optional(),
+    excludeLocations: z.array(z.string()).optional(),
+  }).default({}),
+  isScheduled: z.boolean().default(false),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  schedulingRules: z.object({
+    timeRanges: z.array(z.object({
+      start: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+      end: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+    })).optional(),
+    daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+    excludeDates: z.array(z.string().date()).optional(),
+    timezoneOffset: z.number().int().min(-12).max(14).optional(),
+  }).default({}),
+  campaignId: z.string().max(100).optional(),
+  campaignName: z.string().max(200).optional(),
+  tags: z.array(z.string().max(50)).default([]),
+  priority: z.number().int().min(0).default(0),
+  weight: z.number().int().min(1).default(1),
+  requiresAgeVerification: z.boolean().default(false),
+  contentRating: z.enum(["general", "teen", "mature", "adult"]).default("general"),
+  complianceFlags: z.object({
+    gdprCompliant: z.boolean().optional(),
+    coppaCompliant: z.boolean().optional(),
+    accessibilityCompliant: z.boolean().optional(),
+    adStandards: z.boolean().optional(),
+  }).default({ gdprCompliant: true, coppaCompliant: true }),
+  preloadStrategy: z.enum(["none", "metadata", "auto"]).default("metadata"),
+  compressionLevel: z.number().int().min(0).max(100).default(80),
+  enableLazyLoading: z.boolean().default(true),
+  cacheTtl: z.number().int().min(0).default(3600),
+  status: z.enum(["draft", "pending_review", "approved", "active", "paused", "expired", "archived"]).default("draft"),
+  moderationStatus: z.enum(["pending", "approved", "rejected", "flagged"]).default("pending"),
+  moderationNotes: z.string().max(1000).optional(),
+  metadata: z.record(z.any()).default({}),
+});
+
+export const promotionalMediaUpdateSchema = promotionalMediaCreateSchema.partial();
+
+export const promotionalMediaFiltersSchema = z.object({
+  isActive: z.boolean().optional(),
+  placement: z.enum(["header", "profile", "sidebar", "banner", "modal", "fullscreen"]).optional(),
+  mediaType: z.enum(["image", "video"]).optional(),
+  status: z.enum(["draft", "pending_review", "approved", "active", "paused", "expired", "archived"]).optional(),
+  moderationStatus: z.enum(["pending", "approved", "rejected", "flagged"]).optional(),
+  campaignId: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  search: z.string().optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+  offset: z.number().int().min(0).default(0),
+  sortBy: z.enum(["createdAt", "title", "displayOrder", "priority", "impressions", "clicks"]).default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).default("desc"),
+});
+
+export const promotionalMediaBulkOperationSchema = z.object({
+  operation: z.enum(["activate", "deactivate", "delete", "archive", "update_priority"]),
+  mediaIds: z.array(z.string().uuid()).min(1),
+  data: z.object({
+    isActive: z.boolean().optional(),
+    priority: z.number().int().min(0).optional(),
+    status: z.enum(["draft", "pending_review", "approved", "active", "paused", "expired", "archived"]).optional(),
+  }).optional(),
+});
+
+export const promotionalMediaAnalyticsCreateSchema = z.object({
+  mediaId: z.string().uuid(),
+  userId: z.string().uuid().optional(),
+  sessionId: z.string().max(255).optional(),
+  eventType: z.enum(["impression", "click", "play", "pause", "complete", "error", "load"]),
+  eventValue: z.number().optional(),
+  placement: z.string().max(50).optional(),
+  viewportSize: z.object({
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+  }).optional(),
+  deviceType: z.enum(["desktop", "tablet", "mobile"]).optional(),
+  userAgent: z.string().max(1000).optional(),
+  ipAddress: z.string().max(45).optional(),
+  viewDuration: z.number().int().min(0).optional(),
+  timeToFirstByte: z.number().int().min(0).optional(),
+  domLoadTime: z.number().int().min(0).optional(),
+  scrollDepth: z.number().int().min(0).max(100).optional(),
+  clickPosition: z.object({
+    x: z.number().int().min(0),
+    y: z.number().int().min(0),
+  }).optional(),
+  interactionScore: z.number().min(0).max(100).optional(),
+  referrer: z.string().max(2000).optional(),
+  source: z.string().max(100).optional(),
+  medium: z.string().max(100).optional(),
+  campaign: z.string().max(100).optional(),
+  country: z.string().max(2).optional(),
+  state: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  timezone: z.string().max(50).optional(),
+  metadata: z.record(z.any()).default({}),
+});
+
+export const promotionalMediaActiveQuerySchema = z.object({
+  placement: z.enum(["header", "profile", "sidebar", "banner", "modal", "fullscreen"]).optional(),
+  userId: z.string().uuid().optional(),
+  userRole: z.string().optional(),
+  country: z.string().max(2).optional(),
+  state: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  limit: z.number().int().min(1).max(20).default(5),
+});
+
+export const promotionalMediaStatisticsSchema = z.object({
+  mediaIds: z.array(z.string().uuid()).optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
+  groupBy: z.enum(["day", "week", "month"]).default("day"),
+  placement: z.enum(["header", "profile", "sidebar", "banner", "modal", "fullscreen"]).optional(),
+  mediaType: z.enum(["image", "video"]).optional(),
+});
+
 // Type exports for new tables
 export type UserReferral = typeof userReferrals.$inferSelect;
 export type InsertUserReferral = z.infer<typeof insertUserReferralSchema>;
@@ -2461,6 +2857,12 @@ export type InsertTaxCategory = z.infer<typeof insertTaxCategorySchema>;
 export type Tax = typeof taxes.$inferSelect;
 export type InsertTax = z.infer<typeof insertTaxSchema>;
 
+// Promotional media type exports
+export type PromotionalMedia = typeof promotionalMedia.$inferSelect;
+export type InsertPromotionalMedia = z.infer<typeof insertPromotionalMediaSchema>;
+export type PromotionalMediaAnalytics = typeof promotionalMediaAnalytics.$inferSelect;
+export type InsertPromotionalMediaAnalytics = z.infer<typeof insertPromotionalMediaAnalyticsSchema>;
+
 // API operation types
 export type ReferralCodeGenerateData = z.infer<typeof referralCodeGenerateSchema>;
 export type ReferralRecordCreateData = z.infer<typeof referralRecordCreateSchema>;
@@ -2477,6 +2879,15 @@ export type TaxUpdateData = z.infer<typeof taxUpdateSchema>;
 export type TaxCalculationRequestData = z.infer<typeof taxCalculationRequestSchema>;
 export type TaxBulkOperationData = z.infer<typeof taxBulkOperationSchema>;
 export type TaxStatisticsFiltersData = z.infer<typeof taxStatisticsFiltersSchema>;
+
+// Promotional media API operation types
+export type PromotionalMediaCreateData = z.infer<typeof promotionalMediaCreateSchema>;
+export type PromotionalMediaUpdateData = z.infer<typeof promotionalMediaUpdateSchema>;
+export type PromotionalMediaFiltersData = z.infer<typeof promotionalMediaFiltersSchema>;
+export type PromotionalMediaBulkOperationData = z.infer<typeof promotionalMediaBulkOperationSchema>;
+export type PromotionalMediaAnalyticsCreateData = z.infer<typeof promotionalMediaAnalyticsCreateSchema>;
+export type PromotionalMediaActiveQueryData = z.infer<typeof promotionalMediaActiveQuerySchema>;
+export type PromotionalMediaStatisticsData = z.infer<typeof promotionalMediaStatisticsSchema>;
 
 // API operation types for Service Provider Profiles
 export type ServiceProviderProfileUpdateData = z.infer<typeof serviceProviderProfileUpdateSchema>;
