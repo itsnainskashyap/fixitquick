@@ -239,8 +239,8 @@ class WebSocketManager {
         return;
       }
 
-      // Validate token expiration
-      if (decodedPayload.exp && Date.now() > decodedPayload.exp) {
+      // Validate token expiration - FIXED: Compare seconds to seconds, not milliseconds to seconds
+      if (decodedPayload.exp && Math.floor(Date.now() / 1000) > decodedPayload.exp) {
         this.sendToConnection(connectionId, {
           type: 'auth_failed',
           data: { message: 'Token expired' }
