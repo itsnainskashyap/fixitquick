@@ -8,11 +8,12 @@ import { BottomNavigation } from '@/components/BottomNavigation';
 import { PWAInstallPrompt } from '@/components/PWAInstallPrompt';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
+import { useUserLocation } from '@/hooks/useUserLocation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
-import { Sparkles, TrendingUp, Clock, Star } from 'lucide-react';
+import { Sparkles, TrendingUp, Clock, Star, MapPin, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface ServiceCategory {
   id: string;
@@ -49,6 +50,7 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const { addItem, getItemCount } = useCart();
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const { location: userLocation, status: locationStatus, error: locationError, detectLocation } = useUserLocation();
 
   // Fetch main categories (level 0) from backend for home page
   const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
@@ -141,6 +143,83 @@ export default function Home() {
           <h1 className="text-2xl font-bold text-foreground mb-2">
             {getUserGreeting()}, {user.firstName || 'there'}! 👋
           </h1>
+          
+          {/* Location Display */}
+          <div className="flex items-center space-x-2 mb-3" data-testid="location-display">
+            {locationStatus === 'detecting' && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex items-center space-x-2 text-muted-foreground"
+              >
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Detecting location...</span>
+              </motion.div>
+            )}
+            
+            {locationStatus === 'success' && userLocation && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 text-muted-foreground"
+                data-testid="location-success"
+              >
+                <MapPin className="w-4 h-4 text-primary" />
+                <span className="text-sm">
+                  {userLocation.area}, {userLocation.city}
+                </span>
+                {userLocation.pincode && (
+                  <Badge variant="outline" className="text-xs px-2 py-0.5">
+                    {userLocation.pincode}
+                  </Badge>
+                )}
+              </motion.div>
+            )}
+            
+            {locationStatus === 'permission-denied' && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 text-orange-600 dark:text-orange-400"
+                data-testid="location-permission-denied"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm">Location access needed</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={detectLocation}
+                  className="text-xs h-6 px-2 text-primary hover:text-primary/80"
+                  data-testid="enable-location-button"
+                >
+                  Enable
+                </Button>
+              </motion.div>
+            )}
+            
+            {locationStatus === 'error' && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 text-destructive"
+                data-testid="location-error"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm">Location unavailable</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={detectLocation}
+                  className="text-xs h-6 px-2 text-primary hover:text-primary/80"
+                  data-testid="retry-location-button"
+                >
+                  <RefreshCw className="w-3 h-3 mr-1" />
+                  Retry
+                </Button>
+              </motion.div>
+            )}
+          </div>
+          
           <p className="text-muted-foreground">What can we fix for you today?</p>
         </motion.div>
 
