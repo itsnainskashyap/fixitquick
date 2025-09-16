@@ -46,8 +46,46 @@ import {
   type TaxCategory,
   type InsertTaxCategory
 } from '@shared/schema';
+
+// Form type interfaces for proper string date handling
+interface CouponFormData {
+  code?: string;
+  title?: string;
+  description?: string;
+  type: 'percentage' | 'fixed_amount' | 'free_delivery' | 'service_specific';
+  value?: string;
+  maxDiscountAmount?: string | null;
+  minOrderAmount?: string | null;
+  validFrom?: string; // HTML date input uses string format
+  validUntil?: string; // HTML date input uses string format
+  usageLimit?: number | null;
+  maxUsagePerUser?: number | null;
+  isActive: boolean;
+  createdBy?: string;
+  targetAudience?: string;
+  serviceCategoryIds?: string[];
+  applicableOn?: string;
+  stackable?: boolean;
+  autoDeactivate?: boolean;
+}
+
+interface MediaFormData {
+  title: string;
+  description: string;
+  mediaType: 'image' | 'video' | 'carousel';
+  placement: 'header' | 'footer' | 'sidebar' | 'banner' | 'popup';
+  isActive: boolean;
+  autoPlay: boolean;
+  loopEnabled: boolean;
+  displayOrder: number;
+  targetAudience: 'all' | 'new_users' | 'returning_users' | 'premium_users';
+  startDate: string;
+  endDate: string;
+  isScheduled: boolean;
+}
 import { 
   Users, 
+  User,
   DollarSign, 
   ShoppingCart, 
   TrendingUp,
@@ -2207,6 +2245,18 @@ const TaxManagementSystem = () => {
   );
 };
 
+// Transform form data for API submission
+const transformCouponData = (formData: CouponFormData): InsertCoupon => {
+  return {
+    ...formData,
+    validFrom: new Date(formData.validFrom!),
+    validUntil: new Date(formData.validUntil!),
+    value: parseFloat(formData.value || '0'),
+    maxDiscountAmount: formData.maxDiscountAmount ? parseFloat(formData.maxDiscountAmount) : null,
+    minOrderAmount: formData.minOrderAmount ? parseFloat(formData.minOrderAmount) : null,
+  } as InsertCoupon;
+};
+
 // Comprehensive Coupon Management System Component
 const CouponManagementSystem = () => {
   const [selectedCoupons, setSelectedCoupons] = useState<string[]>([]);
@@ -2217,7 +2267,7 @@ const CouponManagementSystem = () => {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null);
-  const [couponForm, setCouponForm] = useState<Partial<InsertCoupon>>({
+  const [couponForm, setCouponForm] = useState<CouponFormData>({
     type: 'percentage',
     isActive: true,
     usageLimit: null,
@@ -2258,13 +2308,22 @@ const CouponManagementSystem = () => {
   
   // Create coupon mutation
   const createCouponMutation = useMutation({
-    mutationFn: (couponData: InsertCoupon) => 
-      apiRequest('POST', '/api/v1/admin/coupons', couponData),
+    mutationFn: (couponData: CouponFormData) => {
+      const transformedData = transformCouponData(couponData);
+      return apiRequest('POST', '/api/v1/admin/coupons', transformedData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
       setIsCreateDialogOpen(false);
-      setCouponForm({});
+      setCouponForm({
+        type: 'percentage',
+        isActive: true,
+        usageLimit: null,
+        maxUsagePerUser: null,
+        minOrderAmount: null,
+        maxDiscountAmount: null,
+      });
       toast({
         title: "Success",
         description: "Coupon created successfully",
@@ -2281,14 +2340,23 @@ const CouponManagementSystem = () => {
   
   // Update coupon mutation
   const updateCouponMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<InsertCoupon> }) =>
-      apiRequest('PUT', `/api/v1/admin/coupons/${id}`, data),
+    mutationFn: ({ id, data }: { id: string; data: CouponFormData }) => {
+      const transformedData = transformCouponData(data);
+      return apiRequest('PUT', `/api/v1/admin/coupons/${id}`, transformedData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-coupons'] });
       queryClient.invalidateQueries({ queryKey: ['admin-coupon-statistics'] });
       setIsEditDialogOpen(false);
       setSelectedCoupon(null);
-      setCouponForm({});
+      setCouponForm({
+        type: 'percentage',
+        isActive: true,
+        usageLimit: null,
+        maxUsagePerUser: null,
+        minOrderAmount: null,
+        maxDiscountAmount: null,
+      });
       toast({
         title: "Success",
         description: "Coupon updated successfully",
@@ -3648,14 +3716,19 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
     }
   };
 
-  const handleStatusChangeWithNotes = (status: 'approved' | 'rejected') => {
+  const handleStatusChangeWithNotes = (status: 'approve' | 'reject') => {
     setActionType(status);
     setShowNotesDialog(true);
   };
 
   const confirmStatusChange = () => {
     if (actionType) {
-      onStatusChange(provider.userId, actionType, notes);
+      // Convert action to status for API call
+      const statusMapping: Record<'approve' | 'reject', 'approved' | 'rejected'> = {
+        'approve': 'approved',
+        'reject': 'rejected'
+      };
+      onStatusChange(provider.userId, statusMapping[actionType], notes);
       setShowNotesDialog(false);
       setActionType(null);
     }
