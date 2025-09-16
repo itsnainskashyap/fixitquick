@@ -443,18 +443,35 @@ export async function adminSessionMiddleware(req: Request, res: Response, next: 
   try {
     let userId: string | undefined;
     
-    // Handle both session (Replit Auth) and JWT auth
-    if (req.user?.claims?.sub) {
-      // Replit Auth session
-      userId = req.user.claims.sub;
-      console.log(`🔍 adminSessionMiddleware: Using session auth, userId: ${userId}`);
-    } else if (req.user?.id) {
-      // JWT Auth
-      userId = req.user.id;
-      console.log(`🔍 adminSessionMiddleware: Using JWT auth, userId: ${userId}`);
-    } else {
-      console.log('🚫 adminSessionMiddleware: No authenticated user');
-      return res.status(401).json({ message: "Authentication required" });
+    // PRIORITY 1: Check for admin JWT cookie FIRST (highest priority)
+    if (req.cookies?.adminToken) {
+      console.log('🍪 adminSessionMiddleware: Found admin token in cookie, using JWT auth');
+      try {
+        const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
+        if (jwtPayload) {
+          userId = jwtPayload.userId;
+          console.log(`🔍 adminSessionMiddleware: Using JWT auth, userId: ${userId}`);
+        }
+      } catch (jwtError) {
+        console.error('❌ adminSessionMiddleware: Admin JWT token invalid:', jwtError);
+        return res.status(401).json({ message: "Invalid admin token" });
+      }
+    }
+    
+    // PRIORITY 2: Fall back to session/existing user auth if no JWT
+    if (!userId) {
+      if (req.user?.claims?.sub) {
+        // Replit Auth session
+        userId = req.user.claims.sub;
+        console.log(`🔍 adminSessionMiddleware: Using session auth, userId: ${userId}`);
+      } else if (req.user?.id) {
+        // JWT Auth from authMiddleware
+        userId = req.user.id;
+        console.log(`🔍 adminSessionMiddleware: Using existing JWT auth, userId: ${userId}`);
+      } else {
+        console.log('🚫 adminSessionMiddleware: No authenticated user');
+        return res.status(401).json({ message: "Authentication required" });
+      }
     }
 
     console.log(`🔍 adminSessionMiddleware: Fetching user data for ${userId}`);
