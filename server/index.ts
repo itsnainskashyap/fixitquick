@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { backgroundMatcher } from "./services/backgroundMatcher";
 import dotenv from "dotenv";
 
 // Load environment variables from .env file for secure admin credentials
@@ -212,6 +213,28 @@ app.use((req, res, next) => {
   validateProductionSafety();
   
   const server = await registerRoutes(app);
+  
+  // Initialize Background Matcher Service with WebSocket integration
+  console.log('🚀 Initializing Background Matcher Service...');
+  try {
+    // Import WebSocketManager to get the instance created in registerRoutes
+    const { getWebSocketManager } = await import('./routes');
+    const webSocketManager = getWebSocketManager();
+    
+    if (webSocketManager) {
+      // Initialize background matcher with WebSocket manager
+      backgroundMatcher.setWebSocketManager(webSocketManager);
+      backgroundMatcher.start();
+      console.log('✅ Background Matcher Service started successfully with WebSocket integration');
+    } else {
+      console.warn('⚠️  WebSocket manager not available, starting Background Matcher without WebSocket integration');
+      backgroundMatcher.start();
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize Background Matcher Service:', error);
+    console.log('🔄 Starting Background Matcher without WebSocket integration as fallback');
+    backgroundMatcher.start();
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

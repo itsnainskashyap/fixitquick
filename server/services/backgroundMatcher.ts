@@ -322,6 +322,14 @@ export class BackgroundMatcher {
   }
 
   /**
+   * Set WebSocket manager for real-time notifications
+   */
+  setWebSocketManager(webSocketManager: WebSocketManager) {
+    this.webSocketManager = webSocketManager;
+    console.log('✅ BackgroundMatcher: WebSocket manager configured');
+  }
+
+  /**
    * Get current status information
    */
   getStatus() {
