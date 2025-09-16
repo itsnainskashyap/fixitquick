@@ -48,32 +48,36 @@ import {
   Briefcase
 } from 'lucide-react';
 
-// Form schemas for each step
-const personalDetailsSchema = z.object({
-  businessName: z.string().min(2, 'Business name must be at least 2 characters'),
-  contactPerson: z.string().min(2, 'Contact person name is required'),
-  email: z.string().email('Valid email is required'),
-  phone: z.string().min(10, 'Valid phone number is required'),
-  alternatePhone: z.string().optional(),
-  businessType: z.enum(['individual', 'partnership', 'company'], {
+// Backend-compatible form schemas (matches the backend providerRegistrationSchema)
+const providerRegistrationSchema = z.object({
+  businessName: z.string().min(1, 'Business name is required').max(100),
+  businessType: z.enum(['individual', 'company'] as const, {
     required_error: 'Please select business type'
   }),
+  serviceIds: z.array(z.string()).min(1, 'At least one service must be selected'),
+  skills: z.array(z.string()).optional().default([]),
+  experienceYears: z.coerce.number().min(0).max(50),
+  serviceRadius: z.coerce.number().min(1).max(100).default(25),
+  serviceAreas: z.array(z.object({
+    name: z.string(),
+    cities: z.array(z.string()),
+  })).optional().default([]),
+});
+
+// Step-specific schemas that map to the main schema
+const personalDetailsSchema = z.object({
+  businessName: z.string().min(1, 'Business name is required').max(100),
+  businessType: z.enum(['individual', 'company'] as const),
 });
 
 const businessDetailsSchema = z.object({
-  description: z.string().min(50, 'Business description must be at least 50 characters'),
-  experience: z.number().min(0, 'Experience must be 0 or more years').max(50, 'Experience cannot exceed 50 years'),
-  serviceRadius: z.number().min(1, 'Service radius must be at least 1 km').max(100, 'Service radius cannot exceed 100 km'),
-  emergencyServices: z.boolean(),
-  priceRange: z.enum(['budget', 'mid', 'premium'], {
-    required_error: 'Please select price range'
-  }),
+  experienceYears: z.coerce.number().min(0, 'Experience must be 0 or more years').max(50, 'Experience cannot exceed 50 years'),
+  serviceRadius: z.coerce.number().min(1, 'Service radius must be at least 1 km').max(100, 'Service radius cannot exceed 100 km'),
 });
 
 const servicesSchema = z.object({
-  selectedCategories: z.array(z.string()).min(1, 'Please select at least one service category'),
-  skills: z.array(z.string()).min(1, 'Please add at least one skill'),
-  specializations: z.array(z.string()),
+  serviceIds: z.array(z.string()).min(1, 'Please select at least one service'),
+  skills: z.array(z.string()).optional().default([]),
 });
 
 const documentsSchema = z.object({
@@ -84,6 +88,7 @@ const documentsSchema = z.object({
   insurance: z.boolean().optional(),
 });
 
+type ProviderRegistrationForm = z.infer<typeof providerRegistrationSchema>;
 type PersonalDetailsForm = z.infer<typeof personalDetailsSchema>;
 type BusinessDetailsForm = z.infer<typeof businessDetailsSchema>;
 type ServicesForm = z.infer<typeof servicesSchema>;
@@ -212,10 +217,6 @@ export default function ProviderRegistration() {
     resolver: zodResolver(personalDetailsSchema),
     defaultValues: {
       businessName: '',
-      contactPerson: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
-      email: user?.email || '',
-      phone: user?.phone || '',
-      alternatePhone: '',
       businessType: 'individual',
     },
   });
@@ -223,20 +224,16 @@ export default function ProviderRegistration() {
   const businessForm = useForm<BusinessDetailsForm>({
     resolver: zodResolver(businessDetailsSchema),
     defaultValues: {
-      description: '',
-      experience: 0,
-      serviceRadius: 10,
-      emergencyServices: false,
-      priceRange: 'mid',
+      experienceYears: 0,
+      serviceRadius: 25,
     },
   });
 
   const servicesForm = useForm<ServicesForm>({
     resolver: zodResolver(servicesSchema),
     defaultValues: {
-      selectedCategories: [],
+      serviceIds: [],
       skills: [],
-      specializations: [],
     },
   });
 
@@ -251,26 +248,42 @@ export default function ProviderRegistration() {
     },
   });
 
-  // Fetch service categories
-  const { data: categories } = useQuery({
-    queryKey: ['/api/v1/categories'],
-    queryFn: () => fetch('/api/v1/categories').then(res => res.json()),
+  // Fetch service categories - connect to real API
+  const { data: categories, isLoading: categoriesLoading } = useQuery({
+    queryKey: ['/api/v1/services/categories'],
   });
 
-  // Document upload handlers
-  const handleDocumentUpload = (newDocuments: UploadedDocument[]) => {
-    setUploadedDocuments(prev => {
-      // Remove any existing documents of the same type and add new ones
-      const filtered = prev.filter(doc => 
-        !newDocuments.some(newDoc => newDoc.documentType === doc.documentType)
-      );
-      return [...filtered, ...newDocuments];
-    });
-    
-    toast({
-      title: 'Document uploaded successfully',
-      description: 'Your document has been uploaded and is ready for verification.',
-    });
+  // Fetch services for selected categories
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ['/api/v1/services'],
+    select: (data: any) => data?.services || [],
+  });
+
+  // Document upload handlers - connect to real API
+  const handleDocumentUpload = async (newDocuments: UploadedDocument[]) => {
+    try {
+      // Upload each document to the backend
+      for (const doc of newDocuments) {
+        if (doc.file) {
+          await uploadDocumentMutation.mutateAsync({
+            file: doc.file,
+            documentType: doc.documentType,
+          });
+        }
+      }
+      
+      // Update local state after successful uploads
+      setUploadedDocuments(prev => {
+        const filtered = prev.filter(doc => 
+          !newDocuments.some(newDoc => newDoc.documentType === doc.documentType)
+        );
+        return [...filtered, ...newDocuments];
+      });
+      
+    } catch (error) {
+      console.error('Document upload error:', error);
+      // Error handling is already done in mutation
+    }
   };
 
   const handleDocumentRemove = (documentId: string) => {
@@ -281,23 +294,60 @@ export default function ProviderRegistration() {
     });
   };
 
-  // Final registration mutation
+  // Provider registration mutation - connect to real API
   const registerMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const response = await apiRequest('POST', '/api/v1/providers/apply', data);
-      return response.json();
+    mutationFn: async (data: ProviderRegistrationForm) => {
+      return await apiRequest('POST', '/api/v1/providers/register', data);
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       toast({
         title: 'Registration successful!',
         description: 'Your provider application has been submitted for verification.',
       });
+      // Invalidate user profile to update role
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/auth/me'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/profile'] });
       setLocation('/provider-pending');
     },
     onError: (error: any) => {
+      console.error('Registration error:', error);
       toast({
         title: 'Registration failed',
-        description: error.message || 'Failed to submit application',
+        description: error?.message || 'Failed to submit application. Please try again.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Document upload mutation
+  const uploadDocumentMutation = useMutation({
+    mutationFn: async ({ file, documentType }: { file: File; documentType: string }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('documentType', documentType);
+      
+      const response = await fetch('/api/v1/providers/documents/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Upload failed');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (response, { documentType }) => {
+      toast({
+        title: 'Document uploaded successfully',
+        description: `Your ${documentType} has been uploaded and is ready for verification.`,
+      });
+    },
+    onError: (error: any, { documentType }) => {
+      toast({
+        title: 'Upload failed',
+        description: `Failed to upload ${documentType}: ${error.message}`,
         variant: 'destructive',
       });
     },
@@ -344,24 +394,42 @@ export default function ProviderRegistration() {
     nextStep();
   };
 
-  // Handle final registration
+  // Handle final registration - combine all form data into backend-compatible format
   const handleFinalSubmit = async () => {
     setIsSubmitting(true);
     
-    const personalData = personalForm.getValues();
-    const businessData = businessForm.getValues();
-    const servicesData = servicesForm.getValues();
-    
-    const registrationData = {
-      ...personalData,
-      ...businessData,
-      serviceCategories: servicesData.selectedCategories,
-      skills: servicesData.skills,
-      specializations: servicesData.specializations,
-    };
+    try {
+      const personalData = personalForm.getValues();
+      const businessData = businessForm.getValues();
+      const servicesData = servicesForm.getValues();
+      
+      // Combine data to match backend schema
+      const registrationData: ProviderRegistrationForm = {
+        businessName: personalData.businessName,
+        businessType: personalData.businessType,
+        serviceIds: servicesData.serviceIds,
+        skills: servicesData.skills || [],
+        experienceYears: businessData.experienceYears,
+        serviceRadius: businessData.serviceRadius,
+        serviceAreas: [], // Default empty for now, could add location step later
+      };
 
-    registerMutation.mutate(registrationData);
-    setIsSubmitting(false);
+      // Validate the complete registration data
+      const validatedData = providerRegistrationSchema.parse(registrationData);
+      
+      await registerMutation.mutateAsync(validatedData);
+    } catch (error) {
+      console.error('Registration submission error:', error);
+      if (error instanceof z.ZodError) {
+        toast({
+          title: 'Validation Error',
+          description: 'Please check all required fields are properly filled.',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Check if user is eligible for registration
@@ -489,78 +557,13 @@ export default function ProviderRegistration() {
                           )}
                         />
 
-                        <FormField
-                          control={personalForm.control}
-                          name="contactPerson"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Contact Person *</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  placeholder="Your full name" 
-                                  {...field} 
-                                  data-testid="input-contact-person"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={personalForm.control}
-                          name="email"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Email Address *</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  type="email"
-                                  placeholder="your@email.com" 
-                                  {...field} 
-                                  data-testid="input-email"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={personalForm.control}
-                          name="phone"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Phone Number *</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  placeholder="+91 98765 43210" 
-                                  {...field} 
-                                  data-testid="input-phone"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={personalForm.control}
-                          name="alternatePhone"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Alternate Phone</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  placeholder="+91 98765 43210" 
-                                  {...field} 
-                                  data-testid="input-alternate-phone"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        <div className="md:col-span-2">
+                          <div className="bg-muted/50 p-4 rounded-lg border">
+                            <p className="text-sm text-muted-foreground">
+                              <strong>Contact Information:</strong> We'll use your account details ({user?.firstName} {user?.lastName}, {user?.email}, {user?.phone}) for communication.
+                            </p>
+                          </div>
+                        </div>
 
                         <FormField
                           control={personalForm.control}
@@ -576,10 +579,12 @@ export default function ProviderRegistration() {
                                 </FormControl>
                                 <SelectContent>
                                   <SelectItem value="individual">Individual/Freelancer</SelectItem>
-                                  <SelectItem value="partnership">Partnership</SelectItem>
                                   <SelectItem value="company">Company/Corporation</SelectItem>
                                 </SelectContent>
                               </Select>
+                              <FormDescription>
+                                Choose the type that best describes your business structure.
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -610,32 +615,11 @@ export default function ProviderRegistration() {
                 <CardContent>
                   <Form {...businessForm}>
                     <form onSubmit={businessForm.handleSubmit(handleBusinessDetailsSubmit)} className="space-y-6">
-                      <FormField
-                        control={businessForm.control}
-                        name="description"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Business Description *</FormLabel>
-                            <FormControl>
-                              <Textarea 
-                                placeholder="Describe your business, services offered, and what makes you unique..." 
-                                className="min-h-[120px]"
-                                {...field} 
-                                data-testid="textarea-description"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Minimum 50 characters. This will be displayed on your profile.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <FormField
                           control={businessForm.control}
-                          name="experience"
+                          name="experienceYears"
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Years of Experience *</FormLabel>
@@ -646,10 +630,12 @@ export default function ProviderRegistration() {
                                   max="50"
                                   placeholder="5" 
                                   {...field}
-                                  onChange={e => field.onChange(parseInt(e.target.value) || 0)}
-                                  data-testid="input-experience"
+                                  data-testid="input-experience-years"
                                 />
                               </FormControl>
+                              <FormDescription>
+                                How many years have you been providing services in this field?
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -668,7 +654,6 @@ export default function ProviderRegistration() {
                                   max="100"
                                   placeholder="10" 
                                   {...field}
-                                  onChange={e => field.onChange(parseInt(e.target.value) || 10)}
                                   data-testid="input-service-radius"
                                 />
                               </FormControl>
@@ -680,50 +665,6 @@ export default function ProviderRegistration() {
                           )}
                         />
 
-                        <FormField
-                          control={businessForm.control}
-                          name="priceRange"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Price Range *</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-price-range">
-                                    <SelectValue placeholder="Select price range" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="budget">Budget-friendly</SelectItem>
-                                  <SelectItem value="mid">Mid-range</SelectItem>
-                                  <SelectItem value="premium">Premium</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={businessForm.control}
-                          name="emergencyServices"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="checkbox-emergency-services"
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel>Emergency Services</FormLabel>
-                                <FormDescription>
-                                  I can provide 24/7 emergency services
-                                </FormDescription>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
                       </div>
 
                       <div className="flex justify-between">
@@ -762,37 +703,62 @@ export default function ProviderRegistration() {
                       {/* Service Categories */}
                       <FormField
                         control={servicesForm.control}
-                        name="selectedCategories"
+                        name="serviceIds"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Service Categories *</FormLabel>
+                            <FormLabel>Services Offered *</FormLabel>
                             <FormDescription>
-                              Select the categories of services you provide
+                              Select the specific services you want to offer
                             </FormDescription>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              {categories?.map((category: ServiceCategory) => (
-                                <div key={category.id} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`category-${category.id}`}
-                                    checked={field.value.includes(category.id)}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        field.onChange([...field.value, category.id]);
-                                      } else {
-                                        field.onChange(field.value.filter((id) => id !== category.id));
-                                      }
-                                    }}
-                                    data-testid={`checkbox-category-${category.id}`}
-                                  />
-                                  <Label 
-                                    htmlFor={`category-${category.id}`} 
-                                    className="text-sm font-normal cursor-pointer"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))}
-                            </div>
+                            {servicesLoading ? (
+                              <div className="flex items-center justify-center py-8">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                                <span className="ml-2 text-sm text-muted-foreground">Loading services...</span>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-64 overflow-y-auto border rounded-lg p-4">
+                                {services && services.length > 0 ? (
+                                  services.map((service: any) => (
+                                    <div key={service.id} className="flex items-center space-x-2">
+                                      <Checkbox
+                                        id={service.id}
+                                        checked={field.value?.includes(service.id) || false}
+                                        onCheckedChange={(checked) => {
+                                          if (checked) {
+                                            field.onChange([...field.value, service.id]);
+                                          } else {
+                                            field.onChange(field.value.filter((id: string) => id !== service.id));
+                                          }
+                                        }}
+                                        data-testid={`checkbox-service-${service.id}`}
+                                      />
+                                      <div className="flex-1">
+                                        <Label
+                                          htmlFor={service.id}
+                                          className="text-sm font-medium leading-none cursor-pointer"
+                                        >
+                                          {service.name}
+                                        </Label>
+                                        {service.description && (
+                                          <p className="text-xs text-muted-foreground mt-1">
+                                            {service.description.substring(0, 100)}...
+                                          </p>
+                                        )}
+                                        {service.basePrice && (
+                                          <p className="text-xs font-medium text-primary mt-1">
+                                            Base Price: ₹{service.basePrice}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="col-span-2 text-center py-4">
+                                    <p className="text-sm text-muted-foreground">No services available</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -814,40 +780,12 @@ export default function ProviderRegistration() {
                                   const skills = e.target.value.split(',').map(skill => skill.trim()).filter(Boolean);
                                   field.onChange(skills);
                                 }}
-                                value={field.value.join(', ')}
+                                value={field.value?.join(', ') || ''}
                                 data-testid="textarea-skills"
                               />
                             </FormControl>
                             <FormDescription>
                               Separate multiple skills with commas
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {/* Specializations */}
-                      <FormField
-                        control={servicesForm.control}
-                        name="specializations"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Specializations</FormLabel>
-                            <FormControl>
-                              <Textarea 
-                                placeholder="Any special certifications or areas of expertise..." 
-                                className="min-h-[80px]"
-                                {...field}
-                                onChange={(e) => {
-                                  const specs = e.target.value.split(',').map(spec => spec.trim()).filter(Boolean);
-                                  field.onChange(specs);
-                                }}
-                                value={field.value.join(', ')}
-                                data-testid="textarea-specializations"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Optional: Specialized areas or certifications
                             </FormDescription>
                             <FormMessage />
                           </FormItem>

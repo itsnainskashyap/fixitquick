@@ -66,50 +66,69 @@ export default function ServiceProviderDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [selectedTab, setSelectedTab] = useState('offers');
 
-  // Fetch provider jobs
-  const { data: jobsData, isLoading, error } = useQuery<ProviderJobsData>({
-    queryKey: ['/api/v1/providers/me/jobs'],
+  // Fetch provider jobs - connect to real API endpoint
+  const { data: jobsData, isLoading, error, refetch } = useQuery<ProviderJobsData>({
+    queryKey: ['/api/v1/provider/job-requests'],
     enabled: !!user && user.role === 'service_provider',
     refetchInterval: 30000, // Refetch every 30 seconds
+    select: (data: any) => {
+      // Transform backend data to match component expectations
+      const jobs = Array.isArray(data) ? data : data?.jobs || [];
+      return {
+        pendingOffers: jobs.filter((job: any) => job.status === 'sent'),
+        activeJobs: jobs.filter((job: any) => job.status === 'accepted'),
+        recentJobs: jobs.filter((job: any) => ['completed', 'cancelled'].includes(job.status)),
+      };
+    },
   });
 
-  // Accept job mutation
+  // Fetch provider statistics
+  const { data: providerStats } = useQuery({
+    queryKey: ['/api/v1/providers/profile'],
+    enabled: !!user && user.role === 'service_provider',
+    select: (data: any) => data?.profile || {},
+  });
+
+  // Accept job mutation - connect to real API endpoint
   const acceptJobMutation = useMutation({
-    mutationFn: async ({ jobRequestId, estimatedArrival, notes }: {
-      jobRequestId: string;
+    mutationFn: async ({ bookingId, estimatedArrival, quotedPrice, notes }: {
+      bookingId: string;
       estimatedArrival?: string;
+      quotedPrice?: number;
       notes?: string;
     }) => {
-      return apiRequest(`/api/v1/job-requests/${jobRequestId}/accept`, {
-        method: 'POST',
-        body: JSON.stringify({ estimatedArrival, notes }),
+      return await apiRequest('POST', `/api/v1/provider-job-requests/${bookingId}/accept`, {
+        estimatedArrival,
+        quotedPrice,
+        notes,
       });
     },
     onSuccess: (data, variables) => {
       toast({
         title: "Job Accepted!",
-        description: "You have successfully accepted the job.",
+        description: "You have successfully accepted the job request.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/jobs'] });
+      // Invalidate both job requests and profile data
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/profile'] });
     },
     onError: (error: any) => {
       toast({
         title: "Failed to Accept Job",
-        description: error.message || "Something went wrong",
+        description: error?.message || "Unable to accept job request. Please try again.",
         variant: "destructive",
       });
     },
   });
 
-  // Decline job mutation
+  // Decline job mutation - connect to real API endpoint
   const declineJobMutation = useMutation({
-    mutationFn: async ({ jobRequestId, reason }: {
-      jobRequestId: string;
+    mutationFn: async ({ bookingId, reason }: {
+      bookingId: string;
       reason?: string;
     }) => {
-      return apiRequest(`/api/v1/job-requests/${jobRequestId}/decline`, {
-        method: 'POST',
-        body: JSON.stringify({ reason }),
+      return await apiRequest('POST', `/api/v1/provider-job-requests/${bookingId}/decline`, {
+        reason,
       });
     },
     onSuccess: () => {
@@ -117,12 +136,14 @@ export default function ServiceProviderDashboard() {
         title: "Job Declined",
         description: "You have declined the job offer.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/jobs'] });
+      // Invalidate both job requests and profile data
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/profile'] });
     },
     onError: (error: any) => {
       toast({
         title: "Failed to Decline Job",
-        description: error.message || "Something went wrong",
+        description: error?.message || "Unable to decline job request. Please try again.",
         variant: "destructive",
       });
     },
@@ -138,12 +159,12 @@ export default function ServiceProviderDashboard() {
         title: "New Job Offer!",
         description: `You have a new job offer for ${data.booking?.serviceType}`,
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
     };
 
     const handleJobUpdate = (data: any) => {
       console.log('📢 Job update received:', data);
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
     };
 
     socket.on('provider.job_offer', handleJobOffer);
@@ -177,18 +198,18 @@ export default function ServiceProviderDashboard() {
   };
 
   // Accept job handler
-  const handleAcceptJob = (jobRequestId: string) => {
+  const handleAcceptJob = (bookingId: string) => {
     const estimatedArrival = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 minutes from now
     acceptJobMutation.mutate({ 
-      jobRequestId, 
+      bookingId, 
       estimatedArrival,
       notes: "On my way to your location!"
     });
   };
 
   // Decline job handler
-  const handleDeclineJob = (jobRequestId: string, reason?: string) => {
-    declineJobMutation.mutate({ jobRequestId, reason });
+  const handleDeclineJob = (bookingId: string, reason?: string) => {
+    declineJobMutation.mutate({ bookingId, reason });
   };
 
   if (!user || user.role !== 'service_provider') {
@@ -337,8 +358,8 @@ export default function ServiceProviderDashboard() {
               <JobOfferCard
                 key={job.id}
                 job={job}
-                onAccept={() => handleAcceptJob(job.id)}
-                onDecline={() => handleDeclineJob(job.id, "Not available")}
+                onAccept={() => handleAcceptJob(job.bookingId)}
+                onDecline={() => handleDeclineJob(job.bookingId, "Not available")}
                 isAccepting={acceptJobMutation.isPending}
                 isDeclining={declineJobMutation.isPending}
               />

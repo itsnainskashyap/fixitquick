@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
+import { Label } from '@/components/ui/label';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,19 +26,36 @@ import {
   ArrowLeft
 } from 'lucide-react';
 
+// Use backend types for provider profile
 interface ProviderProfile {
-  id: string;
+  userId: string;
   businessName: string;
+  businessType: 'individual' | 'company';
   verificationStatus: 'pending' | 'under_review' | 'approved' | 'rejected' | 'suspended';
   verificationDate?: string;
   documents?: {
-    aadhar?: { front?: string; back?: string };
-    photo?: { url?: string };
-    businessLicense?: { url?: string };
-    insurance?: { url?: string };
+    aadhar?: { 
+      front?: { url?: string; filename?: string; uploadedAt?: string; status?: string };
+      back?: { url?: string; filename?: string; uploadedAt?: string; status?: string };
+    };
+    photo?: { url?: string; filename?: string; uploadedAt?: string; status?: string };
+    license?: { url?: string; filename?: string; uploadedAt?: string; status?: string };
+    insurance?: { url?: string; filename?: string; uploadedAt?: string; status?: string };
   };
-  adminNotes?: string;
+  verificationNotes?: string;
+  rejectionReason?: string;
+  resubmissionReason?: string;
+  verifiedBy?: string;
   submittedAt: string;
+  updatedAt?: string;
+  createdAt: string;
+  // Include user data from profile response
+  user?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  };
 }
 
 const getStatusInfo = (status: string) => {
@@ -91,12 +109,18 @@ export default function ProviderPending() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
 
-  // Fetch provider profile
-  const { data: provider, isLoading, refetch } = useQuery({
-    queryKey: ['/api/v1/providers/profile', user?.uid],
-    queryFn: () => fetch(`/api/v1/providers/profile`).then(res => res.json()),
+  // Fetch provider profile - connect to real API
+  const { data: response, isLoading, error, refetch } = useQuery({
+    queryKey: ['/api/v1/providers/profile'],
     enabled: !!user,
+    retry: (failureCount, error: any) => {
+      // Don't retry if it's a 404 (no provider profile found)
+      if (error?.status === 404) return false;
+      return failureCount < 3;
+    },
   });
+
+  const provider = response?.profile as ProviderProfile | undefined;
 
   if (!user) {
     setLocation('/login');
@@ -114,7 +138,8 @@ export default function ProviderPending() {
     );
   }
 
-  if (!provider) {
+  // Handle different error states
+  if (error?.status === 404 || (!provider && !isLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Card className="max-w-md">
@@ -132,6 +157,43 @@ export default function ProviderPending() {
             </Button>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Show error state for other errors
+  if (error && error.status !== 404) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Card className="max-w-md">
+          <CardContent className="p-8 text-center space-y-4">
+            <AlertCircle className="w-16 h-16 text-red-500 mx-auto" />
+            <h2 className="text-xl font-semibold">Error Loading Application</h2>
+            <p className="text-muted-foreground">
+              {error.message || 'Unable to load your application status. Please try again.'}
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={() => refetch()} data-testid="button-retry">
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Try Again
+              </Button>
+              <Button variant="outline" onClick={() => setLocation('/')}>
+                Go Home
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!provider && isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">Loading your application status...</p>
+        </div>
       </div>
     );
   }
@@ -245,35 +307,53 @@ export default function ProviderPending() {
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Application ID</Label>
-                    <p className="font-mono text-sm" data-testid="application-id">#{provider.id.slice(-8).toUpperCase()}</p>
+                    <p className="font-mono text-sm" data-testid="application-id">#{provider.userId.slice(-8).toUpperCase()}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Submitted</Label>
-                    <p data-testid="submitted-date">{new Date(provider.submittedAt).toLocaleDateString()}</p>
+                    <p data-testid="submitted-date">{new Date(provider.createdAt).toLocaleDateString()}</p>
                   </div>
-                  {provider.verificationDate && (
+                  {provider.updatedAt && (
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Last Updated</Label>
-                      <p data-testid="verification-date">{new Date(provider.verificationDate).toLocaleDateString()}</p>
+                      <p data-testid="verification-date">{new Date(provider.updatedAt).toLocaleDateString()}</p>
                     </div>
                   )}
                 </div>
               </CardContent>
             </Card>
 
-            {/* Admin Notes */}
-            {provider.adminNotes && (
+            {/* Admin Notes & Feedback */}
+            {(provider.verificationNotes || provider.rejectionReason || provider.resubmissionReason) && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <FileText className="w-5 h-5 mr-2" />
-                    Review Notes
+                    Review Feedback
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="bg-muted p-4 rounded-lg">
-                    <p data-testid="admin-notes">{provider.adminNotes}</p>
-                  </div>
+                <CardContent className="space-y-4">
+                  {provider.rejectionReason && (
+                    <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
+                      <h4 className="font-medium text-red-800 mb-2">Rejection Reason:</h4>
+                      <p className="text-red-700" data-testid="rejection-reason">{provider.rejectionReason}</p>
+                    </div>
+                  )}
+                  {provider.resubmissionReason && (
+                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
+                      <h4 className="font-medium text-amber-800 mb-2">Resubmission Required:</h4>
+                      <p className="text-amber-700" data-testid="resubmission-reason">{provider.resubmissionReason}</p>
+                    </div>
+                  )}
+                  {provider.verificationNotes && (
+                    <div className="bg-muted p-4 rounded-lg">
+                      <h4 className="font-medium mb-2">Verification Notes:</h4>
+                      <p data-testid="verification-notes">{provider.verificationNotes}</p>
+                      {provider.verifiedBy && (
+                        <p className="text-sm text-muted-foreground mt-2">Reviewed by: {provider.verifiedBy}</p>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -330,10 +410,10 @@ export default function ProviderPending() {
                         <FileText className="w-5 h-5 text-muted-foreground" />
                         <span>Aadhaar Card (Front)</span>
                       </div>
-                      {provider.documents?.aadhar?.front ? (
+                      {provider.documents?.aadhar?.front?.url ? (
                         <Badge variant="default" className="bg-green-100 text-green-800">
                           <CheckCircle className="w-3 h-3 mr-1" />
-                          Uploaded
+                          {provider.documents?.aadhar?.front?.status || 'Uploaded'}
                         </Badge>
                       ) : (
                         <Badge variant="destructive">Missing</Badge>
@@ -345,10 +425,10 @@ export default function ProviderPending() {
                         <FileText className="w-5 h-5 text-muted-foreground" />
                         <span>Aadhaar Card (Back)</span>
                       </div>
-                      {provider.documents?.aadhar?.back ? (
+                      {provider.documents?.aadhar?.back?.url ? (
                         <Badge variant="default" className="bg-green-100 text-green-800">
                           <CheckCircle className="w-3 h-3 mr-1" />
-                          Uploaded
+                          {provider.documents?.aadhar?.back?.status || 'Uploaded'}
                         </Badge>
                       ) : (
                         <Badge variant="destructive">Missing</Badge>
@@ -381,10 +461,10 @@ export default function ProviderPending() {
                         <Building className="w-5 h-5 text-muted-foreground" />
                         <span>Business License</span>
                       </div>
-                      {provider.documents?.businessLicense?.url ? (
+                      {provider.documents?.license?.url ? (
                         <Badge variant="default" className="bg-blue-100 text-blue-800">
                           <CheckCircle className="w-3 h-3 mr-1" />
-                          Uploaded
+                          {provider.documents?.license?.status || 'Uploaded'}
                         </Badge>
                       ) : (
                         <Badge variant="secondary">Not Provided</Badge>
@@ -430,7 +510,7 @@ export default function ProviderPending() {
                       <div className="flex-1">
                         <h4 className="font-semibold">Application Submitted</h4>
                         <p className="text-sm text-muted-foreground">
-                          {new Date(provider.submittedAt).toLocaleString()}
+                          {new Date(provider.createdAt).toLocaleString()}
                         </p>
                         <p className="text-sm">Your provider application was successfully submitted.</p>
                       </div>
@@ -451,7 +531,9 @@ export default function ProviderPending() {
                         <div className="flex-1">
                           <h4 className="font-semibold">Under Review</h4>
                           <p className="text-sm text-muted-foreground">
-                            {provider.verificationDate ? new Date(provider.verificationDate).toLocaleString() : 'In progress'}
+                            {provider.updatedAt && provider.verificationStatus === 'under_review' 
+                              ? new Date(provider.updatedAt).toLocaleString() 
+                              : 'In progress'}
                           </p>
                           <p className="text-sm">Our team is reviewing your documents and information.</p>
                         </div>
@@ -479,7 +561,7 @@ export default function ProviderPending() {
                             {provider.verificationStatus === 'approved' ? 'Approved' : 'Action Required'}
                           </h4>
                           <p className="text-sm text-muted-foreground">
-                            {provider.verificationDate ? new Date(provider.verificationDate).toLocaleString() : ''}
+                            {provider.updatedAt ? new Date(provider.updatedAt).toLocaleString() : ''}
                           </p>
                           <p className="text-sm">
                             {provider.verificationStatus === 'approved' 
@@ -500,6 +582,3 @@ export default function ProviderPending() {
   );
 }
 
-const Label: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className }) => (
-  <label className={className}>{children}</label>
-);
