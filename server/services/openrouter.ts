@@ -73,17 +73,26 @@ export class OpenRouterService {
     this.siteUrl = process.env.SITE_URL || 'http://localhost:5000';
     this.siteName = process.env.SITE_NAME || 'NainsAI';
     
-    if (!this.apiKey) {
+    // Development mode fallback
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    if (!this.apiKey && !isDevelopment) {
       console.error('❌ CRITICAL: OPENROUTER_API_KEY not found in environment variables');
       console.error('   Please add OPENROUTER_API_KEY to your Replit Secrets');
       throw new Error('OpenRouter API key is required but not configured. Please add OPENROUTER_API_KEY to environment secrets.');
     }
     
-    console.log('🤖 NainsAI Service: Initialized with OpenRouter');
+    if (isDevelopment && !this.apiKey) {
+      console.log('🔧 Development mode: OpenRouter service using stub responses');
+      console.log('⚠️  AI features will return mock data for development');
+    } else {
+      console.log('🤖 NainsAI Service: Initialized with OpenRouter');
+      console.log('🔑 API Key configured:', this.apiKey ? 'YES' : 'NO');
+    }
+    
     console.log('📡 Default model:', this.defaultModel);
     console.log('🎯 Available model categories:', Object.keys(this.models));
     console.log('🌐 Site URL:', this.siteUrl);
-    console.log('🔑 API Key configured:', this.apiKey ? 'YES' : 'NO');
     console.log('💰 Usage tracking enabled');
   }
 
@@ -225,6 +234,24 @@ export class OpenRouterService {
     model?: string
   ): Promise<string> {
     const selectedModel = model || this.defaultModel;
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    // Development mode stub - return mock responses
+    if (isDevelopment && !this.apiKey) {
+      console.log('🔧 Using development stub for OpenRouter API request:', {
+        model: selectedModel,
+        messageCount: messages.length,
+        lastMessage: messages[messages.length - 1]?.content?.substring(0, 100) + '...'
+      });
+      
+      const userMessage = messages[messages.length - 1]?.content || '';
+      
+      // Generate intelligent mock responses based on the user message
+      let mockResponse = this.generateMockResponse(userMessage, options.responseFormat?.type === 'json_object');
+      
+      console.log('✅ Development stub response generated');
+      return mockResponse;
+    }
     
     try {
       console.log('🚀 Enhanced OpenRouter API Request:', {
@@ -772,6 +799,57 @@ export class OpenRouterService {
     }
     
     return undefined;
+  }
+
+  // Development mock response generator
+  private generateMockResponse(userMessage: string, isJsonResponse: boolean = false): string {
+    const message = userMessage.toLowerCase();
+    
+    // Generate context-aware mock responses
+    if (isJsonResponse) {
+      if (message.includes('search') || message.includes('find') || message.includes('service')) {
+        return JSON.stringify({
+          suggestions: [
+            { text: 'Electrical Repair Service', category: 'Electrician', confidence: 0.9 },
+            { text: 'Plumbing Service', category: 'Plumber', confidence: 0.8 },
+            { text: 'House Cleaning Service', category: 'Cleaner', confidence: 0.7 }
+          ]
+        });
+      } else if (message.includes('intent') || message.includes('analyze')) {
+        return JSON.stringify({
+          intent: 'service_search',
+          urgency: 'medium',
+          category: 'general',
+          keywords: ['service', 'help', 'repair']
+        });
+      } else if (message.includes('trend') || message.includes('pattern')) {
+        return JSON.stringify({
+          trends: [
+            { category: 'electrician', growth: 15, demand: 'high' },
+            { category: 'plumber', growth: 12, demand: 'medium' },
+            { category: 'cleaner', growth: 8, demand: 'medium' }
+          ]
+        });
+      }
+      
+      return JSON.stringify({
+        response: 'I understand you need help with home services. Here are some popular options.',
+        suggestions: ['electrician', 'plumber', 'cleaner']
+      });
+    }
+    
+    // Text responses
+    if (message.includes('electric') || message.includes('power') || message.includes('light')) {
+      return 'I can help you find qualified electricians in your area. They can handle electrical repairs, installations, and safety inspections.';
+    } else if (message.includes('plumb') || message.includes('water') || message.includes('leak')) {
+      return 'For plumbing issues, I recommend professional plumbers who can fix leaks, unclog drains, and repair fixtures safely.';
+    } else if (message.includes('clean') || message.includes('maid')) {
+      return 'House cleaning services are available for regular maintenance or deep cleaning. Professional cleaners bring their own supplies.';
+    } else if (message.includes('emergency') || message.includes('urgent')) {
+      return 'For emergency services, I\'ll prioritize finding providers who offer 24/7 availability in your area.';
+    }
+    
+    return 'I\'m here to help you find the best home service providers. Tell me what kind of service you need, and I\'ll suggest qualified professionals in your area.';
   }
 
   // Cache statistics for monitoring
