@@ -29,10 +29,11 @@ import { loadStripe } from '@stripe/stripe-js';
 import { Elements, useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
 
 // Initialize Stripe
-if (!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) {
-  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments may not work');
+const stripeKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+if (!stripeKey) {
+  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments disabled');
 }
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
+const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 
 const addPaymentMethodSchema = z.object({
   nickname: z.string().optional(),
@@ -454,7 +455,7 @@ export default function PaymentMethods() {
             <p className="text-gray-600 mt-1">Manage your saved payment methods securely</p>
           </div>
           
-          {isStripeConfigured && (
+          {isStripeConfigured && stripePromise && (
             <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
               <DialogTrigger asChild>
                 <Button data-testid="button-add-payment-method">

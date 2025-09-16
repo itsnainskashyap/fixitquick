@@ -32,10 +32,11 @@ import {
 } from 'lucide-react';
 
 // Initialize Stripe
-if (!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) {
-  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments may not work');
+const stripeKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+if (!stripeKey) {
+  console.warn('⚠️ VITE_STRIPE_PUBLISHABLE_KEY not found - Stripe payments disabled');
 }
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
+const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 
 // Stripe Payment Form Component
 const StripePaymentForm = ({ amount, onSuccess, onCancel }: { 
@@ -572,7 +573,7 @@ export default function WalletPage() {
       </main>
 
       {/* Stripe Payment Dialog */}
-      {clientSecret && (
+      {clientSecret && stripePromise && (
         <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
           <DialogContent className="max-w-md">
             <DialogHeader>

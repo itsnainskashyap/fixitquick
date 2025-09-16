@@ -200,22 +200,23 @@ const PromotionalMediaManagementSystem = () => {
       params.append('limit', '20');
       params.append('offset', String((currentPage - 1) * 20));
 
-      return await apiRequest(`/api/v1/admin/promotional-media?${params.toString()}`);
+      return await apiRequest('GET', `/api/v1/admin/promotional-media?${params.toString()}`);
     }
   });
 
   // Fetch media statistics
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ['admin-promotional-media-statistics'],
-    queryFn: async () => await apiRequest('/api/v1/admin/promotional-media/statistics')
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/promotional-media/statistics');
+    }
   });
 
   // Create media mutation
   const createMediaMutation = useMutation({
-    mutationFn: async (mediaData: any) => await apiRequest('/api/v1/admin/promotional-media', {
-      method: 'POST',
-      body: JSON.stringify(mediaData)
-    }),
+    mutationFn: async (mediaData: any) => {
+      return await apiRequest('POST', '/api/v1/admin/promotional-media', mediaData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
@@ -234,11 +235,9 @@ const PromotionalMediaManagementSystem = () => {
 
   // Update media mutation
   const updateMediaMutation = useMutation({
-    mutationFn: async ({ id, mediaData }: { id: string; mediaData: any }) => 
-      await apiRequest(`/api/v1/admin/promotional-media/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(mediaData)
-      }),
+    mutationFn: async ({ id, mediaData }: { id: string; mediaData: any }) => {
+      return await apiRequest('PUT', `/api/v1/admin/promotional-media/${id}`, mediaData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
@@ -258,9 +257,9 @@ const PromotionalMediaManagementSystem = () => {
 
   // Delete media mutation
   const deleteMediaMutation = useMutation({
-    mutationFn: async (id: string) => await apiRequest(`/api/v1/admin/promotional-media/${id}`, {
-      method: 'DELETE'
-    }),
+    mutationFn: async (id: string) => {
+      return await apiRequest('DELETE', `/api/v1/admin/promotional-media/${id}`);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
@@ -277,11 +276,9 @@ const PromotionalMediaManagementSystem = () => {
 
   // Bulk operations mutation
   const bulkOperationMutation = useMutation({
-    mutationFn: async ({ operation, mediaIds }: { operation: string; mediaIds: string[] }) => 
-      await apiRequest(`/api/v1/admin/promotional-media/bulk`, {
-        method: 'POST',
-        body: JSON.stringify({ operation, mediaIds })
-      }),
+    mutationFn: async ({ operation, mediaIds }: { operation: string; mediaIds: string[] }) => {
+      return await apiRequest('POST', `/api/v1/admin/promotional-media/bulk`, { operation, mediaIds });
+    },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media'] });
       queryClient.invalidateQueries({ queryKey: ['admin-promotional-media-statistics'] });
@@ -971,26 +968,32 @@ const TaxManagementSystem = () => {
       params.append('limit', '20');
       params.append('offset', String((currentPage - 1) * 20));
 
-      return await apiRequest(`/api/v1/admin/taxes?${params.toString()}`);
+      return await apiRequest('GET', `/api/v1/admin/taxes?${params.toString()}`);
     }
   });
 
   // Fetch tax categories
   const { data: categoriesData, isLoading: categoriesLoading } = useQuery({
     queryKey: ['admin-tax-categories'],
-    queryFn: async () => await apiRequest('/api/v1/admin/tax-categories')
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/tax-categories');
+    }
   });
 
   // Fetch tax statistics
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ['admin-tax-statistics'],
-    queryFn: async () => await apiRequest('/api/v1/admin/taxes/statistics')
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/taxes/statistics');
+    }
   });
 
   // Fetch category statistics
   const { data: categoryStatsData, isLoading: categoryStatsLoading } = useQuery({
     queryKey: ['admin-tax-category-statistics'],
-    queryFn: async () => await apiRequest('/api/v1/admin/tax-categories/statistics')
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/tax-categories/statistics');
+    }
   });
 
   // Create tax mutation
@@ -4256,8 +4259,7 @@ export default function Admin() {
   const { data: stats } = useQuery({
     queryKey: ['/api/v1/admin/stats'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/stats');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/stats');
     },
     enabled: !!user,
   });
@@ -4269,8 +4271,7 @@ export default function Admin() {
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
       if (filterRole && filterRole !== 'all') params.set('role', filterRole);
-      const response = await apiRequest('GET', `/api/v1/admin/users?${params.toString()}`);
-      return response.json();
+      return await apiRequest('GET', `/api/v1/admin/users?${params.toString()}`);
     },
     enabled: !!user,
   });
@@ -4279,8 +4280,7 @@ export default function Admin() {
   const { data: orders } = useQuery({
     queryKey: ['/api/v1/admin/orders'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/orders');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/orders');
     },
     enabled: !!user,
   });
@@ -4289,8 +4289,7 @@ export default function Admin() {
   const { data: verifications } = useQuery({
     queryKey: ['/api/v1/admin/verifications/pending'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/verifications/pending');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/verifications/pending');
     },
     enabled: !!user,
   });
@@ -4299,8 +4298,7 @@ export default function Admin() {
   const { data: allProviders } = useQuery({
     queryKey: ['/api/v1/admin/providers'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/providers');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/providers');
     },
     enabled: !!user,
   });
@@ -4309,8 +4307,7 @@ export default function Admin() {
   const { data: partsProviders } = useQuery({
     queryKey: ['/api/v1/admin/parts-providers'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/parts-providers');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/parts-providers');
     },
     enabled: !!user,
   });
@@ -4319,8 +4316,7 @@ export default function Admin() {
   const { data: pendingPartsProviders } = useQuery({
     queryKey: ['/api/v1/admin/parts-providers/pending'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/parts-providers/pending');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/parts-providers/pending');
     },
     enabled: !!user,
   });
@@ -4329,8 +4325,7 @@ export default function Admin() {
   const { data: categoryHierarchy } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/hierarchy'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
     },
     enabled: !!user,
   });
@@ -4339,8 +4334,7 @@ export default function Admin() {
   const { data: mainCategories } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/main'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/categories/main');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/categories/main');
     },
     enabled: !!user,
   });
@@ -4349,8 +4343,7 @@ export default function Admin() {
   const { data: services } = useQuery<Service[]>({
     queryKey: ['/api/v1/services'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/services');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/services');
     },
     enabled: !!user,
   });
@@ -4359,8 +4352,7 @@ export default function Admin() {
   const { data: testServices } = useQuery<Service[]>({
     queryKey: ['/api/v1/admin/test-services'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/test-services');
-      return response.json();
+      return await apiRequest('GET', '/api/v1/admin/test-services');
     },
     enabled: !!user,
   });
@@ -4368,8 +4360,7 @@ export default function Admin() {
   // Update user status mutation
   const updateUserMutation = useMutation({
     mutationFn: async ({ userId, updates }: { userId: string; updates: any }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/users/${userId}`, updates);
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/users/${userId}`, updates);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/users'] });
@@ -4384,8 +4375,7 @@ export default function Admin() {
   // Update user role mutation
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/users/${userId}/role`, { role });
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/users/${userId}/role`, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/users'] });
@@ -4411,11 +4401,10 @@ export default function Admin() {
         'rejected': 'reject'
       };
       
-      const response = await apiRequest('POST', `/api/v1/admin/verifications/${providerId}/status`, {
+      return await apiRequest('POST', `/api/v1/admin/verifications/${providerId}/status`, {
         action: actionMap[status] || status,
         notes: notes,
       });
-      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/verifications/pending'] });
@@ -4436,12 +4425,11 @@ export default function Admin() {
       notes?: string;
       rejectionReason?: string;
     }) => {
-      const response = await apiRequest('POST', `/api/v1/admin/parts-providers/${providerId}/status`, {
+      return await apiRequest('POST', `/api/v1/admin/parts-providers/${providerId}/status`, {
         action,
         notes,
         rejectionReason,
       });
-      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
@@ -4462,13 +4450,12 @@ export default function Admin() {
       notes?: string;
       rejectionReason?: string;
     }) => {
-      const response = await apiRequest('POST', `/api/v1/admin/parts-providers/bulk-action`, {
+      return await apiRequest('POST', `/api/v1/admin/parts-providers/bulk-action`, {
         providerIds,
         action,
         notes,
         rejectionReason,
       });
-      return response.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
@@ -4488,11 +4475,10 @@ export default function Admin() {
       amount: number; 
       reason: string;
     }) => {
-      const response = await apiRequest('POST', `/api/v1/admin/refund/${orderId}`, {
+      return await apiRequest('POST', `/api/v1/admin/refund/${orderId}`, {
         amount,
         reason,
       });
-      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/orders'] });
@@ -4507,8 +4493,7 @@ export default function Admin() {
   // Category mutations
   const createCategoryMutation = useMutation({
     mutationFn: async (categoryData: any) => {
-      const response = await apiRequest('POST', '/api/v1/admin/categories', categoryData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/admin/categories', categoryData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
@@ -4524,8 +4509,7 @@ export default function Admin() {
 
   const updateCategoryMutation = useMutation({
     mutationFn: async ({ categoryId, data }: { categoryId: string; data: any }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}`, data);
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
@@ -4541,8 +4525,7 @@ export default function Admin() {
 
   const deleteCategoryMutation = useMutation({
     mutationFn: async (categoryId: string) => {
-      const response = await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}`);
-      return response.json();
+      return await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
@@ -4602,8 +4585,7 @@ export default function Admin() {
 
   const updateCategoryImageMutation = useMutation({
     mutationFn: async ({ categoryId, imageUrl }: { categoryId: string; imageUrl: string }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}/image`, { imageUrl });
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}/image`, { imageUrl });
     },
     onSuccess: () => {
       // Invalidate both admin and public category queries for consistent UX
@@ -4626,8 +4608,7 @@ export default function Admin() {
 
   const deleteCategoryImageMutation = useMutation({
     mutationFn: async (categoryId: string) => {
-      const response = await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}/image`);
-      return response.json();
+      return await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}/image`);
     },
     onSuccess: () => {
       // Invalidate both admin and public category queries for consistent UX
@@ -4749,8 +4730,7 @@ export default function Admin() {
   // Service mutations
   const createServiceMutation = useMutation({
     mutationFn: async (serviceData: any) => {
-      const response = await apiRequest('POST', '/api/v1/admin/services', serviceData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/admin/services', serviceData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
@@ -4765,8 +4745,7 @@ export default function Admin() {
 
   const updateServiceMutation = useMutation({
     mutationFn: async ({ serviceId, data }: { serviceId: string; data: any }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/services/${serviceId}`, data);
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/services/${serviceId}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
@@ -4781,8 +4760,7 @@ export default function Admin() {
 
   const deleteServiceMutation = useMutation({
     mutationFn: async (serviceId: string) => {
-      const response = await apiRequest('DELETE', `/api/v1/admin/services/${serviceId}`);
-      return response.json();
+      return await apiRequest('DELETE', `/api/v1/admin/services/${serviceId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
@@ -4803,8 +4781,7 @@ export default function Admin() {
   // Test Services mutations
   const createDemoServicesMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('POST', '/api/v1/admin/test-services/demo');
-      return response.json();
+      return await apiRequest('POST', '/api/v1/admin/test-services/demo');
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -4824,8 +4801,7 @@ export default function Admin() {
 
   const createTestServiceMutation = useMutation({
     mutationFn: async (serviceData: any) => {
-      const response = await apiRequest('POST', '/api/v1/admin/test-services', serviceData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/admin/test-services', serviceData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -4838,8 +4814,7 @@ export default function Admin() {
 
   const updateTestServiceMutation = useMutation({
     mutationFn: async ({ serviceId, data }: { serviceId: string; data: any }) => {
-      const response = await apiRequest('PUT', `/api/v1/admin/test-services/${serviceId}`, data);
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/admin/test-services/${serviceId}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -4852,8 +4827,7 @@ export default function Admin() {
 
   const deleteTestServiceMutation = useMutation({
     mutationFn: async (serviceId: string) => {
-      const response = await apiRequest('DELETE', `/api/v1/admin/test-services/${serviceId}`);
-      return response.json();
+      return await apiRequest('DELETE', `/api/v1/admin/test-services/${serviceId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -4873,8 +4847,7 @@ export default function Admin() {
 
   const bulkDeleteTestServicesMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('DELETE', '/api/v1/admin/test-services');
-      return response.json();
+      return await apiRequest('DELETE', '/api/v1/admin/test-services');
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -4894,10 +4867,9 @@ export default function Admin() {
 
   const deleteSelectedTestServicesMutation = useMutation({
     mutationFn: async (serviceIds: string[]) => {
-      const response = await apiRequest('POST', '/api/v1/admin/test-services/delete-selected', {
+      return await apiRequest('POST', '/api/v1/admin/test-services/delete-selected', {
         serviceIds
       });
-      return response.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/test-services'] });
@@ -6850,7 +6822,7 @@ export default function Admin() {
 
         {/* Create Service Dialog */}
         <Dialog open={isCreateServiceOpen} onOpenChange={setIsCreateServiceOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Service</DialogTitle>
             </DialogHeader>
@@ -7037,7 +7009,7 @@ export default function Admin() {
 
         {/* Edit Service Dialog */}
         <Dialog open={isEditServiceOpen} onOpenChange={setIsEditServiceOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Service</DialogTitle>
             </DialogHeader>

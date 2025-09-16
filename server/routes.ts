@@ -2501,6 +2501,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get current admin user information
+  app.get('/api/admin/me', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Admin authentication required' 
+        });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'Admin user not found' 
+        });
+      }
+
+      // Verify admin role
+      if (user.role !== 'admin') {
+        return res.status(403).json({ 
+          success: false,
+          message: 'Admin access required' 
+        });
+      }
+
+      console.log('✅ Admin user info retrieved:', {
+        adminId: user.id,
+        email: user.email,
+        role: user.role,
+        timestamp: new Date().toISOString()
+      });
+
+      res.json({
+        success: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          isActive: user.isActive,
+          displayName: `${user.firstName} ${user.lastName}`.trim(),
+        },
+        adminAccess: true
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching admin user:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch admin user information'
+      });
+    }
+  });
+
   app.post('/api/v1/auth/login', validateBody(loginSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { uid, email, firstName, lastName, profileImageUrl } = req.body;
