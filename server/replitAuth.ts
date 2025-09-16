@@ -16,18 +16,28 @@ const getOidcConfig = memoize(
   async () => {
     const issuerUrl = process.env.ISSUER_URL ?? "https://replit.com/oidc";
     const clientId = process.env.REPL_ID!;
+    const clientSecret = process.env.REPL_IDENTITY_KEY!;
+    
+    if (!clientId) {
+      throw new Error('REPL_ID environment variable is required for OAuth configuration');
+    }
+    if (!clientSecret) {
+      throw new Error('REPL_IDENTITY_KEY environment variable is required for OAuth configuration');
+    }
     
     console.log('🔧 Creating OIDC configuration for Replit Auth...', {
       issuer: issuerUrl,
       client_id: clientId,
-      has_identity_key: !!process.env.REPL_IDENTITY_KEY
+      has_identity_key: !!clientSecret,
+      client_secret_length: clientSecret?.length || 0
     });
     
     try {
-      // Use openid-client discovery - this should work with Replit's OIDC
+      // Use openid-client discovery to get OIDC endpoints with client credentials
       const config = await client.discovery(
         new URL(issuerUrl),
-        clientId
+        clientId,
+        clientSecret // Pass client secret for proper authentication
       );
       
       console.log('✅ OIDC configuration successfully created:', {
@@ -35,12 +45,21 @@ const getOidcConfig = memoize(
         authorization_endpoint: (config as any).authorization_endpoint,
         token_endpoint: (config as any).token_endpoint,
         userinfo_endpoint: (config as any).userinfo_endpoint,
-        client_id: (config as any).client_id
+        client_id: (config as any).client_id,
+        client_authentication_method: (config as any).client_authentication_method || 'client_secret_basic'
       });
       
       return config;
     } catch (error) {
-      console.error('❌ OIDC configuration failed:', (error as Error).message);
+      console.error('❌ OIDC configuration failed:', {
+        error: (error as Error).message,
+        stack: (error as Error).stack,
+        issuer: issuerUrl,
+        hasClientId: !!clientId,
+        hasClientSecret: !!clientSecret,
+        clientIdLength: clientId?.length || 0,
+        clientSecretLength: clientSecret?.length || 0
+      });
       throw error;
     }
   },
@@ -189,6 +208,7 @@ export async function setupAuth(app: Express) {
       issuer: (config as any).issuer
     });
     
+    // Create strategy with proper client authentication
     const strategy = new Strategy(
       {
         name: strategyName,
@@ -261,17 +281,25 @@ export async function setupAuth(app: Express) {
           error_description: err.error_description,
           error_uri: err.error_uri,
           statusCode: err.statusCode,
-          response: err.response
+          response: err.response,
+          // Additional openid-client specific error fields
+          error_code: err.error_code,
+          error_details: err.error_details,
+          params: err.params
         });
         
         // Log additional request context for debugging
         console.error('Request context:', {
           url: req.url,
           query: req.query,
+          method: req.method,
+          hostname: req.hostname,
           headers: {
             host: req.headers.host,
             'user-agent': req.headers['user-agent'],
-            referer: req.headers.referer
+            referer: req.headers.referer,
+            'content-type': req.headers['content-type'],
+            authorization: req.headers.authorization ? '[REDACTED]' : undefined
           }
         });
         

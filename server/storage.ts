@@ -200,7 +200,7 @@ function whereAll(...conditions: Array<SQL<boolean> | undefined>): SQL<boolean> 
   } else if (validConditions.length === 1) {
     return validConditions[0];
   } else {
-    return and(...validConditions);
+    return and(...validConditions) as SQL<boolean>;
   }
 }
 

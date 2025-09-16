@@ -14058,6 +14058,402 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/v1/admin/seed-providers - Create verifiable service providers with database persistence
+  app.post('/api/v1/admin/seed-providers', adminSessionMiddleware, async (req, res) => {
+    try {
+      console.log('🌱 Starting provider seeding process...');
+      
+      // Provider data with comprehensive details
+      const PROVIDERS = [
+        {
+          email: "rajesh.electrician.fixit@gmail.com",
+          firstName: "Rajesh",
+          lastName: "Kumar",
+          business: "Kumar Electrical Services",
+          phone: "+919876543210",
+          location: "Mumbai, Maharashtra",
+          category: "Electrician",
+          services: ["electrical wiring", "LED installation", "appliance repair", "circuit troubleshooting"]
+        },
+        {
+          email: "amit.plumber.fixit@gmail.com", 
+          firstName: "Amit",
+          lastName: "Singh",
+          business: "Singh Plumbing Works",
+          phone: "+919876543211",
+          location: "Delhi",
+          category: "Plumber", 
+          services: ["pipe repair", "bathroom installation", "water heater setup", "drain cleaning"]
+        },
+        {
+          email: "priya.cleaner.fixit@gmail.com",
+          firstName: "Priya",
+          lastName: "Sharma", 
+          business: "Priya Professional Cleaning",
+          phone: "+919876543212",
+          location: "Bangalore, Karnataka",
+          category: "Cleaner",
+          services: ["deep cleaning", "sanitization", "carpet cleaning", "window cleaning"]  
+        },
+        {
+          email: "vikram.carpenter.fixit@gmail.com",
+          firstName: "Vikram",
+          lastName: "Reddy",
+          business: "Reddy Carpentry Works", 
+          phone: "+919876543213",
+          location: "Hyderabad, Telangana",
+          category: "Carpenter",
+          services: ["furniture making", "door repair", "cabinet installation", "wood polishing"]
+        },
+        {
+          email: "suresh.pestcontrol.fixit@gmail.com",
+          firstName: "Suresh", 
+          lastName: "Patel",
+          business: "Patel Pest Solutions",
+          phone: "+919876543214", 
+          location: "Pune, Maharashtra",
+          category: "Pest Control",
+          services: ["termite control", "cockroach treatment", "fumigation", "rodent control"]
+        }
+      ];
+
+      const results = {
+        created: 0,
+        providers: [] as any[],
+        verification: {
+          usersCount: 0,
+          providersCount: 0,
+          profilesCount: 0, 
+          serviceMappings: 0
+        },
+        errors: [] as string[]
+      };
+
+      console.log(`📋 Processing ${PROVIDERS.length} providers for seeding...`);
+
+      for (const providerData of PROVIDERS) {
+        try {
+          console.log(`🔄 Processing provider: ${providerData.email}`);
+
+          // Check if user already exists to make idempotent
+          const existingUser = await storage.getUserByEmail(providerData.email);
+          
+          let user;
+          if (existingUser) {
+            console.log(`👤 User already exists: ${providerData.email}`);
+            user = existingUser;
+          } else {
+            // Create user record with service_provider role
+            user = await storage.createUser({
+              email: providerData.email,
+              firstName: providerData.firstName,
+              lastName: providerData.lastName, 
+              phone: providerData.phone,
+              role: 'service_provider',
+              isVerified: true,
+              isActive: true,
+              location: {
+                address: providerData.location,
+                latitude: 0, // Would be set based on actual address
+                longitude: 0, 
+                city: providerData.location.split(',')[0].trim(),
+                pincode: '000000'
+              }
+            });
+            console.log(`✅ User created: ${user.id} - ${user.email}`);
+          }
+
+          // Check if service provider profile exists
+          let serviceProvider;
+          const existingProvider = await storage.getServiceProviderByUserId(user.id);
+          
+          if (existingProvider) {
+            console.log(`🏢 Service provider already exists for user: ${user.id}`);
+            serviceProvider = existingProvider;
+          } else {
+            // Create service provider profile
+            serviceProvider = await storage.createServiceProvider({
+              userId: user.id,
+              businessName: providerData.business,
+              businessType: 'individual',
+              skills: providerData.services,
+              experienceYears: Math.floor(Math.random() * 10) + 2, // 2-12 years
+              isVerified: true,
+              verificationLevel: 'verified',
+              rating: (4.0 + Math.random() * 1.0).toFixed(2), // 4.0-5.0 rating
+              totalCompletedOrders: Math.floor(Math.random() * 50) + 10, // 10-60 orders
+              totalRatings: Math.floor(Math.random() * 30) + 5, // 5-35 ratings
+              isOnline: Math.random() > 0.5, // Random online status
+              isAvailable: true,
+              serviceRadius: 25, // 25km service radius
+              currentLocation: {
+                latitude: 19.0760 + (Math.random() - 0.5) * 0.1, // Random location around Mumbai
+                longitude: 72.8777 + (Math.random() - 0.5) * 0.1,
+                address: providerData.location,
+                lastUpdated: new Date().toISOString()
+              },
+              serviceAreas: [{
+                name: providerData.location,
+                coordinates: [
+                  { lat: 19.0760 + (Math.random() - 0.5) * 0.1, lng: 72.8777 + (Math.random() - 0.5) * 0.1 }
+                ],
+                cities: [providerData.location.split(',')[0].trim()]
+              }],
+              documents: {
+                aadhar: {
+                  front: `https://example.com/documents/${user.id}/aadhar_front.jpg`,
+                  back: `https://example.com/documents/${user.id}/aadhar_back.jpg`, 
+                  uploadedAt: new Date().toISOString(),
+                  verified: true
+                },
+                photo: {
+                  url: `https://example.com/documents/${user.id}/profile_photo.jpg`,
+                  uploadedAt: new Date().toISOString(),
+                  verified: true
+                }
+              },
+              verificationStatus: 'approved',
+              verificationDate: new Date(),
+              completionRate: (85 + Math.random() * 15).toFixed(2), // 85-100% completion rate
+              onTimeRate: (90 + Math.random() * 10).toFixed(2) // 90-100% on-time rate
+            });
+            console.log(`✅ Service provider created: ${serviceProvider.id} for user ${user.id}`);
+          }
+
+          results.providers.push({
+            id: serviceProvider.id,
+            userId: user.id,
+            email: user.email,
+            name: `${user.firstName} ${user.lastName}`,
+            business: providerData.business,
+            phone: user.phone,
+            location: providerData.location,
+            status: 'approved',
+            verificationLevel: 'verified',
+            services: providerData.services
+          });
+
+          results.created++;
+          console.log(`🎉 Provider ${providerData.email} successfully processed!`);
+
+        } catch (error) {
+          const errorMsg = `Failed to create provider ${providerData.email}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          console.error(`❌ ${errorMsg}`);
+          results.errors.push(errorMsg);
+        }
+      }
+
+      // Get verification counts from database
+      try {
+        const allUsers = await storage.searchUsers('', undefined); // Get all users
+        const serviceProviders = await storage.getServiceProviders();
+        
+        results.verification.usersCount = allUsers.filter(u => u.role === 'service_provider').length;
+        results.verification.providersCount = serviceProviders.length;
+        results.verification.profilesCount = serviceProviders.length; // Same as providers for this implementation
+        results.verification.serviceMappings = serviceProviders.reduce((total, sp) => {
+          return total + (sp.skills?.length || 0);
+        }, 0);
+
+        console.log(`📊 Verification counts - Users: ${results.verification.usersCount}, Providers: ${results.verification.providersCount}, Mappings: ${results.verification.serviceMappings}`);
+      } catch (error) {
+        console.error('❌ Error getting verification counts:', error);
+      }
+
+      console.log(`🌱 Provider seeding completed! Created: ${results.created}, Errors: ${results.errors.length}`);
+
+      res.json({
+        success: results.errors.length === 0,
+        message: `Successfully processed ${results.created} providers${results.errors.length > 0 ? ` with ${results.errors.length} errors` : ''}`,
+        created: results.created,
+        providers: results.providers,
+        verification: results.verification,
+        errors: results.errors.length > 0 ? results.errors : undefined
+      });
+
+    } catch (error) {
+      console.error('❌ Error in provider seeding:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to seed providers',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/providers/verify - Verify providers exist in database
+  app.get('/api/v1/admin/providers/verify', adminSessionMiddleware, async (req, res) => {
+    try {
+      console.log('🔍 Verifying providers in database...');
+
+      // Get all service providers from database
+      const serviceProviders = await storage.getServiceProviders();
+      const allUsers = await storage.searchUsers('', undefined); // Get all users
+      
+      // Filter for our seeded providers by email pattern
+      const seededProviders = serviceProviders.filter(provider => {
+        const user = allUsers.find(u => u.id === provider.userId);
+        return user && user.email && user.email.includes('.fixit@gmail.com');
+      });
+
+      const providerDetails = await Promise.all(
+        seededProviders.map(async (provider) => {
+          const user = allUsers.find(u => u.id === provider.userId);
+          if (!user) return null;
+
+          return {
+            id: provider.id,
+            userId: user.id,
+            email: user.email,
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+            business: provider.businessName,
+            phone: user.phone,
+            role: user.role,
+            verificationStatus: provider.verificationStatus,
+            verificationLevel: provider.verificationLevel,
+            isVerified: provider.isVerified,
+            isOnline: provider.isOnline,
+            isAvailable: provider.isAvailable,
+            rating: provider.rating,
+            totalCompletedOrders: provider.totalCompletedOrders,
+            skills: provider.skills,
+            serviceRadius: provider.serviceRadius,
+            createdAt: provider.createdAt,
+            location: user.location
+          };
+        })
+      );
+
+      const validProviders = providerDetails.filter(Boolean);
+
+      const verification = {
+        totalUsers: allUsers.length,
+        serviceProviderUsers: allUsers.filter(u => u.role === 'service_provider').length,
+        totalServiceProviders: serviceProviders.length,
+        seededProviders: validProviders.length,
+        verifiedProviders: validProviders.filter(p => p.verificationStatus === 'approved').length,
+        onlineProviders: validProviders.filter(p => p.isOnline).length,
+        totalServiceMappings: validProviders.reduce((total, provider) => {
+          return total + (provider.skills?.length || 0);
+        }, 0)
+      };
+
+      console.log(`✅ Verification complete - Found ${validProviders.length} seeded providers out of ${serviceProviders.length} total providers`);
+
+      res.json({
+        success: true,
+        message: `Found ${validProviders.length} verified providers`,
+        count: validProviders.length,
+        providers: validProviders,
+        verification,
+        databaseStats: {
+          totalUsers: allUsers.length,
+          totalProviders: serviceProviders.length,
+          seededProviders: validProviders.length
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error verifying providers:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to verify providers',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // GET /api/v1/providers - Public endpoint to list service providers
+  app.get('/api/v1/providers', optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { 
+        category, 
+        location, 
+        radius = '25', 
+        available = 'true', 
+        verified = 'true',
+        limit = '20',
+        offset = '0' 
+      } = req.query;
+
+      console.log('🔍 Fetching providers with filters:', { category, location, radius, available, verified, limit, offset });
+
+      const serviceProviders = await storage.getServiceProviders();
+      const allUsers = await storage.searchUsers('', undefined); // Get all users
+
+      let filteredProviders = serviceProviders.filter(provider => {
+        // Only show approved/verified providers by default
+        if (verified === 'true' && provider.verificationStatus !== 'approved') {
+          return false;
+        }
+
+        // Only show available providers by default
+        if (available === 'true' && !provider.isAvailable) {
+          return false;
+        }
+
+        return true;
+      });
+
+      // Map providers with user information
+      const providersWithDetails = await Promise.all(
+        filteredProviders.map(async (provider) => {
+          const user = allUsers.find(u => u.id === provider.userId);
+          if (!user) return null;
+
+          return {
+            id: provider.id,
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+            business: provider.businessName,
+            location: user.location?.address || provider.currentLocation?.address,
+            rating: parseFloat(provider.rating || '0'),
+            totalCompletedOrders: provider.totalCompletedOrders || 0,
+            skills: provider.skills || [],
+            serviceRadius: provider.serviceRadius || 25,
+            isOnline: provider.isOnline,
+            isAvailable: provider.isAvailable,
+            verificationLevel: provider.verificationLevel,
+            profileImageUrl: user.profileImageUrl,
+            experienceYears: provider.experienceYears
+          };
+        })
+      );
+
+      const validProviders = providersWithDetails.filter(Boolean);
+
+      // Apply pagination
+      const limitNum = parseInt(limit as string);
+      const offsetNum = parseInt(offset as string);
+      const paginatedProviders = validProviders.slice(offsetNum, offsetNum + limitNum);
+
+      res.json({
+        success: true,
+        providers: paginatedProviders,
+        pagination: {
+          total: validProviders.length,
+          limit: limitNum,
+          offset: offsetNum,
+          hasMore: offsetNum + limitNum < validProviders.length
+        },
+        filters: {
+          category,
+          location,
+          radius,
+          available,
+          verified
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching providers:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch providers',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
   // WebSocket setup with comprehensive real-time features
   const httpServer = createServer(app);
   const wsManager = new WebSocketManager(httpServer);

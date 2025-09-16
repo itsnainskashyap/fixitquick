@@ -556,7 +556,7 @@ export const serviceProviderProfiles = pgTable("service_provider_profiles", {
   coverageRadiusIdx: index("spp_coverage_radius_idx").on(table.coverageRadiusKm),
   servicesOfferedIdx: index("spp_services_offered_idx").on(table.servicesOffered),
   // Performance indexes for provider matching queries
-  onlineServicesIdx: index("spp_online_services_idx").on(table.onlineStatus, table.servicesOffered).where(sql`online_status != 'offline'`),
+  onlineServicesIdx: index("spp_online_services_idx").on(table.onlineStatus, table.servicesOffered),
   activeProvidersIdx: index("spp_active_providers_idx").on(table.onlineStatus, table.coverageRadiusKm),
 }));
 
@@ -1617,7 +1617,7 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ i
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true });
 export const insertServiceProviderSchema = createInsertSchema(serviceProviders).omit({ id: true, createdAt: true });
-export const insertServiceProviderProfileSchema = createInsertSchema(serviceProviderProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertServiceProviderProfileSchema = createInsertSchema(serviceProviderProfiles).omit({ providerId: true, createdAt: true, updatedAt: true });
 export const insertOtpChallengeSchema = createInsertSchema(otpChallenges).omit({ id: true, createdAt: true });
 export const insertUserSessionSchema = createInsertSchema(userSessions).omit({ id: true, createdAt: true });
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true, createdAt: true, updatedAt: true });
