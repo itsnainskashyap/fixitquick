@@ -4311,7 +4311,7 @@ export default function Admin() {
   });
 
   // Fetch users
-  const { data: users } = useQuery({
+  const { data: usersResponse } = useQuery({
     queryKey: ['/api/v1/admin/users', searchQuery, filterRole],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -4321,71 +4321,77 @@ export default function Admin() {
     },
     enabled: !!user,
   });
+  const users = (usersResponse as any)?.data || [];
 
   // Fetch orders
-  const { data: orders } = useQuery({
+  const { data: ordersResponse } = useQuery({
     queryKey: ['/api/v1/admin/orders'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/orders');
     },
     enabled: !!user,
   });
+  const orders = (ordersResponse as any)?.data || [];
 
   // Fetch pending verifications
-  const { data: verifications } = useQuery({
+  const { data: verificationsResponse } = useQuery({
     queryKey: ['/api/v1/admin/verifications/pending'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/verifications/pending');
     },
     enabled: !!user,
   });
+  const verifications = (verificationsResponse as any)?.data || [];
 
   // Fetch all provider verifications (including approved/rejected)
-  const { data: allProviders } = useQuery({
+  const { data: allProvidersResponse } = useQuery({
     queryKey: ['/api/v1/admin/providers'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/providers');
     },
     enabled: !!user,
   });
+  const allProviders = (allProvidersResponse as any)?.data || [];
 
   // Fetch parts provider verifications
-  const { data: partsProviders } = useQuery({
+  const { data: partsProvidersResponse } = useQuery({
     queryKey: ['/api/v1/admin/parts-providers'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/parts-providers');
     },
     enabled: !!user,
   });
+  const partsProviders = (partsProvidersResponse as any)?.data || [];
 
   // Fetch pending parts provider verifications
-  const { data: pendingPartsProviders } = useQuery({
+  const { data: pendingPartsProvidersResponse } = useQuery({
     queryKey: ['/api/v1/admin/parts-providers/pending'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/parts-providers/pending');
     },
     enabled: !!user,
   });
+  const pendingPartsProviders = (pendingPartsProvidersResponse as any)?.data || [];
 
   // Fetch category hierarchy
-  const { data: categoryHierarchy } = useQuery<Category[]>({
+  const { data: categoryHierarchyResponse } = useQuery({
     queryKey: ['/api/v1/admin/categories/hierarchy'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
-      return await response.json();
+      return await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
     },
     enabled: !!user,
   });
+  const categoryHierarchy = (categoryHierarchyResponse as any)?.data || [];
 
   // Fetch main categories
-  const { data: mainCategories, isLoading: mainCategoriesLoading } = useQuery<Category[]>({
+  const { data: mainCategoriesResponse, isLoading: mainCategoriesLoading } = useQuery({
     queryKey: ['/api/v1/admin/categories/main'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/admin/categories/main');
-      return await response.json();
+      return await apiRequest('GET', '/api/v1/admin/categories/main');
     },
     enabled: !!user,
   });
+  const mainCategories = (mainCategoriesResponse as any)?.data || [];
 
   // Local state for drag-drop reordering (critical fix for production)
   const [localCategories, setLocalCategories] = useState<Category[]>([]);
@@ -4395,32 +4401,30 @@ export default function Admin() {
 
   // Sync local categories with React Query data
   useEffect(() => {
-    if (mainCategories && Array.isArray(mainCategories) && !isDragging) {
+    if (mainCategories && !isDragging) {
       setLocalCategories(mainCategories);
-    } else if (mainCategories && !Array.isArray(mainCategories)) {
-      console.warn('mainCategories is not an array:', mainCategories);
-      setLocalCategories([]);
     }
   }, [mainCategories, isDragging]);
 
   // Fetch services
-  const { data: services } = useQuery<Service[]>({
+  const { data: servicesResponse } = useQuery({
     queryKey: ['/api/v1/services'],
     queryFn: async () => {
-      const response = await apiRequest('GET', '/api/v1/services');
-      return await response.json();
+      return await apiRequest('GET', '/api/v1/services');
     },
     enabled: !!user,
   });
+  const services = (servicesResponse as any)?.data || [];
 
   // Fetch test services
-  const { data: testServices } = useQuery<Service[]>({
+  const { data: testServicesResponse } = useQuery({
     queryKey: ['/api/v1/admin/test-services'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/test-services');
     },
     enabled: !!user,
   });
+  const testServices = (testServicesResponse as any)?.data || [];
 
   // Update user status mutation
   const updateUserMutation = useMutation({

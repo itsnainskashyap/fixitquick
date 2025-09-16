@@ -7572,6 +7572,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // END ADMIN PARTS PROVIDER MANAGEMENT ENDPOINTS
   // ============================================================================
 
+  // ============================================================================
+  // ADMIN SERVICE PROVIDER MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Get all service providers
+  app.get('/api/v1/admin/providers', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { categoryId, isVerified, verificationStatus, page = 1, limit = 50 } = req.query;
+      const filters: any = {};
+      
+      if (categoryId) {
+        filters.categoryId = categoryId as string;
+      }
+      if (isVerified !== undefined) {
+        filters.isVerified = isVerified === 'true';
+      }
+      if (verificationStatus) {
+        filters.verificationStatus = verificationStatus as string;
+      }
+
+      const serviceProviders = await storage.getServiceProviders(filters);
+      
+      // Enrich with user data
+      const enrichedProviders = await Promise.all(
+        serviceProviders.map(async (provider) => {
+          const user = await storage.getUser(provider.userId);
+          const category = await storage.getServiceCategory(provider.categoryId);
+          return {
+            ...provider,
+            user: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              phone: user.phone,
+              email: user.email,
+              createdAt: user.createdAt
+            } : null,
+            category: category ? {
+              id: category.id,
+              name: category.name
+            } : null,
+            type: 'service_provider'
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: enrichedProviders,
+        total: enrichedProviders.length,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string)
+      });
+    } catch (error) {
+      console.error('Error fetching service providers:', error);
+      res.status(500).json({ message: 'Failed to fetch service providers' });
+    }
+  });
+
+  // ============================================================================
+  // END ADMIN SERVICE PROVIDER MANAGEMENT ENDPOINTS
+  // ============================================================================
+
   // Admin routes
   app.get('/api/v1/admin/stats', authMiddleware, adminSessionMiddleware, async (req, res) => {
     try {
