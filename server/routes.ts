@@ -2179,15 +2179,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           let adminUser;
           
           try {
-            // First try to find existing user by email
-            adminUser = await storage.getUserByEmail('nainspagal@gmail.com');
+            // Try to find existing user by either email
+            adminUser = await storage.getUserByEmail(email);
             if (adminUser) {
               console.log('✅ Found existing admin user with email:', adminUser.id);
             } else {
               console.log('🔧 Admin user not found by email, attempting to create...');
               try {
                 const newUser = await storage.createUser({
-                  email: 'nainspagal@gmail.com',
+                  email: email,
                   firstName: 'Administrator',
                   lastName: 'Admin',
                   role: 'admin',
@@ -2273,18 +2273,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isDevelopment = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
       const devBypassEnabled = isDevelopment && (process.env.DEV_ADMIN_ENABLED === 'true' || process.env.DEV_ADMIN_ENABLED);
       
-      // Check for dev bypass credentials
+      // Check for dev bypass credentials - accept both email addresses
       let isDevBypass = false;
       console.log('🔧 Debug bypass check:', {
         isDevelopment,
         devBypassEnabled,
         email,
-        expectedEmail: 'nainspagal@gmail.com',
-        emailMatch: email === 'nainspagal@gmail.com',
         devEnvValue: process.env.DEV_ADMIN_ENABLED
       });
       
-      if (devBypassEnabled && email === 'nainspagal@gmail.com' && password === 'Sinha@1357') {
+      if (devBypassEnabled && 
+          (email === 'nainspagal@gmail.com' || email === 'itsnainskashyap@gmail.com') && 
+          password === 'Sinha@1357') {
         isDevBypass = true;
         console.log('✅ Development admin bypass activated');
       }
@@ -2345,7 +2345,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Create admin user without id (auto-generated)
           const newUser = await storage.createUser({
-            email: isDevBypass ? 'nainspagal@gmail.com' : ADMIN_EMAIL,
+            email: isDevBypass ? email : ADMIN_EMAIL,
             firstName: 'Administrator',
             lastName: 'Admin',
             role: 'admin',
