@@ -706,3 +706,114 @@ export const handleCategoryImageUpload = async (
     });
   }
 };
+
+// Service icon image upload handler
+const uploadServiceIcon = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for service icons
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'image'));
+    }
+  }
+}).single('image');
+
+export const handleServiceIconUpload = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    uploadServiceIcon(req, res, async (multerError) => {
+      if (multerError) {
+        return res.status(400).json({
+          success: false,
+          message: multerError.message || 'Service icon upload failed',
+          error: 'UPLOAD_ERROR'
+        });
+      }
+
+      const file = req.file;
+      const userId = req.user?.id;
+      const { serviceId } = req.params;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No image file uploaded',
+          error: 'NO_FILE'
+        });
+      }
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      if (!serviceId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Service ID is required',
+          error: 'MISSING_SERVICE_ID'
+        });
+      }
+
+      try {
+        // Upload to object storage
+        const uploadResult = await objectStorageService.uploadFile(
+          file,
+          `service_${serviceId}`,
+          userId,
+          true // Public for service icons
+        );
+
+        if (!uploadResult.success) {
+          return res.status(500).json({
+            success: false,
+            message: uploadResult.error || 'Failed to upload service icon',
+            error: 'UPLOAD_FAILED'
+          });
+        }
+
+        const imageData = {
+          id: `service_icon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          url: uploadResult.url,
+          filename: file.originalname,
+          size: file.size,
+          mimeType: file.mimetype,
+          metadata: uploadResult.metadata,
+          width: uploadResult.metadata?.width,
+          height: uploadResult.metadata?.height,
+          uploadedAt: new Date().toISOString(),
+        };
+
+        res.json({
+          success: true,
+          message: 'Service icon uploaded successfully',
+          image: imageData,
+          serviceId
+        });
+
+      } catch (error) {
+        console.error('Error processing service icon upload:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to process service icon upload',
+          error: 'PROCESSING_ERROR'
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Service icon upload handler error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: 'INTERNAL_ERROR'
+    });
+  }
+};

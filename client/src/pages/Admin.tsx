@@ -23,12 +23,21 @@ import ImageGallery from '@/components/ImageGallery';
 import DocumentUpload from '@/components/DocumentUpload';
 import AvatarUpload from '@/components/AvatarUpload';
 import ImageUpload from '@/components/ImageUpload';
+import { ServiceIconSelector } from '@/components/ServiceIconSelector';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { type UploadedImage } from '@/hooks/useImageUpload';
 import { type ImageGalleryItem } from '@/components/ImageGallery';
 import { type UploadedDocument } from '@/components/DocumentUpload';
+import { 
+  type Service,
+  type InsertService,
+  type ServiceCategory,
+  type InsertServiceCategory,
+  type User,
+  type Order
+} from '@shared/schema';
 import { 
   Users, 
   DollarSign, 
@@ -352,56 +361,7 @@ interface Category {
   };
 }
 
-interface Service {
-  id: string;
-  name: string;
-  description: string;
-  categoryId: string;
-  categoryName?: string;
-  shortDescription?: string;
-  features?: string[];
-  pricing: {
-    basePrice: number;
-    currency: string;
-    unit: string;
-    priceType: 'fixed' | 'hourly' | 'per_item';
-    additionalCharges?: Array<{
-      name: string;
-      price: number;
-      optional: boolean;
-    }>;
-  };
-  duration?: {
-    estimated: number;
-    unit: 'minutes' | 'hours' | 'days';
-  };
-  requirements?: string[];
-  images?: string[];
-  isActive: boolean;
-  isPopular: boolean;
-  isFeatured: boolean;
-  isTestService?: boolean; // New field to mark test services
-  availabilityZones?: string[];
-  metadata?: {
-    difficulty: 'easy' | 'medium' | 'hard';
-    tools: string[];
-    skills: string[];
-    certifications: string[];
-  };
-  seo?: {
-    title: string;
-    description: string;
-    keywords: string[];
-  };
-  stats: {
-    totalBookings: number;
-    averageRating: number;
-    totalReviews: number;
-    completionRate: number;
-  };
-  createdAt: string;
-  updatedAt: string;
-}
+// Using proper Service type from shared/schema.ts which includes iconType and iconValue
 
 interface SystemConfig {
   id: string;
@@ -1161,7 +1121,9 @@ export default function Admin() {
     currency: 'INR',
     unit: 'service',
     features: [] as string[],
-    requirements: [] as string[]
+    requirements: [] as string[],
+    iconType: 'emoji' as 'emoji' | 'image',
+    iconValue: '🔧'
   });
 
   // Test Services management state
@@ -1804,6 +1766,8 @@ export default function Admin() {
     
     const data = {
       ...serviceFormData,
+      iconType: serviceFormData.iconType,
+      iconValue: serviceFormData.iconValue,
       pricing: {
         basePrice: serviceFormData.basePrice,
         currency: serviceFormData.currency,
@@ -1830,7 +1794,9 @@ export default function Admin() {
       currency: service.pricing?.currency || 'INR',
       unit: service.pricing?.unit || 'service',
       features: service.features || [],
-      requirements: service.requirements || []
+      requirements: service.requirements || [],
+      iconType: service.iconType || 'emoji',
+      iconValue: service.iconValue || '🔧'
     });
     setIsEditServiceOpen(true);
   };
@@ -1847,6 +1813,8 @@ export default function Admin() {
     
     const data = {
       ...serviceFormData,
+      iconType: serviceFormData.iconType,
+      iconValue: serviceFormData.iconValue,
       pricing: {
         basePrice: serviceFormData.basePrice,
         currency: serviceFormData.currency,
@@ -1878,7 +1846,9 @@ export default function Admin() {
       currency: 'INR',
       unit: 'service',
       features: [],
-      requirements: []
+      requirements: [],
+      iconType: 'emoji',
+      iconValue: '🔧'
     });
     setSelectedService(null);
   };
@@ -2975,6 +2945,26 @@ export default function Admin() {
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
                               <div className="flex items-center space-x-3 mb-2">
+                                <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                                  {service.iconType === 'image' && service.iconValue ? (
+                                    <img 
+                                      src={service.iconValue} 
+                                      alt="Service icon"
+                                      className="w-6 h-6 object-cover rounded"
+                                      onError={(e) => {
+                                        e.currentTarget.style.display = 'none';
+                                        const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                                        if (fallback) fallback.style.display = 'inline';
+                                      }}
+                                    />
+                                  ) : null}
+                                  <span 
+                                    className="text-lg"
+                                    style={{ display: service.iconType === 'image' && service.iconValue ? 'none' : 'inline' }}
+                                  >
+                                    {(service.iconType === 'emoji' && service.iconValue) ? service.iconValue : '🔧'}
+                                  </span>
+                                </div>
                                 <h3 className="text-xl font-semibold text-foreground">{service.name}</h3>
                                 <div className="flex space-x-2">
                                   <Badge variant={service.isActive ? "default" : "secondary"}>
@@ -3455,6 +3445,23 @@ export default function Admin() {
               </div>
               
               <div>
+                <Label>Service Icon *</Label>
+                <ServiceIconSelector
+                  iconType={serviceFormData.iconType}
+                  iconValue={serviceFormData.iconValue}
+                  onIconChange={(iconType, iconValue) => {
+                    setServiceFormData({ 
+                      ...serviceFormData, 
+                      iconType, 
+                      iconValue 
+                    });
+                  }}
+                  serviceId={null}
+                  data-testid="service-icon-selector"
+                />
+              </div>
+              
+              <div>
                 <Label htmlFor="serviceDescription">Description *</Label>
                 <Textarea
                   id="serviceDescription"
@@ -3622,6 +3629,23 @@ export default function Admin() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              
+              <div>
+                <Label>Service Icon *</Label>
+                <ServiceIconSelector
+                  iconType={serviceFormData.iconType}
+                  iconValue={serviceFormData.iconValue}
+                  onIconChange={(iconType, iconValue) => {
+                    setServiceFormData({ 
+                      ...serviceFormData, 
+                      iconType, 
+                      iconValue 
+                    });
+                  }}
+                  serviceId={selectedService?.id || null}
+                  data-testid="edit-service-icon-selector"
+                />
               </div>
               
               <div>

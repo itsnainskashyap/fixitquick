@@ -11,7 +11,9 @@ interface ServiceCardProps {
   price: number;
   rating?: number;
   totalBookings?: number;
-  icon?: string;
+  icon?: string; // Kept for backward compatibility
+  iconType?: 'emoji' | 'image';
+  iconValue?: string;
   category: string;
   estimatedDuration?: number;
   isAvailable?: boolean;
@@ -22,6 +24,64 @@ interface ServiceCardProps {
   showAddToCart?: boolean;
 }
 
+// Helper component to render service icon with proper size handling
+function ServiceIcon({ 
+  iconType, 
+  iconValue, 
+  fallbackIcon = '🔧', 
+  size = 'md',
+  className = '',
+  containerClassName = ''
+}: {
+  iconType?: 'emoji' | 'image';
+  iconValue?: string;
+  fallbackIcon?: string;
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+  containerClassName?: string;
+}) {
+  // Define explicit size classes for consistent rendering
+  const sizeClasses = {
+    sm: { image: 'w-4 h-4', emoji: 'text-sm' },
+    md: { image: 'w-6 h-6', emoji: 'text-xl' },
+    lg: { image: 'w-8 h-8', emoji: 'text-2xl' }
+  };
+  
+  const imageSize = sizeClasses[size].image;
+  const emojiSize = sizeClasses[size].emoji;
+  
+  // Use new icon system if available, otherwise fallback to old icon prop
+  if (iconType === 'image' && iconValue) {
+    return (
+      <img 
+        src={iconValue} 
+        alt="Service icon" 
+        className={`object-cover rounded ${imageSize} ${className} ${containerClassName}`}
+        onError={(e) => {
+          // Fallback to emoji if image fails to load
+          e.currentTarget.style.display = 'none';
+          const fallback = e.currentTarget.parentElement?.querySelector('.icon-fallback') as HTMLElement;
+          if (fallback) fallback.style.display = 'inline';
+        }}
+      />
+    );
+  }
+  
+  const displayIcon = (iconType === 'emoji' && iconValue) ? iconValue : fallbackIcon;
+  return (
+    <>
+      {iconType === 'image' && iconValue && (
+        <span className={`icon-fallback ${emojiSize} ${className}`} style={{ display: 'none' }}>
+          {fallbackIcon}
+        </span>
+      )}
+      <span className={`${iconType === 'image' ? 'icon-fallback' : ''} ${emojiSize} ${className}`}>
+        {displayIcon}
+      </span>
+    </>
+  );
+}
+
 export function ServiceCard({
   id,
   name,
@@ -29,7 +89,9 @@ export function ServiceCard({
   price,
   rating = 0,
   totalBookings = 0,
-  icon = '🔧',
+  icon = '🔧', // Kept for backward compatibility
+  iconType,
+  iconValue,
   category,
   estimatedDuration,
   isAvailable = true,
@@ -61,7 +123,12 @@ export function ServiceCard({
       >
         <div className="text-center">
           <div className="w-12 h-12 bg-primary/10 rounded-lg mx-auto mb-3 flex items-center justify-center">
-            <span className="text-2xl">{icon}</span>
+            <ServiceIcon 
+              iconType={iconType} 
+              iconValue={iconValue} 
+              fallbackIcon={icon} 
+              size="lg"
+            />
           </div>
           <h3 className="font-medium text-sm text-foreground mb-1">{name}</h3>
           <p className="text-xs text-primary font-semibold">Starting ₹{price}</p>
@@ -89,7 +156,12 @@ export function ServiceCard({
           <CardContent className="p-4">
             <div className="flex items-start space-x-4">
               <div className="w-16 h-16 bg-primary/10 rounded-xl flex items-center justify-center">
-                <span className="text-3xl">{icon}</span>
+                <ServiceIcon 
+                  iconType={iconType} 
+                  iconValue={iconValue} 
+                  fallbackIcon={icon} 
+                  size="lg"
+                />
               </div>
               
               <div className="flex-1">
@@ -174,7 +246,12 @@ export function ServiceCard({
     >
       <div className="flex items-center space-x-4">
         <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0">
-          <span className="text-xl">{icon}</span>
+          <ServiceIcon 
+            iconType={iconType} 
+            iconValue={iconValue} 
+            fallbackIcon={icon} 
+            size="md"
+          />
         </div>
         
         <div className="flex-1 min-w-0">

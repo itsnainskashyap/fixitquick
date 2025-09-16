@@ -378,7 +378,9 @@ export const services = pgTable("services", {
   description: text("description"),
   basePrice: decimal("base_price", { precision: 10, scale: 2 }).notNull(),
   estimatedDuration: integer("estimated_duration"), // in minutes
-  icon: text("icon"),
+  icon: text("icon"), // Legacy icon field for backward compatibility
+  iconType: varchar("icon_type", { enum: ["emoji", "image"] }).default("emoji"),
+  iconValue: text("icon_value"), // Stores emoji character or image URL
   images: jsonb("images").$type<string[]>(),
   rating: decimal("rating", { precision: 3, scale: 2 }).default("0.00"),
   totalBookings: integer("total_bookings").default(0),

@@ -57,6 +57,7 @@ import {
   handleProductImageUpload,
   handleProviderDocumentUpload,
   handleCategoryImageUpload,
+  handleServiceIconUpload,
   getImageDetails,
   updateImageMetadata,
   deleteImage
@@ -157,6 +158,35 @@ const loginSchema = z.object({
 
 // Category image URL validation schema for security
 const categoryImageUrlSchema = z.object({
+  imageUrl: z.string()
+    .url('Must be a valid URL')
+    .refine((url) => {
+      // Ensure URL is from our object storage domain for security
+      const allowedDomains = [
+        'objectstorage.replit.com',
+        // Add other trusted domains if needed
+      ];
+      try {
+        const urlObj = new URL(url);
+        return allowedDomains.some(domain => urlObj.hostname === domain);
+      } catch {
+        return false;
+      }
+    }, 'Image URL must be from authorized storage domain')
+    .refine((url) => {
+      // Additional validation for image file extensions
+      const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+      return allowedExtensions.some(ext => url.toLowerCase().includes(ext));
+    }, 'URL must point to a valid image file')
+});
+
+// Service icon validation schemas
+const serviceIconUpdateSchema = z.object({
+  iconType: z.enum(['emoji', 'image']),
+  iconValue: z.string().min(1, 'Icon value is required')
+});
+
+const serviceImageUrlSchema = z.object({
   imageUrl: z.string()
     .url('Must be a valid URL')
     .refine((url) => {
@@ -7642,6 +7672,176 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error deleting service:', error);
       res.status(500).json({ message: 'Failed to delete service' });
+    }
+  });
+
+  // ============================================================================
+  // SERVICE ICON MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Upload service icon image
+  app.post('/api/v1/admin/services/:serviceId/image', uploadLimiter, adminSessionMiddleware, handleServiceIconUpload);
+
+  // Update service icon (emoji or image URL)
+  app.put('/api/v1/admin/services/:serviceId/icon', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      
+      // Validate request body
+      const validation = serviceIconUpdateSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          message: 'Invalid icon data',
+          errors: validation.error.errors
+        });
+      }
+
+      const { iconType, iconValue } = validation.data;
+
+      // Validate service exists
+      const existingService = await storage.getService(serviceId);
+      if (!existingService) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+
+      // For image type, validate the URL is from authorized domain
+      if (iconType === 'image') {
+        const urlValidation = serviceImageUrlSchema.safeParse({ imageUrl: iconValue });
+        if (!urlValidation.success) {
+          return res.status(400).json({ 
+            message: 'Invalid image URL',
+            errors: urlValidation.error.errors
+          });
+        }
+      }
+
+      // Update service with new icon data
+      const updatedService = await storage.updateService(serviceId, {
+        iconType,
+        iconValue
+      });
+
+      if (!updatedService) {
+        return res.status(500).json({ message: 'Failed to update service icon' });
+      }
+
+      console.log('✅ Admin updated service icon:', { 
+        id: serviceId, 
+        iconType, 
+        iconValue: iconType === 'emoji' ? iconValue : '[image URL]'
+      });
+
+      res.json({
+        success: true,
+        message: 'Service icon updated successfully',
+        service: {
+          id: updatedService.id,
+          name: updatedService.name,
+          iconType: updatedService.iconType,
+          iconValue: updatedService.iconValue
+        }
+      });
+
+    } catch (error) {
+      console.error('Error updating service icon:', error);
+      res.status(500).json({ message: 'Failed to update service icon' });
+    }
+  });
+
+  // Update service with image URL (for uploaded images)
+  app.put('/api/v1/admin/services/:serviceId/image', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+      
+      // Validate request body with security constraints
+      const validation = serviceImageUrlSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          message: 'Invalid image URL',
+          errors: validation.error.errors
+        });
+      }
+
+      const { imageUrl } = validation.data;
+
+      // Validate service exists
+      const existingService = await storage.getService(serviceId);
+      if (!existingService) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+
+      // Update service with image icon
+      const updatedService = await storage.updateService(serviceId, {
+        iconType: 'image',
+        iconValue: imageUrl
+      });
+
+      if (!updatedService) {
+        return res.status(500).json({ message: 'Failed to update service image' });
+      }
+
+      console.log('✅ Admin updated service image:', { 
+        id: serviceId, 
+        imageUrl: '[image URL]'
+      });
+
+      res.json({
+        success: true,
+        message: 'Service image updated successfully',
+        service: {
+          id: updatedService.id,
+          name: updatedService.name,
+          iconType: updatedService.iconType,
+          iconValue: updatedService.iconValue
+        }
+      });
+
+    } catch (error) {
+      console.error('Error updating service image:', error);
+      res.status(500).json({ message: 'Failed to update service image' });
+    }
+  });
+
+  // Delete service image (reset to emoji)
+  app.delete('/api/v1/admin/services/:serviceId/image', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceId } = req.params;
+
+      // Get current service to get the image URL
+      const service = await storage.getService(serviceId);
+      if (!service) {
+        return res.status(404).json({ message: 'Service not found' });
+      }
+
+      // Reset to default emoji icon
+      const updatedService = await storage.updateService(serviceId, {
+        iconType: 'emoji',
+        iconValue: '🔧' // Default service emoji
+      });
+
+      if (!updatedService) {
+        return res.status(500).json({ message: 'Failed to remove service image' });
+      }
+
+      console.log('✅ Admin removed service image:', { 
+        id: serviceId,
+        resetToEmoji: '🔧'
+      });
+
+      res.json({
+        success: true,
+        message: 'Service image removed successfully',
+        service: {
+          id: updatedService.id,
+          name: updatedService.name,
+          iconType: updatedService.iconType,
+          iconValue: updatedService.iconValue
+        }
+      });
+
+    } catch (error) {
+      console.error('Error removing service image:', error);
+      res.status(500).json({ message: 'Failed to remove service image' });
     }
   });
 
