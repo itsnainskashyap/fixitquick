@@ -2639,16 +2639,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WebSocket token endpoint for secure WebSocket authentication
-  app.post('/api/v1/auth/ws-token', isAuthenticated, async (req: any, res: Response) => {
+  app.post('/api/v1/auth/ws-token', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
       console.log('🔐 WebSocket token request:', {
-        isAuth: req.isAuthenticated(),
         user: req.user ? 'present' : 'missing',
-        claims: req.user?.claims ? 'present' : 'missing',
-        sub: req.user?.claims?.sub
+        userId: req.user?.id,
+        role: req.user?.role,
+        authMethod: req.user?.authMethod
       });
       
-      const userId = req.user?.id || req.user?.claims?.sub;
+      const userId = req.user?.id;
       if (!userId) {
         console.log('❌ WebSocket token: No userId found');
         return res.status(401).json({ message: 'Unauthorized' });

@@ -215,60 +215,33 @@ export default function ServiceBooking() {
     enabled: !!user,
   });
 
-  // Provider matching mutation for instant bookings
-  const findProvidersMutation = useMutation({
-    mutationFn: async (criteria: {
-      serviceId: string;
-      location: { latitude: number; longitude: number };
-      urgency: 'low' | 'normal' | 'high' | 'urgent';
-      maxDistance?: number;
-    }) => {
-      return await apiRequest('POST', '/api/v1/service-bookings/find-providers', criteria);
-    },
-    onSuccess: (providers: MatchedProvider[]) => {
-      setMatchedProviders(providers);
-      setProviderSearching(false);
-      if (providers.length === 0) {
-        toast({
-          title: 'No Providers Available',
-          description: 'No providers found in your area. Please try again later or book for a later time.',
-          variant: 'destructive',
-        });
-      }
-    },
-    onError: (error: any) => {
-      setProviderSearching(false);
-      toast({
-        title: 'Provider Search Failed',
-        description: error.message || 'Unable to find providers. Please try again.',
-        variant: 'destructive',
-      });
-    },
-  });
+  // Removed findProvidersMutation - orders are created directly and providers are matched server-side
 
-  // Enhanced service booking mutation
+  // Enhanced order creation mutation
   const createServiceBookingMutation = useMutation({
     mutationFn: async (bookingData: any) => {
-      return await apiRequest('POST', '/api/v1/service-bookings', bookingData);
+      return await apiRequest('POST', '/api/v1/orders', bookingData);
     },
     onSuccess: (booking: ServiceBooking) => {
       setCurrentBooking(booking);
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
       
       if (booking.bookingType === 'instant') {
         toast({
-          title: 'Booking Created!',
+          title: 'Order Created!',
           description: 'Searching for available providers in your area...',
         });
         setBookingStatus('searching_providers');
-        // Start provider search for instant bookings
-        startProviderSearch(booking.id);
+        // Redirect to order tracking page
+        setTimeout(() => {
+          setLocation(`/orders/${booking.id}`);
+        }, 2000);
       } else {
         toast({
-          title: 'Booking Scheduled!',
+          title: 'Order Scheduled!',
           description: 'Your service has been scheduled successfully.',
         });
-        setLocation(`/bookings/${booking.id}`);
+        setLocation(`/orders/${booking.id}`);
       }
     },
     onError: (error: any) => {
@@ -280,27 +253,6 @@ export default function ServiceBooking() {
     },
   });
 
-  // Create legacy order mutation (for backward compatibility)
-  const createOrderMutation = useMutation({
-    mutationFn: async (orderData: any) => {
-      return await apiRequest('POST', '/api/v1/orders', orderData);
-    },
-    onSuccess: (order) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
-      toast({
-        title: 'Booking Confirmed!',
-        description: 'Your service has been booked successfully.',
-      });
-      setLocation(`/orders/${order.id}`);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Booking Failed',
-        description: error.message || 'Something went wrong. Please try again.',
-        variant: 'destructive',
-      });
-    },
-  });
 
   // Enhanced helper functions for new booking flow
   const handleLocationConfirm = (location: LocationData) => {
@@ -333,18 +285,8 @@ export default function ServiceBooking() {
   const handleUrgencySelect = () => {
     const urgency = form.getValues().urgency;
     if (urgency && serviceLocation && service) {
-      // For instant bookings, start provider search
-      setProviderSearching(true);
-      findProvidersMutation.mutate({
-        serviceId: service.id,
-        location: {
-          latitude: serviceLocation.latitude,
-          longitude: serviceLocation.longitude,
-        },
-        urgency,
-        maxDistance: 25, // 25km radius
-      });
-      setStep(3); // Go to provider selection
+      // For instant bookings, skip provider selection and go directly to order creation
+      setStep(4); // Go directly to confirmation - provider matching is handled server-side
     }
   };
 
@@ -356,11 +298,8 @@ export default function ServiceBooking() {
       form.setValue('providerId', (provider as ServiceProvider).id);
     }
     
-    if (bookingType === 'instant') {
-      setStep(4); // Go directly to confirmation for instant bookings
-    } else {
-      setStep(3); // Go to date/time selection for scheduled
-    }
+    // Provider selection is no longer needed - orders are matched server-side
+    setStep(4); // Go directly to confirmation
   };
 
   const handleDateTimeSelect = () => {
@@ -1217,10 +1156,10 @@ export default function ServiceBooking() {
                   <Button
                     type="submit"
                     className="flex-1"
-                    disabled={createOrderMutation.isPending}
+                    disabled={createServiceBookingMutation.isPending}
                     data-testid="confirm-booking"
                   >
-                    {createOrderMutation.isPending ? 'Booking...' : 'Confirm Booking'}
+                    {createServiceBookingMutation.isPending ? 'Booking...' : 'Confirm Booking'}
                   </Button>
                 </div>
               </form>

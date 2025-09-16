@@ -68,7 +68,7 @@ export default function ServiceProviderDashboard() {
 
   // Fetch provider jobs - connect to real API endpoint
   const { data: jobsData, isLoading, error, refetch } = useQuery<ProviderJobsData>({
-    queryKey: ['/api/v1/provider/job-requests'],
+    queryKey: ['/api/v1/providers/me/job-requests'],
     enabled: !!user && user.role === 'service_provider',
     refetchInterval: 30000, // Refetch every 30 seconds
     select: (data: any) => {
@@ -97,7 +97,7 @@ export default function ServiceProviderDashboard() {
       quotedPrice?: number;
       notes?: string;
     }) => {
-      return await apiRequest('POST', `/api/v1/provider-job-requests/${bookingId}/accept`, {
+      return await apiRequest('POST', `/api/v1/orders/${bookingId}/accept`, {
         estimatedArrival,
         quotedPrice,
         notes,
@@ -109,7 +109,7 @@ export default function ServiceProviderDashboard() {
         description: "You have successfully accepted the job request.",
       });
       // Invalidate both job requests and profile data
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/profile'] });
     },
     onError: (error: any) => {
@@ -127,7 +127,7 @@ export default function ServiceProviderDashboard() {
       bookingId: string;
       reason?: string;
     }) => {
-      return await apiRequest('POST', `/api/v1/provider-job-requests/${bookingId}/decline`, {
+      return await apiRequest('POST', `/api/v1/orders/${bookingId}/decline`, {
         reason,
       });
     },
@@ -137,7 +137,7 @@ export default function ServiceProviderDashboard() {
         description: "You have declined the job offer.",
       });
       // Invalidate both job requests and profile data
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/profile'] });
     },
     onError: (error: any) => {
@@ -159,12 +159,12 @@ export default function ServiceProviderDashboard() {
         title: "New Job Offer!",
         description: `You have a new job offer for ${data.booking?.serviceType}`,
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
     };
 
     const handleJobUpdate = (data: any) => {
       console.log('📢 Job update received:', data);
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/provider/job-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
     };
 
     socket.on('provider.job_offer', handleJobOffer);
@@ -255,7 +255,7 @@ export default function ServiceProviderDashboard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/jobs'] })}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] })}
             data-testid="button-refresh-jobs"
           >
             <RefreshCw className="h-4 w-4 mr-2" />

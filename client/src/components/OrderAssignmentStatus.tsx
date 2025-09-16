@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSocket } from '@/hooks/useSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -47,60 +47,129 @@ interface OrderAssignmentStatusProps {
 
 export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentStatusProps) {
   const { socket, isConnected } = useSocket();
+  const queryClient = useQueryClient();
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
 
-  // Fetch order assignment status
-  const { data: statusData, isLoading, error, refetch } = useQuery<OrderStatusData>({
-    queryKey: ['/api/v1/orders', orderId, 'provider-status'],
+  // Enhanced fetch order status with retry logic
+  const { data: orderData, isLoading, error, refetch } = useQuery<any>({
+    queryKey: ['/api/v1/orders', orderId],
     enabled: !!orderId,
     refetchInterval: 30000, // Refetch every 30 seconds
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: (failureCount, error: any) => {
+      // Retry up to 3 times for network errors, but not for 404s or 403s
+      if (error?.status === 404 || error?.status === 403) {
+        return false;
+      }
+      return failureCount < maxRetries;
+    },
+    retryDelay: (attemptIndex) => {
+      // Exponential backoff: 1s, 2s, 4s
+      return Math.min(1000 * Math.pow(2, attemptIndex), 10000);
+    },
+    onError: (error: any) => {
+      console.error('OrderAssignmentStatus fetch error:', error);
+      setRetryCount(prev => prev + 1);
+    },
+    onSuccess: (data) => {
+      setRetryCount(0); // Reset retry count on successful fetch
+    },
   });
 
-  // Listen for real-time updates
+  // Enhanced real-time updates with better error handling
   useEffect(() => {
     if (!socket || !isConnected || !orderId) return;
 
     const handleAssignmentUpdate = (data: any) => {
       console.log('📢 Assignment update received:', data);
       setLastUpdate(new Date());
+      // Optimistically update cache to avoid refetch delay
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+        ...oldData,
+        status: data.status || oldData?.status,
+        pendingOffers: data.pendingOffers ?? oldData?.pendingOffers,
+      }));
       refetch();
     };
 
     const handleProviderAssigned = (data: any) => {
       console.log('✅ Provider assigned:', data);
       setLastUpdate(new Date());
+      // Optimistically update with provider info
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+        ...oldData,
+        status: 'provider_assigned',
+        assignedProviderId: data.providerId,
+        provider: data.provider,
+        assignedAt: new Date().toISOString(),
+      }));
       refetch();
     };
 
     const handleProviderAccepted = (data: any) => {
       console.log('🎉 Provider accepted job:', data);
       setLastUpdate(new Date());
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+        ...oldData,
+        status: 'provider_on_way',
+      }));
       refetch();
     };
 
     const handleSearchingProviders = (data: any) => {
       console.log('🔍 Searching for providers:', data);
       setLastUpdate(new Date());
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+        ...oldData,
+        status: 'provider_search',
+        pendingOffers: data.pendingOffers || 0,
+      }));
       refetch();
     };
 
-    // Subscribe to order updates
-    socket.emit('subscribe_order', { orderId });
+    const handleConnectionError = (error: any) => {
+      console.error('WebSocket connection error:', error);
+      // Try to refetch data as fallback
+      setTimeout(() => {
+        if (!socket || !socket.connected) {
+          refetch();
+        }
+      }, 2000);
+    };
+
+    // Subscribe to order updates with error handling
+    try {
+      socket.emit('subscribe_order', { orderId });
+    } catch (error) {
+      console.error('Failed to subscribe to order updates:', error);
+      handleConnectionError(error);
+    }
 
     // Listen for assignment events
     socket.on('order.assignment_started', handleAssignmentUpdate);
     socket.on('order.provider_assigned', handleProviderAssigned);
     socket.on('order.provider_accepted', handleProviderAccepted);
     socket.on('order.searching_providers', handleSearchingProviders);
+    socket.on('error', handleConnectionError);
+    socket.on('disconnect', handleConnectionError);
 
     return () => {
-      socket.emit('unsubscribe_order', { orderId });
+      try {
+        socket.emit('unsubscribe_order', { orderId });
+      } catch (error) {
+        console.error('Failed to unsubscribe from order updates:', error);
+      }
       socket.off('order.assignment_started', handleAssignmentUpdate);
       socket.off('order.provider_assigned', handleProviderAssigned);
       socket.off('order.provider_accepted', handleProviderAccepted);
       socket.off('order.searching_providers', handleSearchingProviders);
+      socket.off('error', handleConnectionError);
+      socket.off('disconnect', handleConnectionError);
     };
-  }, [socket, isConnected, orderId, refetch]);
+  }, [socket, isConnected, orderId, refetch, queryClient]);
 
   if (isLoading) {
     return (
@@ -119,16 +188,71 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
     );
   }
 
+  // Transform order data to status data format
+  const statusData: OrderStatusData | null = orderData ? {
+    orderId: orderData.id,
+    status: orderData.status,
+    assignedProviderId: orderData.assignedProviderId,
+    assignedAt: orderData.assignedAt,
+    provider: orderData.provider,
+    pendingOffers: orderData.pendingOffers
+  } : null;
+
   if (error || !statusData) {
+    const getErrorMessage = () => {
+      if (error?.status === 404) {
+        return "Order not found or has been cancelled";
+      }
+      if (error?.status === 403) {
+        return "You don't have permission to view this order";
+      }
+      if (error?.status >= 500) {
+        return "Server error - please try again";
+      }
+      if (!isConnected) {
+        return "Connection lost - trying to reconnect...";
+      }
+      return "Unable to load assignment status";
+    };
+
+    const canRetry = error?.status !== 404 && error?.status !== 403;
+
     return (
-      <Card className={className}>
+      <Card className={className} data-testid="order-assignment-status-error">
         <CardContent className="text-center py-6">
-          <AlertCircle className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
-          <p className="text-sm text-muted-foreground">Unable to load assignment status</p>
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="mt-2">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Retry
-          </Button>
+          <AlertCircle className={`mx-auto h-8 w-8 mb-2 ${
+            error?.status >= 500 || !isConnected ? 'text-destructive' : 'text-muted-foreground'
+          }`} />
+          <p className="text-sm text-muted-foreground mb-3">{getErrorMessage()}</p>
+          
+          {canRetry && (
+            <>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => refetch()} 
+                className="mt-2"
+                disabled={isLoading}
+                data-testid="retry-button"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                {isLoading ? 'Retrying...' : 'Retry'}
+              </Button>
+              
+              {retryCount > 0 && retryCount < maxRetries && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Attempt {retryCount + 1} of {maxRetries}
+                </p>
+              )}
+              
+              {!isConnected && (
+                <div className="flex items-center justify-center mt-2 text-xs text-muted-foreground">
+                  <div className="w-2 h-2 bg-red-500 rounded-full mr-2 animate-pulse" />
+                  Connection lost - retrying automatically...
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
     );
