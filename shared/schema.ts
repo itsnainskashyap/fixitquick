@@ -759,21 +759,105 @@ export const walletTransactions = pgTable("wallet_transactions", {
   completedAt: timestamp("completed_at"),
 });
 
-// Coupons and promotions
+// Comprehensive coupons and promotions system
 export const coupons = pgTable("coupons", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Basic Information
   code: varchar("code").unique().notNull(),
-  type: varchar("type", { enum: ["percentage", "fixed"] }).notNull(),
+  title: varchar("title").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  
+  // Discount Configuration
+  type: varchar("type", { enum: ["percentage", "fixed_amount", "free_delivery", "service_specific"] }).notNull(),
   value: decimal("value", { precision: 10, scale: 2 }).notNull(),
-  minOrderAmount: decimal("min_order_amount", { precision: 10, scale: 2 }),
-  maxDiscount: decimal("max_discount", { precision: 10, scale: 2 }),
-  usageLimit: integer("usage_limit"),
-  usedCount: integer("used_count").default(0),
+  maxDiscountAmount: decimal("max_discount_amount", { precision: 10, scale: 2 }),
+  
+  // Validity Configuration
   validFrom: timestamp("valid_from").notNull(),
   validUntil: timestamp("valid_until").notNull(),
-  isActive: boolean("is_active").default(true),
+  isExpired: boolean("is_expired").default(false),
+  
+  // Usage Limits and Tracking
+  usageLimit: integer("usage_limit"), // Total usage limit (null = unlimited)
+  usageCount: integer("usage_count").default(0), // Current usage count
+  maxUsagePerUser: integer("max_usage_per_user").default(1), // Per-user usage limit
+  minOrderAmount: decimal("min_order_amount", { precision: 10, scale: 2 }),
+  
+  // Targeting and Restrictions
+  applicableServices: jsonb("applicable_services").$type<string[]>(), // Array of service IDs
+  userRestrictions: jsonb("user_restrictions").$type<{
+    newUsersOnly?: boolean;
+    firstTimeOnly?: boolean;
+    specificUsers?: string[]; // Array of user IDs
+    excludeUsers?: string[]; // Array of user IDs to exclude
+    minOrderCount?: number; // Minimum number of previous orders
+    userTags?: string[]; // User tags/segments
+  }>(),
+  
+  // Geographic and Category Restrictions
+  serviceCategories: jsonb("service_categories").$type<string[]>(), // Array of category IDs
+  regions: jsonb("regions").$type<string[]>(), // Array of supported regions/cities
+  
+  // Metadata and Tracking
+  createdBy: varchar("created_by").references(() => users.id).notNull(), // Admin who created
+  lastModifiedBy: varchar("last_modified_by").references(() => users.id), // Admin who last modified
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
+  
+  // Campaign and Analytics
+  campaignName: varchar("campaign_name"), // Marketing campaign association
+  priority: integer("priority").default(0), // Higher priority coupons apply first
+  isPublic: boolean("is_public").default(true), // Whether to show in public listing
+  
+  // Auto-deactivation
+  autoDeactivate: boolean("auto_deactivate").default(true), // Auto-deactivate when expired
+  deactivatedAt: timestamp("deactivated_at"),
+  deactivatedBy: varchar("deactivated_by").references(() => users.id),
+  
+  // Coupon Performance Metrics
+  totalSavings: decimal("total_savings", { precision: 15, scale: 2 }).default("0.00"), // Total money saved by users
+  averageOrderValue: decimal("average_order_value", { precision: 10, scale: 2 }), // Avg order value with this coupon
+  conversionRate: decimal("conversion_rate", { precision: 5, scale: 2 }), // Validation to usage rate
+}, (table) => ({
+  codeIdx: index("coupons_code_idx").on(table.code),
+  activeIdx: index("coupons_active_idx").on(table.isActive),
+  validFromIdx: index("coupons_valid_from_idx").on(table.validFrom),
+  validUntilIdx: index("coupons_valid_until_idx").on(table.validUntil),
+  typeIdx: index("coupons_type_idx").on(table.type),
+  createdByIdx: index("coupons_created_by_idx").on(table.createdBy),
+  campaignIdx: index("coupons_campaign_idx").on(table.campaignName),
+  usageCountIdx: index("coupons_usage_count_idx").on(table.usageCount),
+}));
+
+// Coupon usage tracking for detailed analytics
+export const couponUsage = pgTable("coupon_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  couponId: varchar("coupon_id").references(() => coupons.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  orderId: varchar("order_id").references(() => orders.id),
+  
+  // Usage Details
+  discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).notNull(),
+  orderValue: decimal("order_value", { precision: 10, scale: 2 }).notNull(),
+  savingsPercent: decimal("savings_percent", { precision: 5, scale: 2 }),
+  
+  // Context
+  usedAt: timestamp("used_at").defaultNow(),
+  ipAddress: varchar("ip_address"),
+  userAgent: varchar("user_agent"),
+  
+  // Validation Status
+  validationStatus: varchar("validation_status", { 
+    enum: ["valid", "expired", "usage_limit_exceeded", "user_limit_exceeded", "min_order_not_met", "service_not_applicable"] 
+  }).default("valid"),
+}, (table) => ({
+  couponIdx: index("cu_coupon_idx").on(table.couponId),
+  userIdx: index("cu_user_idx").on(table.userId),
+  orderIdx: index("cu_order_idx").on(table.orderId),
+  usedAtIdx: index("cu_used_at_idx").on(table.usedAt),
+}));
 
 // Chat messages
 export const chatMessages = pgTable("chat_messages", {
@@ -1538,7 +1622,23 @@ export const insertProviderMetricsSchema = createInsertSchema(providerMetrics).o
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
 export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
-export const insertCouponSchema = createInsertSchema(coupons).omit({ id: true, createdAt: true });
+export const insertCouponSchema = createInsertSchema(coupons).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  usageCount: true,
+  isExpired: true,
+  totalSavings: true,
+  averageOrderValue: true,
+  conversionRate: true,
+  deactivatedAt: true,
+  deactivatedBy: true
+});
+
+export const insertCouponUsageSchema = createInsertSchema(couponUsage).omit({ 
+  id: true, 
+  usedAt: true 
+});
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true, updatedAt: true, timestamp: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true });
@@ -1742,6 +1842,8 @@ export type WalletTransaction = typeof walletTransactions.$inferSelect;
 export type InsertWalletTransaction = z.infer<typeof insertWalletTransactionSchema>;
 export type Coupon = typeof coupons.$inferSelect;
 export type InsertCoupon = z.infer<typeof insertCouponSchema>;
+export type CouponUsage = typeof couponUsage.$inferSelect;
+export type InsertCouponUsage = z.infer<typeof insertCouponUsageSchema>;
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = z.infer<typeof insertReviewSchema>;
 export type OtpChallenge = typeof otpChallenges.$inferSelect;

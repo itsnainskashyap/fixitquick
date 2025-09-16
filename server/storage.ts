@@ -27,6 +27,8 @@ import {
   type InsertWalletTransaction,
   type Coupon,
   type InsertCoupon,
+  type CouponUsage,
+  type InsertCouponUsage,
   type ChatMessage,
   type InsertChatMessage,
   type Notification,
@@ -102,6 +104,7 @@ import {
   orders,
   walletTransactions,
   coupons,
+  couponUsage,
   chatMessages,
   notifications,
   reviews,
@@ -390,11 +393,93 @@ export interface IStorage {
   getReviews(filters?: { orderId?: string; revieweeId?: string }): Promise<Review[]>;
   createReview(review: InsertReview): Promise<Review>;
 
-  // Coupon methods
+  // Comprehensive Coupon Management methods
+  // Core CRUD operations
   getCoupon(code: string): Promise<Coupon | undefined>;
-  getActiveCoupons(): Promise<Coupon[]>;
+  getCouponById(id: string): Promise<Coupon | undefined>;
+  getAllCoupons(filters?: {
+    isActive?: boolean;
+    isExpired?: boolean;
+    type?: string;
+    campaignName?: string;
+    createdBy?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }): Promise<{ coupons: Coupon[]; total: number }>;
   createCoupon(coupon: InsertCoupon): Promise<Coupon>;
-  useCoupon(code: string): Promise<void>;
+  updateCoupon(id: string, data: Partial<InsertCoupon & { lastModifiedBy: string }>): Promise<Coupon | undefined>;
+  deleteCoupon(id: string): Promise<{ success: boolean; message: string }>;
+  
+  // Coupon validation and application
+  validateCoupon(code: string, context: {
+    userId: string;
+    orderValue: number;
+    serviceIds?: string[];
+    categoryIds?: string[];
+  }): Promise<{
+    valid: boolean;
+    coupon?: Coupon;
+    discountAmount?: number;
+    errors: string[];
+  }>;
+  applyCoupon(code: string, userId: string, orderId: string, orderValue: number): Promise<{
+    success: boolean;
+    discountAmount: number;
+    couponUsage?: CouponUsage;
+    error?: string;
+  }>;
+  
+  // Usage tracking and analytics
+  getCouponUsage(couponId: string, filters?: {
+    userId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ usage: CouponUsage[]; total: number }>;
+  getCouponStatistics(couponId?: string): Promise<{
+    totalCoupons: number;
+    activeCoupons: number;
+    expiredCoupons: number;
+    totalUsage: number;
+    totalSavings: number;
+    averageDiscountAmount: number;
+    topPerformingCoupons: Array<{
+      id: string;
+      code: string;
+      title: string;
+      usageCount: number;
+      totalSavings: number;
+    }>;
+  }>;
+  getUserCouponUsage(userId: string, limit?: number): Promise<CouponUsage[]>;
+  
+  // Bulk operations
+  bulkUpdateCoupons(couponIds: string[], updates: {
+    isActive?: boolean;
+    lastModifiedBy: string;
+  }): Promise<{ success: boolean; updated: number; errors: string[] }>;
+  bulkDeleteCoupons(couponIds: string[]): Promise<{ success: boolean; deleted: number; errors: string[] }>;
+  
+  // Advanced coupon features
+  generateCouponCode(pattern?: string): Promise<string>;
+  checkCouponCodeAvailability(code: string): Promise<{ available: boolean; suggestions?: string[] }>;
+  expireOutdatedCoupons(): Promise<{ expired: number; deactivated: number }>;
+  calculateCouponPerformance(couponId: string): Promise<{
+    usageRate: number;
+    conversionRate: number;
+    averageOrderValue: number;
+    totalRevenue: number;
+    roi: number;
+  }>;
+  
+  // Campaign and targeting
+  getCouponsByCategory(categoryIds: string[], userId?: string): Promise<Coupon[]>;
+  getCouponsForUser(userId: string, filters?: {
+    categoryIds?: string[];
+    minOrderValue?: number;
+    onlyUnused?: boolean;
+  }): Promise<Coupon[]>;
+  duplicateCoupon(couponId: string, modifications: Partial<InsertCoupon>): Promise<Coupon>;
 
   // Smart Assignment System methods
   findEligibleProviders(bookingId: string): Promise<Array<{
@@ -2887,7 +2972,7 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  // Coupon methods
+  // Comprehensive Coupon Storage Implementation
   async getCoupon(code: string): Promise<Coupon | undefined> {
     const result = await db.select().from(coupons)
       .where(and(eq(coupons.code, code), eq(coupons.isActive, true)))
@@ -2895,20 +2980,788 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async getActiveCoupons(): Promise<Coupon[]> {
-    return await db.select().from(coupons)
-      .where(and(eq(coupons.isActive, true), sql`${coupons.validUntil} > NOW()`));
-  }
-
-  async createCoupon(coupon: InsertCoupon): Promise<Coupon> {
-    const result = await db.insert(coupons).values(coupon).returning();
+  async getCouponById(id: string): Promise<Coupon | undefined> {
+    const result = await db.select().from(coupons)
+      .where(eq(coupons.id, id))
+      .limit(1);
     return result[0];
   }
 
-  async useCoupon(code: string): Promise<void> {
-    await db.update(coupons)
-      .set({ usedCount: sql`${coupons.usedCount} + 1` })
-      .where(eq(coupons.code, code));
+  async getAllCoupons(filters?: {
+    isActive?: boolean;
+    isExpired?: boolean;
+    type?: string;
+    campaignName?: string;
+    createdBy?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }): Promise<{ coupons: Coupon[]; total: number }> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+    
+    let baseQuery = db.select().from(coupons);
+    let countQuery = db.select({ count: count(coupons.id) }).from(coupons);
+    
+    const conditions: SQL[] = [];
+    
+    if (filters?.isActive !== undefined) {
+      conditions.push(eq(coupons.isActive, filters.isActive));
+    }
+    if (filters?.isExpired !== undefined) {
+      if (filters.isExpired) {
+        conditions.push(sql`${coupons.validUntil} < NOW()`);
+      } else {
+        conditions.push(sql`${coupons.validUntil} > NOW()`);
+      }
+    }
+    if (filters?.type) {
+      conditions.push(eq(coupons.type, filters.type));
+    }
+    if (filters?.campaignName) {
+      conditions.push(eq(coupons.campaignName, filters.campaignName));
+    }
+    if (filters?.createdBy) {
+      conditions.push(eq(coupons.createdBy, filters.createdBy));
+    }
+    if (filters?.search) {
+      const searchTerm = `%${filters.search}%`;
+      conditions.push(
+        or(
+          ilike(coupons.code, searchTerm),
+          ilike(coupons.title, searchTerm),
+          ilike(coupons.description, searchTerm)
+        )
+      );
+    }
+    
+    const whereClause = combineConditions(conditions);
+    if (whereClause) {
+      baseQuery = baseQuery.where(whereClause);
+      countQuery = countQuery.where(whereClause);
+    }
+    
+    const [couponResults, totalResults] = await Promise.all([
+      baseQuery.orderBy(desc(coupons.createdAt)).limit(limit).offset(offset),
+      countQuery
+    ]);
+    
+    return {
+      coupons: couponResults,
+      total: totalResults[0]?.count || 0
+    };
+  }
+
+  async createCoupon(coupon: InsertCoupon): Promise<Coupon> {
+    const result = await db.insert(coupons).values({
+      ...coupon,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async updateCoupon(id: string, data: Partial<InsertCoupon & { lastModifiedBy: string }>): Promise<Coupon | undefined> {
+    const updateData = {
+      ...data,
+      updatedAt: new Date()
+    };
+    
+    const result = await db.update(coupons)
+      .set(updateData)
+      .where(eq(coupons.id, id))
+      .returning();
+    
+    return result[0];
+  }
+
+  async deleteCoupon(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Check if coupon has been used
+      const coupon = await this.getCouponById(id);
+      if (!coupon) {
+        return { success: false, message: 'Coupon not found' };
+      }
+      
+      if (coupon.usageCount > 0) {
+        // Soft delete - just deactivate
+        await db.update(coupons)
+          .set({
+            isActive: false,
+            deactivatedAt: new Date(),
+            updatedAt: new Date()
+          })
+          .where(eq(coupons.id, id));
+        return { success: true, message: 'Coupon deactivated (has usage history)' };
+      } else {
+        // Hard delete for unused coupons
+        await db.delete(coupons).where(eq(coupons.id, id));
+        return { success: true, message: 'Coupon permanently deleted' };
+      }
+    } catch (error) {
+      return { success: false, message: 'Failed to delete coupon' };
+    }
+  }
+
+  async validateCoupon(code: string, context: {
+    userId: string;
+    orderValue: number;
+    serviceIds?: string[];
+    categoryIds?: string[];
+  }): Promise<{
+    valid: boolean;
+    coupon?: Coupon;
+    discountAmount?: number;
+    errors: string[];
+  }> {
+    const errors: string[] = [];
+    
+    // Get coupon
+    const coupon = await this.getCoupon(code);
+    if (!coupon) {
+      return { valid: false, errors: ['Coupon not found or inactive'] };
+    }
+    
+    // Check if expired
+    const now = new Date();
+    if (new Date(coupon.validFrom) > now) {
+      errors.push('Coupon is not yet valid');
+    }
+    if (new Date(coupon.validUntil) < now) {
+      errors.push('Coupon has expired');
+    }
+    
+    // Check usage limits
+    if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
+      errors.push('Coupon usage limit exceeded');
+    }
+    
+    // Check per-user usage limit
+    if (coupon.maxUsagePerUser) {
+      const userUsage = await db.select({ count: count(couponUsage.id) })
+        .from(couponUsage)
+        .where(and(
+          eq(couponUsage.couponId, coupon.id),
+          eq(couponUsage.userId, context.userId)
+        ));
+      
+      const userUsageCount = userUsage[0]?.count || 0;
+      if (userUsageCount >= coupon.maxUsagePerUser) {
+        errors.push('Personal usage limit exceeded for this coupon');
+      }
+    }
+    
+    // Check minimum order amount
+    if (coupon.minOrderAmount && context.orderValue < Number(coupon.minOrderAmount)) {
+      errors.push(`Minimum order amount of ₹${coupon.minOrderAmount} required`);
+    }
+    
+    // Check service applicability
+    if (coupon.applicableServices && coupon.applicableServices.length > 0 && context.serviceIds) {
+      const hasApplicableService = context.serviceIds.some(serviceId =>
+        coupon.applicableServices?.includes(serviceId)
+      );
+      if (!hasApplicableService) {
+        errors.push('Coupon not applicable to selected services');
+      }
+    }
+    
+    // Check category applicability
+    if (coupon.serviceCategories && coupon.serviceCategories.length > 0 && context.categoryIds) {
+      const hasApplicableCategory = context.categoryIds.some(categoryId =>
+        coupon.serviceCategories?.includes(categoryId)
+      );
+      if (!hasApplicableCategory) {
+        errors.push('Coupon not applicable to selected service categories');
+      }
+    }
+    
+    // Check user restrictions
+    if (coupon.userRestrictions) {
+      const restrictions = coupon.userRestrictions as any;
+      
+      if (restrictions.firstTimeOnly) {
+        const userOrderCount = await db.select({ count: count(orders.id) })
+          .from(orders)
+          .where(and(
+            eq(orders.userId, context.userId),
+            eq(orders.status, 'completed')
+          ));
+        
+        if ((userOrderCount[0]?.count || 0) > 0) {
+          errors.push('This coupon is only for first-time users');
+        }
+      }
+      
+      if (restrictions.specificUsers && !restrictions.specificUsers.includes(context.userId)) {
+        errors.push('This coupon is not available for your account');
+      }
+      
+      if (restrictions.excludeUsers && restrictions.excludeUsers.includes(context.userId)) {
+        errors.push('This coupon is not available for your account');
+      }
+    }
+    
+    if (errors.length > 0) {
+      return { valid: false, coupon, errors };
+    }
+    
+    // Calculate discount amount
+    let discountAmount = 0;
+    if (coupon.type === 'percentage') {
+      discountAmount = (context.orderValue * Number(coupon.value)) / 100;
+      if (coupon.maxDiscountAmount) {
+        discountAmount = Math.min(discountAmount, Number(coupon.maxDiscountAmount));
+      }
+    } else if (coupon.type === 'fixed_amount') {
+      discountAmount = Math.min(Number(coupon.value), context.orderValue);
+    }
+    
+    return {
+      valid: true,
+      coupon,
+      discountAmount,
+      errors: []
+    };
+  }
+
+  async applyCoupon(code: string, userId: string, orderId: string, orderValue: number): Promise<{
+    success: boolean;
+    discountAmount: number;
+    couponUsage?: CouponUsage;
+    error?: string;
+  }> {
+    try {
+      // First validate the coupon
+      const validation = await this.validateCoupon(code, { userId, orderValue });
+      if (!validation.valid || !validation.coupon) {
+        return {
+          success: false,
+          discountAmount: 0,
+          error: validation.errors.join(', ')
+        };
+      }
+      
+      const { coupon, discountAmount = 0 } = validation;
+      
+      // Create usage record and update coupon usage in transaction
+      const [usageRecord] = await db.transaction(async (tx) => {
+        // Create usage record
+        const usage = await tx.insert(couponUsage).values({
+          couponId: coupon.id,
+          userId,
+          orderId,
+          discountAmount: discountAmount.toString(),
+          orderValue: orderValue.toString(),
+          savingsPercent: ((discountAmount / orderValue) * 100).toString(),
+          validationStatus: 'valid'
+        }).returning();
+        
+        // Update coupon usage count and stats
+        await tx.update(coupons)
+          .set({
+            usageCount: sql`${coupons.usageCount} + 1`,
+            totalSavings: sql`${coupons.totalSavings} + ${discountAmount}`,
+            averageOrderValue: sql`(${coupons.averageOrderValue} * ${coupons.usageCount} + ${orderValue}) / (${coupons.usageCount} + 1)`,
+            updatedAt: new Date()
+          })
+          .where(eq(coupons.id, coupon.id));
+        
+        return usage;
+      });
+      
+      return {
+        success: true,
+        discountAmount,
+        couponUsage: usageRecord[0]
+      };
+    } catch (error) {
+      console.error('Error applying coupon:', error);
+      return {
+        success: false,
+        discountAmount: 0,
+        error: 'Failed to apply coupon'
+      };
+    }
+  }
+
+  // Coupon Analytics and Advanced Operations
+  async getCouponUsage(couponId: string, filters?: {
+    userId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ usage: CouponUsage[]; total: number }> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+    
+    let baseQuery = db.select().from(couponUsage).where(eq(couponUsage.couponId, couponId));
+    let countQuery = db.select({ count: count(couponUsage.id) }).from(couponUsage).where(eq(couponUsage.couponId, couponId));
+    
+    if (filters?.userId) {
+      const userFilter = eq(couponUsage.userId, filters.userId);
+      baseQuery = baseQuery.where(and(eq(couponUsage.couponId, couponId), userFilter));
+      countQuery = countQuery.where(and(eq(couponUsage.couponId, couponId), userFilter));
+    }
+    
+    const [usageResults, totalResults] = await Promise.all([
+      baseQuery.orderBy(desc(couponUsage.usedAt)).limit(limit).offset(offset),
+      countQuery
+    ]);
+    
+    return {
+      usage: usageResults,
+      total: totalResults[0]?.count || 0
+    };
+  }
+
+  async getCouponStatistics(couponId?: string): Promise<{
+    totalCoupons: number;
+    activeCoupons: number;
+    expiredCoupons: number;
+    totalUsage: number;
+    totalSavings: number;
+    averageDiscountAmount: number;
+    topPerformingCoupons: Array<{
+      id: string;
+      code: string;
+      title: string;
+      usageCount: number;
+      totalSavings: number;
+    }>;
+  }> {
+    const now = new Date();
+    
+    let baseCondition = sql`1=1`;
+    if (couponId) {
+      baseCondition = eq(coupons.id, couponId);
+    }
+    
+    const [stats, topCoupons] = await Promise.all([
+      db.select({
+        totalCoupons: count(coupons.id),
+        activeCoupons: count(sql`CASE WHEN ${coupons.isActive} = true THEN 1 END`),
+        expiredCoupons: count(sql`CASE WHEN ${coupons.validUntil} < ${now} THEN 1 END`),
+        totalUsage: sql<number>`COALESCE(SUM(${coupons.usageCount}), 0)`,
+        totalSavings: sql<number>`COALESCE(SUM(${coupons.totalSavings}), 0)`,
+        averageDiscountAmount: sql<number>`COALESCE(AVG(${coupons.totalSavings} / NULLIF(${coupons.usageCount}, 0)), 0)`
+      }).from(coupons).where(baseCondition),
+      
+      db.select({
+        id: coupons.id,
+        code: coupons.code,
+        title: coupons.title,
+        usageCount: coupons.usageCount,
+        totalSavings: coupons.totalSavings
+      })
+        .from(coupons)
+        .where(couponId ? eq(coupons.id, couponId) : sql`1=1`)
+        .orderBy(desc(coupons.usageCount))
+        .limit(10)
+    ]);
+    
+    const result = stats[0] || {
+      totalCoupons: 0,
+      activeCoupons: 0,
+      expiredCoupons: 0,
+      totalUsage: 0,
+      totalSavings: 0,
+      averageDiscountAmount: 0
+    };
+    
+    return {
+      ...result,
+      topPerformingCoupons: topCoupons.map(coupon => ({
+        id: coupon.id,
+        code: coupon.code,
+        title: coupon.title,
+        usageCount: coupon.usageCount,
+        totalSavings: Number(coupon.totalSavings)
+      }))
+    };
+  }
+
+  async getUserCouponUsage(userId: string, limit = 50): Promise<CouponUsage[]> {
+    return await db.select().from(couponUsage)
+      .where(eq(couponUsage.userId, userId))
+      .orderBy(desc(couponUsage.usedAt))
+      .limit(limit);
+  }
+
+  async bulkUpdateCoupons(couponIds: string[], updates: {
+    isActive?: boolean;
+    lastModifiedBy: string;
+  }): Promise<{ success: boolean; updated: number; errors: string[] }> {
+    try {
+      const updateData = {
+        ...updates,
+        updatedAt: new Date()
+      };
+      
+      const result = await db.update(coupons)
+        .set(updateData)
+        .where(inArray(coupons.id, couponIds))
+        .returning({ id: coupons.id });
+      
+      return {
+        success: true,
+        updated: result.length,
+        errors: []
+      };
+    } catch (error) {
+      return {
+        success: false,
+        updated: 0,
+        errors: ['Failed to update coupons: ' + (error instanceof Error ? error.message : 'Unknown error')]
+      };
+    }
+  }
+
+  async bulkDeleteCoupons(couponIds: string[]): Promise<{ success: boolean; deleted: number; errors: string[] }> {
+    try {
+      // Get coupons to check usage
+      const couponsToDelete = await db.select({
+        id: coupons.id,
+        usageCount: coupons.usageCount
+      }).from(coupons).where(inArray(coupons.id, couponIds));
+      
+      let deletedCount = 0;
+      const errors: string[] = [];
+      
+      for (const coupon of couponsToDelete) {
+        try {
+          if (coupon.usageCount > 0) {
+            // Soft delete for used coupons
+            await db.update(coupons)
+              .set({
+                isActive: false,
+                deactivatedAt: new Date(),
+                updatedAt: new Date()
+              })
+              .where(eq(coupons.id, coupon.id));
+          } else {
+            // Hard delete for unused coupons
+            await db.delete(coupons).where(eq(coupons.id, coupon.id));
+          }
+          deletedCount++;
+        } catch (error) {
+          errors.push(`Failed to delete coupon ${coupon.id}`);
+        }
+      }
+      
+      return {
+        success: errors.length === 0,
+        deleted: deletedCount,
+        errors
+      };
+    } catch (error) {
+      return {
+        success: false,
+        deleted: 0,
+        errors: ['Failed to delete coupons: ' + (error instanceof Error ? error.message : 'Unknown error')]
+      };
+    }
+  }
+
+  async generateCouponCode(pattern = 'SAVE###'): Promise<string> {
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    while (attempts < maxAttempts) {
+      let code = pattern;
+      
+      // Replace patterns with random values
+      code = code.replace(/#+/g, (match) => {
+        return Array.from({ length: match.length }, () => Math.floor(Math.random() * 10)).join('');
+      });
+      
+      code = code.replace(/\*+/g, (match) => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        return Array.from({ length: match.length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      });
+      
+      // If no pattern markers, add random numbers
+      if (!pattern.includes('#') && !pattern.includes('*')) {
+        code = code + Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      }
+      
+      // Check if code already exists
+      const existing = await this.getCoupon(code);
+      if (!existing) {
+        return code;
+      }
+      
+      attempts++;
+    }
+    
+    // Fallback to timestamp-based code
+    return 'COUPON' + Date.now().toString().slice(-6);
+  }
+
+  async checkCouponCodeAvailability(code: string): Promise<{ available: boolean; suggestions?: string[] }> {
+    const existing = await db.select({ id: coupons.id }).from(coupons)
+      .where(eq(coupons.code, code))
+      .limit(1);
+    
+    const available = existing.length === 0;
+    
+    if (available) {
+      return { available: true };
+    }
+    
+    // Generate suggestions if code is taken
+    const suggestions: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const suggestion = code + i;
+      const suggestionExists = await db.select({ id: coupons.id }).from(coupons)
+        .where(eq(coupons.code, suggestion))
+        .limit(1);
+      
+      if (suggestionExists.length === 0) {
+        suggestions.push(suggestion);
+      }
+    }
+    
+    return { available: false, suggestions };
+  }
+
+  async expireOutdatedCoupons(): Promise<{ expired: number; deactivated: number }> {
+    const now = new Date();
+    
+    // Mark expired coupons as expired
+    const expiredResult = await db.update(coupons)
+      .set({
+        isExpired: true,
+        updatedAt: now
+      })
+      .where(and(
+        sql`${coupons.validUntil} < ${now}`,
+        eq(coupons.isExpired, false)
+      ))
+      .returning({ id: coupons.id });
+    
+    // Auto-deactivate expired coupons if enabled
+    const deactivatedResult = await db.update(coupons)
+      .set({
+        isActive: false,
+        deactivatedAt: now,
+        updatedAt: now
+      })
+      .where(and(
+        sql`${coupons.validUntil} < ${now}`,
+        eq(coupons.autoDeactivate, true),
+        eq(coupons.isActive, true)
+      ))
+      .returning({ id: coupons.id });
+    
+    return {
+      expired: expiredResult.length,
+      deactivated: deactivatedResult.length
+    };
+  }
+
+  async calculateCouponPerformance(couponId: string): Promise<{
+    usageRate: number;
+    conversionRate: number;
+    averageOrderValue: number;
+    totalRevenue: number;
+    roi: number;
+  }> {
+    const coupon = await this.getCouponById(couponId);
+    if (!coupon) {
+      throw new Error('Coupon not found');
+    }
+    
+    const usageStats = await db.select({
+      totalUsage: count(couponUsage.id),
+      avgOrderValue: sql<number>`COALESCE(AVG(${couponUsage.orderValue}), 0)`,
+      totalRevenue: sql<number>`COALESCE(SUM(${couponUsage.orderValue}), 0)`,
+      totalDiscount: sql<number>`COALESCE(SUM(${couponUsage.discountAmount}), 0)`
+    })
+      .from(couponUsage)
+      .where(eq(couponUsage.couponId, couponId));
+    
+    const stats = usageStats[0] || {
+      totalUsage: 0,
+      avgOrderValue: 0,
+      totalRevenue: 0,
+      totalDiscount: 0
+    };
+    
+    const usageRate = coupon.usageLimit ? (coupon.usageCount / coupon.usageLimit) * 100 : 0;
+    const conversionRate = stats.totalUsage > 0 ? (stats.totalUsage / (stats.totalUsage + coupon.usageCount)) * 100 : 0;
+    const roi = stats.totalDiscount > 0 ? (stats.totalRevenue / stats.totalDiscount) * 100 : 0;
+    
+    return {
+      usageRate,
+      conversionRate,
+      averageOrderValue: stats.avgOrderValue,
+      totalRevenue: stats.totalRevenue,
+      roi
+    };
+  }
+
+  async getCouponsByCategory(categoryIds: string[], userId?: string): Promise<Coupon[]> {
+    let baseQuery = db.select().from(coupons)
+      .where(and(
+        eq(coupons.isActive, true),
+        sql`${coupons.validFrom} <= NOW()`,
+        sql`${coupons.validUntil} > NOW()`
+      ));
+    
+    // Filter by categories if specified
+    if (categoryIds.length > 0) {
+      baseQuery = baseQuery.where(and(
+        eq(coupons.isActive, true),
+        sql`${coupons.validFrom} <= NOW()`,
+        sql`${coupons.validUntil} > NOW()`,
+        sql`${coupons.serviceCategories} && ${JSON.stringify(categoryIds)}`
+      ));
+    }
+    
+    const results = await baseQuery.orderBy(desc(coupons.priority), desc(coupons.createdAt));
+    
+    // If userId is provided, filter out coupons that user has exceeded usage for
+    if (userId) {
+      const filteredResults = [];
+      for (const coupon of results) {
+        if (coupon.maxUsagePerUser) {
+          const userUsage = await db.select({ count: count(couponUsage.id) })
+            .from(couponUsage)
+            .where(and(
+              eq(couponUsage.couponId, coupon.id),
+              eq(couponUsage.userId, userId)
+            ));
+          
+          const userUsageCount = userUsage[0]?.count || 0;
+          if (userUsageCount < coupon.maxUsagePerUser) {
+            filteredResults.push(coupon);
+          }
+        } else {
+          filteredResults.push(coupon);
+        }
+      }
+      return filteredResults;
+    }
+    
+    return results;
+  }
+
+  async getCouponsForUser(userId: string, filters?: {
+    categoryIds?: string[];
+    minOrderValue?: number;
+    onlyUnused?: boolean;
+  }): Promise<Coupon[]> {
+    const now = new Date();
+    const conditions: SQL[] = [
+      eq(coupons.isActive, true),
+      sql`${coupons.validFrom} <= ${now}`,
+      sql`${coupons.validUntil} > ${now}`
+    ];
+    
+    // Category filter
+    if (filters?.categoryIds && filters.categoryIds.length > 0) {
+      conditions.push(sql`${coupons.serviceCategories} && ${JSON.stringify(filters.categoryIds)}`);
+    }
+    
+    // Minimum order value filter
+    if (filters?.minOrderValue) {
+      conditions.push(
+        or(
+          sql`${coupons.minOrderAmount} IS NULL`,
+          sql`${coupons.minOrderAmount} <= ${filters.minOrderValue}`
+        )
+      );
+    }
+    
+    const baseQuery = db.select().from(coupons).where(combineConditions(conditions) || sql`1=1`);
+    const results = await baseQuery.orderBy(desc(coupons.priority), desc(coupons.createdAt));
+    
+    // Filter based on user eligibility and usage
+    const eligibleCoupons = [];
+    for (const coupon of results) {
+      let eligible = true;
+      
+      // Check user restrictions
+      if (coupon.userRestrictions) {
+        const restrictions = coupon.userRestrictions as any;
+        
+        if (restrictions.specificUsers && !restrictions.specificUsers.includes(userId)) {
+          eligible = false;
+        }
+        
+        if (restrictions.excludeUsers && restrictions.excludeUsers.includes(userId)) {
+          eligible = false;
+        }
+        
+        if (restrictions.firstTimeOnly) {
+          const userOrderCount = await db.select({ count: count(orders.id) })
+            .from(orders)
+            .where(and(
+              eq(orders.userId, userId),
+              eq(orders.status, 'completed')
+            ));
+          
+          if ((userOrderCount[0]?.count || 0) > 0) {
+            eligible = false;
+          }
+        }
+      }
+      
+      // Check per-user usage limits
+      if (eligible && coupon.maxUsagePerUser) {
+        const userUsage = await db.select({ count: count(couponUsage.id) })
+          .from(couponUsage)
+          .where(and(
+            eq(couponUsage.couponId, coupon.id),
+            eq(couponUsage.userId, userId)
+          ));
+        
+        const userUsageCount = userUsage[0]?.count || 0;
+        if (filters?.onlyUnused && userUsageCount > 0) {
+          eligible = false;
+        } else if (userUsageCount >= coupon.maxUsagePerUser) {
+          eligible = false;
+        }
+      }
+      
+      if (eligible) {
+        eligibleCoupons.push(coupon);
+      }
+    }
+    
+    return eligibleCoupons;
+  }
+
+  async duplicateCoupon(couponId: string, modifications: Partial<InsertCoupon>): Promise<Coupon> {
+    const originalCoupon = await this.getCouponById(couponId);
+    if (!originalCoupon) {
+      throw new Error('Original coupon not found');
+    }
+    
+    // Generate new code if not provided in modifications
+    let newCode = modifications.code;
+    if (!newCode) {
+      newCode = await this.generateCouponCode(originalCoupon.code + '_COPY');
+    }
+    
+    const duplicatedCoupon: InsertCoupon = {
+      ...originalCoupon,
+      id: undefined as any, // Remove id to let DB generate new one
+      code: newCode,
+      title: modifications.title || originalCoupon.title + ' (Copy)',
+      usageCount: 0,
+      totalSavings: '0.00',
+      isExpired: false,
+      deactivatedAt: null,
+      deactivatedBy: null,
+      averageOrderValue: null,
+      conversionRate: null,
+      ...modifications,
+      createdAt: undefined as any, // Let DB set this
+      updatedAt: undefined as any  // Let DB set this
+    };
+    
+    return await this.createCoupon(duplicatedCoupon);
   }
 
   // Settings methods

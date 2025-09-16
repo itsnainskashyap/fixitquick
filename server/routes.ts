@@ -44,7 +44,9 @@ import {
   faqUpdateSchema,
   supportAgentCreateSchema,
   supportAgentUpdateSchema,
-  supportTicketRatingSchema
+  supportTicketRatingSchema,
+  insertCouponSchema,
+  insertCouponUsageSchema
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -365,6 +367,67 @@ const searchSuggestionsSchema = z.object({
     location: z.string().optional(),
     preferences: z.array(z.string()).optional(),
   }).optional(),
+});
+
+// ============================
+// COUPON VALIDATION SCHEMAS
+// ============================
+
+const couponFiltersSchema = z.object({
+  isActive: z.boolean().optional(),
+  isExpired: z.boolean().optional(),
+  type: z.enum(['percentage', 'fixed_amount']).optional(),
+  campaignName: z.string().optional(),
+  createdBy: z.string().optional(),
+  search: z.string().optional(),
+  limit: z.number().min(1).max(100).optional(),
+  offset: z.number().min(0).optional(),
+});
+
+const couponValidationContextSchema = z.object({
+  userId: z.string(),
+  orderValue: z.number().min(0),
+  serviceIds: z.array(z.string()).optional(),
+  categoryIds: z.array(z.string()).optional(),
+});
+
+const couponApplicationSchema = z.object({
+  code: z.string().min(1, 'Coupon code is required'),
+  userId: z.string(),
+  orderId: z.string(),
+  orderValue: z.number().min(0),
+});
+
+const bulkCouponUpdateSchema = z.object({
+  couponIds: z.array(z.string().min(1)).min(1, 'At least one coupon must be selected'),
+  updates: z.object({
+    isActive: z.boolean().optional(),
+    lastModifiedBy: z.string().min(1, 'Modified by is required'),
+  }),
+});
+
+const bulkCouponDeleteSchema = z.object({
+  couponIds: z.array(z.string().min(1)).min(1, 'At least one coupon must be selected'),
+});
+
+const couponCodeGenerationSchema = z.object({
+  pattern: z.string().optional().default('SAVE###'),
+});
+
+const couponCodeAvailabilitySchema = z.object({
+  code: z.string().min(1, 'Coupon code is required'),
+});
+
+const couponDuplicationSchema = z.object({
+  couponId: z.string().min(1, 'Source coupon ID is required'),
+  modifications: insertCouponSchema.partial(),
+});
+
+const userCouponsFiltersSchema = z.object({
+  categoryIds: z.array(z.string()).optional(),
+  minOrderValue: z.number().min(0).optional(),
+  onlyUnused: z.boolean().optional(),
+  limit: z.number().min(1).max(50).optional(),
 });
 
 // Authentication validation schemas
@@ -10476,6 +10539,647 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to set primary image',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ========================================
+  // COMPREHENSIVE COUPON MANAGEMENT API
+  // ========================================
+
+  // Add coupon-specific rate limiters
+  const couponLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 50, // 50 requests per 15 minutes per IP
+    message: 'Too many coupon requests. Please wait before trying again.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const couponValidationLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 20, // 20 validation requests per minute per IP
+    message: 'Too many coupon validation attempts. Please wait before trying again.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // ============================
+  // ADMIN COUPON MANAGEMENT ENDPOINTS
+  // ============================
+
+  // Get all coupons with filters and pagination
+  app.get('/api/v1/admin/coupons', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        isActive,
+        isExpired,
+        type,
+        campaignName,
+        createdBy,
+        search,
+        limit = '50',
+        offset = '0'
+      } = req.query;
+
+      const filters = {
+        isActive: isActive === 'true' ? true : isActive === 'false' ? false : undefined,
+        isExpired: isExpired === 'true' ? true : isExpired === 'false' ? false : undefined,
+        type: type as string,
+        campaignName: campaignName as string,
+        createdBy: createdBy as string,
+        search: search as string,
+        limit: Math.min(parseInt(limit as string) || 50, 100),
+        offset: parseInt(offset as string) || 0
+      };
+
+      // Remove undefined values
+      Object.keys(filters).forEach(key => filters[key as keyof typeof filters] === undefined && delete filters[key as keyof typeof filters]);
+
+      const result = await storage.getAllCoupons(filters);
+
+      res.json({
+        success: true,
+        coupons: result.coupons,
+        total: result.total,
+        limit: filters.limit,
+        offset: filters.offset
+      });
+    } catch (error) {
+      console.error('Error fetching coupons:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get specific coupon by ID with detailed information
+  app.get('/api/v1/admin/coupons/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const coupon = await storage.getCouponById(id);
+
+      if (!coupon) {
+        return res.status(404).json({
+          success: false,
+          message: 'Coupon not found',
+          error: 'COUPON_NOT_FOUND'
+        });
+      }
+
+      // Get coupon usage statistics
+      const usageData = await storage.getCouponUsage(id, { limit: 10 });
+      const performance = await storage.calculateCouponPerformance(id);
+
+      res.json({
+        success: true,
+        coupon,
+        usage: usageData,
+        performance
+      });
+    } catch (error) {
+      console.error('Error fetching coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupon details',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Create new coupon
+  app.post('/api/v1/admin/coupons', adminSessionMiddleware, validateBody(insertCouponSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Check if coupon code already exists
+      const existingCoupon = await storage.getCoupon(req.body.code);
+      if (existingCoupon) {
+        return res.status(400).json({
+          success: false,
+          message: 'Coupon code already exists',
+          error: 'DUPLICATE_CODE'
+        });
+      }
+
+      const couponData = {
+        ...req.body,
+        createdBy: userId,
+        lastModifiedBy: userId,
+        usageCount: 0,
+        totalSavings: '0.00',
+        isExpired: false
+      };
+
+      const coupon = await storage.createCoupon(couponData);
+
+      res.status(201).json({
+        success: true,
+        message: 'Coupon created successfully',
+        coupon
+      });
+    } catch (error) {
+      console.error('Error creating coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Update existing coupon
+  app.put('/api/v1/admin/coupons/:id', adminSessionMiddleware, validateBody(insertCouponSchema.partial()), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const existingCoupon = await storage.getCouponById(id);
+      if (!existingCoupon) {
+        return res.status(404).json({
+          success: false,
+          message: 'Coupon not found',
+          error: 'COUPON_NOT_FOUND'
+        });
+      }
+
+      // If updating code, check for duplicates
+      if (req.body.code && req.body.code !== existingCoupon.code) {
+        const duplicateCoupon = await storage.getCoupon(req.body.code);
+        if (duplicateCoupon) {
+          return res.status(400).json({
+            success: false,
+            message: 'Coupon code already exists',
+            error: 'DUPLICATE_CODE'
+          });
+        }
+      }
+
+      const updateData = {
+        ...req.body,
+        lastModifiedBy: userId
+      };
+
+      const updatedCoupon = await storage.updateCoupon(id, updateData);
+
+      if (!updatedCoupon) {
+        return res.status(404).json({
+          success: false,
+          message: 'Failed to update coupon',
+          error: 'UPDATE_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Coupon updated successfully',
+        coupon: updatedCoupon
+      });
+    } catch (error) {
+      console.error('Error updating coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Delete coupon (soft delete with usage history preservation)
+  app.delete('/api/v1/admin/coupons/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const result = await storage.deleteCoupon(id);
+
+      if (!result.success) {
+        return res.status(404).json({
+          success: false,
+          message: result.message,
+          error: 'DELETE_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error('Error deleting coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Bulk update coupons (activate/deactivate multiple)
+  app.post('/api/v1/admin/coupons/bulk-update', adminSessionMiddleware, validateBody(bulkCouponUpdateSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { couponIds, updates } = req.body;
+      const result = await storage.bulkUpdateCoupons(couponIds, {
+        ...updates,
+        lastModifiedBy: userId
+      });
+
+      res.json({
+        success: result.success,
+        message: result.success ? 
+          `Successfully updated ${result.updated} coupons` : 
+          'Failed to update coupons',
+        updated: result.updated,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error bulk updating coupons:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk update coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Bulk delete coupons
+  app.post('/api/v1/admin/coupons/bulk-delete', adminSessionMiddleware, validateBody(bulkCouponDeleteSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { couponIds } = req.body;
+      const result = await storage.bulkDeleteCoupons(couponIds);
+
+      res.json({
+        success: result.success,
+        message: result.success ? 
+          `Successfully processed ${result.deleted} coupons` : 
+          'Failed to delete coupons',
+        deleted: result.deleted,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error bulk deleting coupons:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk delete coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get coupon statistics and analytics
+  app.get('/api/v1/admin/coupons/statistics', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { couponId } = req.query;
+      const statistics = await storage.getCouponStatistics(couponId as string);
+
+      res.json({
+        success: true,
+        statistics
+      });
+    } catch (error) {
+      console.error('Error fetching coupon statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupon statistics',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Generate unique coupon code
+  app.post('/api/v1/admin/coupons/generate-code', adminSessionMiddleware, validateBody(couponCodeGenerationSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { pattern } = req.body;
+      const code = await storage.generateCouponCode(pattern);
+
+      res.json({
+        success: true,
+        code
+      });
+    } catch (error) {
+      console.error('Error generating coupon code:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate coupon code',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Check coupon code availability
+  app.post('/api/v1/admin/coupons/check-availability', adminSessionMiddleware, validateBody(couponCodeAvailabilitySchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { code } = req.body;
+      const result = await storage.checkCouponCodeAvailability(code);
+
+      res.json({
+        success: true,
+        available: result.available,
+        suggestions: result.suggestions
+      });
+    } catch (error) {
+      console.error('Error checking code availability:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to check code availability',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Duplicate existing coupon
+  app.post('/api/v1/admin/coupons/duplicate', adminSessionMiddleware, validateBody(couponDuplicationSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { couponId, modifications } = req.body;
+      const duplicatedCoupon = await storage.duplicateCoupon(couponId, {
+        ...modifications,
+        createdBy: userId,
+        lastModifiedBy: userId
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Coupon duplicated successfully',
+        coupon: duplicatedCoupon
+      });
+    } catch (error) {
+      console.error('Error duplicating coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to duplicate coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get coupon usage details
+  app.get('/api/v1/admin/coupons/:id/usage', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { userId, limit = '50', offset = '0' } = req.query;
+
+      const filters = {
+        userId: userId as string,
+        limit: Math.min(parseInt(limit as string) || 50, 100),
+        offset: parseInt(offset as string) || 0
+      };
+
+      const result = await storage.getCouponUsage(id, filters);
+
+      res.json({
+        success: true,
+        usage: result.usage,
+        total: result.total
+      });
+    } catch (error) {
+      console.error('Error fetching coupon usage:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupon usage',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Expire outdated coupons (maintenance endpoint)
+  app.post('/api/v1/admin/coupons/expire-outdated', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await storage.expireOutdatedCoupons();
+
+      res.json({
+        success: true,
+        message: `Processed expired coupons: ${result.expired} marked as expired, ${result.deactivated} deactivated`,
+        expired: result.expired,
+        deactivated: result.deactivated
+      });
+    } catch (error) {
+      console.error('Error expiring outdated coupons:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to expire outdated coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // PUBLIC COUPON ENDPOINTS (for users)
+  // ============================
+
+  // Validate coupon for users during checkout
+  app.post('/api/v1/coupons/validate/:code', couponValidationLimiter, authMiddleware, validateBody(couponValidationContextSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { code } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const context = {
+        ...req.body,
+        userId
+      };
+
+      const result = await storage.validateCoupon(code, context);
+
+      res.json({
+        success: true,
+        valid: result.valid,
+        coupon: result.valid ? {
+          id: result.coupon?.id,
+          code: result.coupon?.code,
+          title: result.coupon?.title,
+          description: result.coupon?.description,
+          type: result.coupon?.type,
+          value: result.coupon?.value
+        } : undefined,
+        discountAmount: result.discountAmount,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error validating coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to validate coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Apply coupon to order
+  app.post('/api/v1/coupons/apply', couponValidationLimiter, authMiddleware, validateBody(couponApplicationSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const { code, orderId, orderValue } = req.body;
+      const result = await storage.applyCoupon(code, userId, orderId, orderValue);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.error || 'Failed to apply coupon',
+          error: 'COUPON_APPLICATION_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Coupon applied successfully',
+        discountAmount: result.discountAmount,
+        couponUsage: result.couponUsage
+      });
+    } catch (error) {
+      console.error('Error applying coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to apply coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get available coupons for user
+  app.get('/api/v1/coupons/user-available', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const {
+        categoryIds,
+        minOrderValue,
+        onlyUnused = 'false',
+        limit = '20'
+      } = req.query;
+
+      const filters = {
+        categoryIds: categoryIds ? (categoryIds as string).split(',') : undefined,
+        minOrderValue: minOrderValue ? parseFloat(minOrderValue as string) : undefined,
+        onlyUnused: onlyUnused === 'true',
+        limit: Math.min(parseInt(limit as string) || 20, 50)
+      };
+
+      // Remove undefined values
+      Object.keys(filters).forEach(key => filters[key as keyof typeof filters] === undefined && delete filters[key as keyof typeof filters]);
+
+      const coupons = await storage.getCouponsForUser(userId, filters);
+
+      res.json({
+        success: true,
+        coupons: coupons.map(coupon => ({
+          id: coupon.id,
+          code: coupon.code,
+          title: coupon.title,
+          description: coupon.description,
+          type: coupon.type,
+          value: coupon.value,
+          maxDiscountAmount: coupon.maxDiscountAmount,
+          minOrderAmount: coupon.minOrderAmount,
+          validUntil: coupon.validUntil,
+          maxUsagePerUser: coupon.maxUsagePerUser
+        }))
+      });
+    } catch (error) {
+      console.error('Error fetching user coupons:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch available coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Get coupons by category (public endpoint for service pages)
+  app.get('/api/v1/coupons/by-category', optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { categoryIds, limit = '10' } = req.query;
+      const userId = req.user?.id;
+
+      if (!categoryIds) {
+        return res.status(400).json({
+          success: false,
+          message: 'Category IDs are required',
+          error: 'MISSING_CATEGORY_IDS'
+        });
+      }
+
+      const categoryIdArray = (categoryIds as string).split(',');
+      const coupons = await storage.getCouponsByCategory(categoryIdArray, userId);
+
+      const limitedCoupons = coupons.slice(0, Math.min(parseInt(limit as string) || 10, 20));
+
+      res.json({
+        success: true,
+        coupons: limitedCoupons.map(coupon => ({
+          id: coupon.id,
+          code: coupon.code,
+          title: coupon.title,
+          description: coupon.description,
+          type: coupon.type,
+          value: coupon.value,
+          maxDiscountAmount: coupon.maxDiscountAmount,
+          minOrderAmount: coupon.minOrderAmount,
+          validUntil: coupon.validUntil
+        }))
+      });
+    } catch (error) {
+      console.error('Error fetching coupons by category:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupons',
         error: 'INTERNAL_ERROR'
       });
     }
