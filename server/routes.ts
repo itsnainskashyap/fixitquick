@@ -5215,6 +5215,545 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========================
+  // ORDER WORKFLOW APIS
+  // ========================
+
+  // Create a new order
+  app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const orderData = req.body;
+      
+      // Validate service exists and is active
+      const service = await storage.getService(orderData.serviceId);
+      if (!service || !service.isActive) {
+        return res.status(404).json({ success: false, message: 'Service not found or not available' });
+      }
+
+      // Create order with 5-minute accept deadline
+      const acceptDeadline = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+      
+      const order = await storage.createOrder({
+        ...orderData,
+        userId,
+        acceptDeadlineAt: acceptDeadline,
+        status: 'pending_assignment'
+      });
+
+      // Broadcast order created event via WebSocket
+      if (webSocketManager) {
+        webSocketManager.broadcastToRoom(`user_${userId}`, {
+          type: 'order_created',
+          data: order
+        });
+      }
+
+      // TODO: Trigger background provider matching process
+      console.log(`✅ Order created: ${order.id} for user ${userId}`);
+
+      res.status(201).json({
+        success: true,
+        data: order,
+        message: 'Order created successfully'
+      });
+    } catch (error) {
+      console.error('Error creating order:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to create order',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Get specific order details
+  app.get('/api/v1/orders/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+      const userRole = req.user?.role || 'user';
+
+      const order = await storage.getOrderWithDetails(id);
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+
+      // Check access permissions
+      const canView = 
+        userRole === 'admin' || 
+        order.userId === userId || 
+        order.providerId === userId;
+
+      if (!canView) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+
+      res.json({
+        success: true,
+        data: order
+      });
+    } catch (error) {
+      console.error('Error fetching order:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch order details' 
+      });
+    }
+  });
+
+  // List orders for authenticated user
+  app.get('/api/v1/orders', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const userRole = req.user?.role || 'user';
+      
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const { status, limit = 20, offset = 0 } = req.query;
+
+      let orders;
+      if (userRole === 'service_provider') {
+        // Get orders assigned to this provider
+        orders = await storage.getProviderOrders(userId, {
+          status: status as string,
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string)
+        });
+      } else {
+        // Get orders created by this user
+        orders = await storage.getUserOrders(userId, {
+          status: status as string,
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string)
+        });
+      }
+
+      res.json({
+        success: true,
+        data: orders,
+        count: orders.length
+      });
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch orders' 
+      });
+    }
+  });
+
+  // Update order status (admin only)
+  app.patch('/api/v1/orders/:id/status', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, notes } = req.body;
+      const userId = req.user?.id;
+
+      // Validate status
+      const validStatuses = ['pending_assignment', 'matching', 'assigned', 'in_progress', 'completed', 'cancelled'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid status value' 
+        });
+      }
+
+      const order = await storage.getOrder(id);
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+
+      // Validate status transition
+      const canUpdate = await storage.validateStatusUpdate(id, status, userId ?? '', 'admin');
+      if (!canUpdate.allowed) {
+        return res.status(400).json({ 
+          success: false, 
+          message: canUpdate.reason || 'Status update not allowed' 
+        });
+      }
+
+      const updatedOrder = await storage.updateOrder(id, { 
+        status,
+        meta: { 
+          ...order.meta, 
+          notes: notes || undefined 
+        } 
+      });
+
+      // Send WebSocket notification
+      if (webSocketManager && updatedOrder) {
+        webSocketManager.broadcastToRoom(`user_${updatedOrder.userId}`, {
+          type: 'order_status_updated',
+          data: updatedOrder
+        });
+
+        if (updatedOrder.providerId) {
+          webSocketManager.broadcastToRoom(`provider_${updatedOrder.providerId}`, {
+            type: 'order_status_updated',
+            data: updatedOrder
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        data: updatedOrder,
+        message: 'Order status updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to update order status' 
+      });
+    }
+  });
+
+  // ========================
+  // PROVIDER JOB REQUEST APIS  
+  // ========================
+
+  // Get job requests for provider
+  app.get('/api/v1/providers/me/job-requests', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const providerId = req.user?.id;
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const { status = 'sent', limit = 20, offset = 0 } = req.query;
+
+      const jobRequests = await storage.getProviderJobRequests(providerId, {
+        status: status as string,
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string)
+      });
+
+      // Enhance job requests with order details
+      const enhancedRequests = await Promise.all(
+        jobRequests.map(async (request) => {
+          const order = await storage.getOrderWithDetails(request.orderId);
+          return {
+            ...request,
+            order: order || null
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: enhancedRequests,
+        count: enhancedRequests.length
+      });
+    } catch (error) {
+      console.error('Error fetching job requests:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch job requests' 
+      });
+    }
+  });
+
+  // Accept order job request  
+  app.post('/api/v1/orders/:id/accept', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id: orderId } = req.params;
+      const providerId = req.user?.id;
+      const { estimatedArrival, quotedPrice, notes } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      // Check if provider can accept this order
+      const canAccept = await storage.canProviderAcceptOrder(orderId, providerId);
+      if (!canAccept.allowed) {
+        return res.status(400).json({ 
+          success: false, 
+          message: canAccept.reason || 'Cannot accept this order' 
+        });
+      }
+
+      // Accept the order (handles race conditions)
+      const result = await storage.assignProviderToOrder(orderId, providerId);
+      if (!result) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Failed to accept order - may have been taken by another provider' 
+        });
+      }
+
+      // Update any additional details
+      const updateData: any = {};
+      if (estimatedArrival) updateData.estimatedArrival = new Date(estimatedArrival);
+      if (quotedPrice) updateData.quotedPrice = quotedPrice;
+      if (notes) {
+        updateData.meta = { ...result.meta, providerNotes: notes };
+      }
+      
+      if (Object.keys(updateData).length > 0) {
+        await storage.updateOrder(orderId, updateData);
+      }
+
+      // Send notifications via WebSocket
+      if (webSocketManager) {
+        const orderDetails = await storage.getOrderWithDetails(orderId);
+        
+        // Notify customer
+        webSocketManager.broadcastToRoom(`user_${result.userId}`, {
+          type: 'order_accepted',
+          data: orderDetails
+        });
+
+        // Notify provider
+        webSocketManager.broadcastToRoom(`provider_${providerId}`, {
+          type: 'job_accepted',
+          data: orderDetails
+        });
+      }
+
+      res.json({
+        success: true,
+        data: result,
+        message: 'Order accepted successfully'
+      });
+    } catch (error) {
+      console.error('Error accepting order:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to accept order',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Decline order job request
+  app.post('/api/v1/orders/:id/decline', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id: orderId } = req.params;
+      const providerId = req.user?.id;
+      const { reason } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      // Check if there's a valid job request
+      const jobRequest = await storage.getProviderJobRequest(orderId, providerId);
+      if (!jobRequest || jobRequest.status !== 'sent') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'No valid job request found' 
+        });
+      }
+
+      // Decline the job request
+      const result = await storage.declineProviderJobRequest(orderId, providerId, reason);
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false, 
+          message: result.message || 'Failed to decline job request' 
+        });
+      }
+
+      // Send WebSocket notification
+      if (webSocketManager) {
+        webSocketManager.broadcastToRoom(`provider_${providerId}`, {
+          type: 'job_declined',
+          data: { orderId, reason }
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Job request declined successfully'
+      });
+    } catch (error) {
+      console.error('Error declining job request:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to decline job request' 
+      });
+    }
+  });
+
+  // ========================
+  // PROVIDER PROFILE APIS
+  // ========================
+
+  // Get provider profile
+  app.get('/api/v1/providers/me/profile', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const providerId = req.user?.id;
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const user = await storage.getUser(providerId);
+      const provider = await storage.getServiceProvider(providerId);
+      
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          user: {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phone,
+            profileImageUrl: user.profileImageUrl,
+            isVerified: user.isVerified,
+            location: user.location,
+            isActive: user.isActive,
+          },
+          provider: provider || null
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching provider profile:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch provider profile' 
+      });
+    }
+  });
+
+  // Update provider profile  
+  app.put('/api/v1/providers/me/profile', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const providerId = req.user?.id;
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const { user: userData, provider: providerData } = req.body;
+
+      // Update user data if provided
+      if (userData) {
+        const validUserFields = ['firstName', 'lastName', 'profileImageUrl', 'location'];
+        const userUpdate = Object.keys(userData)
+          .filter(key => validUserFields.includes(key))
+          .reduce((obj: any, key) => {
+            obj[key] = userData[key];
+            return obj;
+          }, {});
+
+        if (Object.keys(userUpdate).length > 0) {
+          await storage.updateUser(providerId, userUpdate);
+        }
+      }
+
+      // Update provider data if provided
+      if (providerData) {
+        const validProviderFields = [
+          'businessName', 'businessType', 'skills', 'serviceIds', 
+          'experienceYears', 'availability', 'currentLocation', 
+          'serviceRadius', 'serviceAreas'
+        ];
+        const providerUpdate = Object.keys(providerData)
+          .filter(key => validProviderFields.includes(key))
+          .reduce((obj: any, key) => {
+            obj[key] = providerData[key];
+            return obj;
+          }, {});
+
+        if (Object.keys(providerUpdate).length > 0) {
+          await storage.updateServiceProvider(providerId, providerUpdate);
+        }
+      }
+
+      // Return updated profile
+      const user = await storage.getUser(providerId);
+      const provider = await storage.getServiceProvider(providerId);
+
+      res.json({
+        success: true,
+        data: {
+          user: user ? {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phone,
+            profileImageUrl: user.profileImageUrl,
+            isVerified: user.isVerified,
+            location: user.location,
+            isActive: user.isActive,
+          } : null,
+          provider: provider || null
+        },
+        message: 'Profile updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating provider profile:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to update provider profile' 
+      });
+    }
+  });
+
+  // Update provider online status
+  app.patch('/api/v1/providers/me/status', authMiddleware, requireRole(['service_provider']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const providerId = req.user?.id;
+      if (!providerId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      const { isOnline, isAvailable, currentLocation } = req.body;
+      
+      const updateData: any = {};
+      if (typeof isOnline === 'boolean') updateData.isOnline = isOnline;
+      if (typeof isAvailable === 'boolean') updateData.isAvailable = isAvailable;
+      if (currentLocation) updateData.currentLocation = currentLocation;
+      
+      // Update last active timestamp
+      updateData.lastActiveAt = new Date();
+
+      const updatedProvider = await storage.updateServiceProvider(providerId, updateData);
+
+      // Broadcast status change via WebSocket
+      if (webSocketManager && updatedProvider) {
+        webSocketManager.broadcastToRoom(`provider_${providerId}`, {
+          type: 'status_updated',
+          data: {
+            isOnline: updatedProvider.isOnline,
+            isAvailable: updatedProvider.isAvailable,
+            lastActiveAt: updatedProvider.lastActiveAt
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          isOnline: updatedProvider?.isOnline || false,
+          isAvailable: updatedProvider?.isAvailable || false,
+          lastActiveAt: updatedProvider?.lastActiveAt
+        },
+        message: 'Status updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating provider status:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to update provider status' 
+      });
+    }
+  });
+
   // Manual provider assignment endpoint
   app.put('/api/v1/service-bookings/:bookingId/assign', authMiddleware, requireRole(['admin', 'service_provider']), async (req, res) => {
     try {
@@ -7650,7 +8189,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const stats = {
         totalUsers,
-        totalRevenue: completedOrders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0),
+        totalRevenue: completedOrders.reduce((sum, order) => {
+          // FIXED: Access totalAmount from meta field or use 0 as fallback
+          const amount = order.meta?.totalAmount || 0;
+          return sum + parseFloat(String(amount));
+        }, 0),
         totalOrders: allOrders.length,
         totalProviders,
         pendingVerifications: 0, // TODO: Implement
@@ -7715,8 +8258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const hasAccess = order.userId === userId || 
-                       order.serviceProviderId === userId || 
-                       order.partsProviderId === userId ||
+                       order.providerId === userId ||
                        userRole === 'admin';
       
       if (!hasAccess) {
@@ -7748,8 +8290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const hasAccess = order.userId === userId || 
-                       order.serviceProviderId === userId || 
-                       order.partsProviderId === userId;
+                       order.providerId === userId;
       
       if (!hasAccess) {
         return res.status(403).json({ message: 'Access denied' });
@@ -7758,7 +8299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Determine receiver
       let receiverId: string;
       if (order.userId === userId) {
-        receiverId = order.serviceProviderId || order.partsProviderId || '';
+        receiverId = order.providerId || '';
       } else {
         receiverId = order.userId || '';
       }

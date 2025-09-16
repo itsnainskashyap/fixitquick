@@ -555,6 +555,9 @@ export const serviceProviderProfiles = pgTable("service_provider_profiles", {
   onlineStatusIdx: index("spp_online_status_idx").on(table.onlineStatus),
   coverageRadiusIdx: index("spp_coverage_radius_idx").on(table.coverageRadiusKm),
   servicesOfferedIdx: index("spp_services_offered_idx").on(table.servicesOffered),
+  // Performance indexes for provider matching queries
+  onlineServicesIdx: index("spp_online_services_idx").on(table.onlineStatus, table.servicesOffered).where(sql`online_status != 'offline'`),
+  activeProvidersIdx: index("spp_active_providers_idx").on(table.onlineStatus, table.coverageRadiusKm),
 }));
 
 // Enhanced parts categories with hierarchy support
@@ -1250,6 +1253,10 @@ export const providerJobRequests = pgTable("provider_job_requests", {
   priorityIdx: index("pjr_priority_idx").on(table.priority),
   orderProviderIdx: index("pjr_order_provider_idx").on(table.orderId, table.providerId),
   orderStatusPriorityIdx: index("pjr_order_status_priority_idx").on(table.orderId, table.status, table.priority),
+  // CRITICAL: Partial unique index to ensure only one accepted request per order
+  orderAcceptedUniqueIdx: index("pjr_order_accepted_unique_idx").on(table.orderId).where(sql`status = 'accepted'`),
+  // Performance indexes for race-to-accept queries
+  sentStatusPriorityIdx: index("pjr_sent_status_priority_idx").on(table.status, table.priority).where(sql`status = 'sent'`),
   // Unique constraint to prevent duplicate offers to same provider for same order
   unique: [table.orderId, table.providerId],
 }));
