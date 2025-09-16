@@ -157,28 +157,26 @@ export const userSessions = pgTable("user_sessions", {
   sessionIdIdx: index("session_session_id_idx").on(table.sessionId), // SECURITY FIX: Index for sessionId lookups
 }));
 
-// Service categories - Enhanced for infinite hierarchy
+// Service categories - Simplified to 2-level structure
 export const serviceCategories = pgTable("service_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  parentId: varchar("parent_id"), // nullable for backward compatibility
+  parentId: varchar("parent_id"), // null for main categories (level 0), set for sub categories (level 1)
   name: varchar("name").notNull(),
-  slug: varchar("slug"), // nullable initially, will be backfilled
+  slug: varchar("slug").notNull(),
   icon: text("icon"),
   imageUrl: text("image_url"), // Category image for better visual representation
   description: text("description"),
-  level: integer("level").default(0), // 0=category, 1=sub-category, 2=service-type
+  level: integer("level").default(0), // 0=main category (Electrician), 1=sub category (Fan, Bulb)
   sortOrder: integer("sort_order").default(0),
-  categoryPath: text("category_path"), // Full hierarchy path (e.g., "/technology/mobile-repair/iphone-repair")
-  depth: integer("depth").default(0), // Alternative to level for nesting depth
   isActive: boolean("is_active").default(true),
+  serviceCount: integer("service_count").default(0), // Cache field for performance
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
 }, (table) => ({
   parentIdx: index("sc_parent_idx").on(table.parentId),
   levelIdx: index("sc_level_idx").on(table.level),
   slugIdx: index("sc_slug_idx").on(table.slug),
-  pathIdx: index("sc_path_idx").on(table.categoryPath),
-  depthIdx: index("sc_depth_idx").on(table.depth),
+  activeIdx: index("sc_active_idx").on(table.isActive),
 }));
 
 // Parts provider business information

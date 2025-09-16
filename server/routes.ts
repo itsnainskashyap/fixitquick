@@ -4047,11 +4047,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { category, sortBy, priceRange } = req.query;
       
-      // Get services with filters
-      let services = await storage.getServices({
-        categoryId: category as string,
-        isActive: true
-      });
+      let services = [];
+      
+      if (category && category !== 'all') {
+        // Check if this is a main category (level 0) or sub category (level 1)
+        const categoryInfo = await storage.getServiceCategory(category as string);
+        
+        if (categoryInfo && categoryInfo.level === 0) {
+          // For main categories, get ALL services under the category (including subcategories)
+          services = await storage.getAllServicesUnderMainCategory(category as string);
+        } else {
+          // For sub categories, get services directly from that category
+          services = await storage.getServices({
+            categoryId: category as string,
+            isActive: true
+          });
+        }
+      } else {
+        // Get all services when no category filter is applied
+        services = await storage.getServices({
+          isActive: true
+        });
+      }
       
       // Apply price filtering
       if (priceRange && priceRange !== 'all') {

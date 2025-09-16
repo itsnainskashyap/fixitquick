@@ -36,9 +36,7 @@ interface ServiceCategory {
   description: string;
   parentId?: string | null;
   level: number;
-  depth: number;
   sortOrder: number;
-  categoryPath: string;
   serviceCount?: number;
   isActive: boolean;
   children?: ServiceCategory[];
@@ -167,8 +165,8 @@ export default function Services() {
   };
 
   const handleQuickAccessClick = (categoryId: string) => {
-    // Navigate to subcategories page for main categories
-    setLocation(`/categories/${categoryId}/subcategories`);
+    // For 2-level structure: directly select the main category to show ALL services under it
+    selectCategory(categoryId);
   };
 
   // Build hierarchical tree structure from flat category array
@@ -362,7 +360,8 @@ export default function Services() {
 
 
   const filteredServices = (services || []).filter((service: Service) => {
-    const matchesCategory = selectedCategory === 'all' || service.category === selectedCategory;
+    // Note: Category filtering is now handled by the backend API based on 2-level structure
+    // The services returned are already filtered by category (main category returns ALL services under it)
     const matchesSearch = !searchQuery || 
       service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       service.description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -371,7 +370,7 @@ export default function Services() {
       (priceRange === 'medium' && service.price > 100 && service.price <= 300) ||
       (priceRange === 'high' && service.price > 300);
     
-    return matchesCategory && matchesSearch && matchesPrice;
+    return matchesSearch && matchesPrice;
   });
 
   const sortedServices = filteredServices.sort((a: Service, b: Service) => {
@@ -513,7 +512,7 @@ export default function Services() {
                     key={category.id}
                     variant={selectedCategory === category.id ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => handleQuickAccessClick(category.id)}
+                    onClick={() => selectCategory(category.id)}
                     className="flex items-center gap-2 flex-shrink-0 scroll-snap-align-start"
                     data-testid={`quick-category-${category.id}`}
                     style={{ scrollSnapAlign: 'start' }}

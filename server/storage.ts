@@ -1547,22 +1547,21 @@ export class PostgresStorage implements IStorage {
     }
     
     if (rootId) {
-      // Get tree starting from specific root - include the root and all descendants
-      // This would need path-based filtering for proper subtree selection
+      // For 2-level structure: get the root category and its direct children
       const rootCondition = or(
         eq(serviceCategories.id, rootId),
-        like(serviceCategories.categoryPath, `%${rootId}%`)
+        eq(serviceCategories.parentId, rootId)
       );
       if (rootCondition) {
         conditions.push(rootCondition);
       }
-    } else {
-      // Get entire tree - return ALL categories, not just root level
-      // Frontend will handle tree structure building
     }
     
+    // For 2-level structure, limit to levels 0 and 1 only
     if (maxDepth !== undefined) {
-      conditions.push(lte(serviceCategories.depth, maxDepth));
+      conditions.push(lte(serviceCategories.level, Math.min(maxDepth, 1)));
+    } else {
+      conditions.push(lte(serviceCategories.level, 1));
     }
     
     const whereClause = combineConditions(conditions);
@@ -1572,6 +1571,7 @@ export class PostgresStorage implements IStorage {
         .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     } else {
       return await db.select().from(serviceCategories)
+        .where(lte(serviceCategories.level, 1))
         .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     }
   }
@@ -1624,42 +1624,34 @@ export class PostgresStorage implements IStorage {
   }
 
   async moveCategoryToParent(categoryId: string, newParentId: string | null): Promise<ServiceCategory | undefined> {
-    // Validate the move is not creating a circular reference
-    const validation = await this.validateCategoryHierarchy(categoryId, newParentId);
-    if (!validation.valid) {
-      throw new Error(validation.reason || 'Invalid category hierarchy move');
-    }
+    // For 2-level structure: validate move (only allow level 0 -> 1 moves)
+    const category = await this.getServiceCategory(categoryId);
+    if (!category) return undefined;
     
-    // Calculate new level and depth
     let newLevel = 0;
-    let newDepth = 0;
-    let newCategoryPath = '/';
-    
     if (newParentId) {
       const parent = await this.getServiceCategory(newParentId);
-      if (parent) {
-        newLevel = (parent.level || 0) + 1;
-        newDepth = (parent.depth || 0) + 1;
-        newCategoryPath = (parent.categoryPath || '/') + (parent.slug || '') + '/';
+      if (!parent) {
+        throw new Error('Parent category not found');
       }
+      if (parent.level !== 0) {
+        throw new Error('Can only move categories under main categories (level 0)');
+      }
+      newLevel = 1;
     }
     
-    // Update the category
-    const currentCategory = await this.getServiceCategory(categoryId);
-    if (!currentCategory) return undefined;
+    // For 2-level structure: don't allow moves beyond level 1
+    if (newLevel > 1) {
+      throw new Error('Category hierarchy limited to 2 levels only');
+    }
     
     const updatedCategory = await db.update(serviceCategories)
       .set({
         parentId: newParentId,
-        level: newLevel,
-        depth: newDepth,
-        categoryPath: newCategoryPath + (currentCategory.slug || '')
+        level: newLevel
       })
       .where(eq(serviceCategories.id, categoryId))
       .returning();
-      
-    // Update paths for all descendants
-    await this.updateCategoryPaths(categoryId);
     
     return updatedCategory[0];
   }
@@ -1910,6 +1902,31 @@ export class PostgresStorage implements IStorage {
   async getServicesByCategory(categoryId: string): Promise<Service[]> {
     return await db.select().from(services)
       .where(and(eq(services.categoryId, categoryId), eq(services.isActive, true)))
+      .execute();
+  }
+
+  // NEW: Get all services under a main category (including services from all subcategories)
+  async getAllServicesUnderMainCategory(mainCategoryId: string): Promise<Service[]> {
+    // Get the main category and verify it's level 0
+    const mainCategory = await this.getServiceCategory(mainCategoryId);
+    if (!mainCategory || mainCategory.level !== 0) {
+      return [];
+    }
+
+    // Get all subcategories under this main category
+    const subcategories = await this.getSubCategories(mainCategoryId, true);
+    const subcategoryIds = subcategories.map(sub => sub.id);
+
+    // Include the main category ID as well (in case there are direct services)
+    const allCategoryIds = [mainCategoryId, ...subcategoryIds];
+
+    // Get all services from main category and its subcategories
+    return await db.select().from(services)
+      .where(and(
+        inArray(services.categoryId, allCategoryIds),
+        eq(services.isActive, true)
+      ))
+      .orderBy(asc(services.name))
       .execute();
   }
 
