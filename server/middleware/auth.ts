@@ -38,9 +38,9 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
-    // PRIORITY 1: Check for admin token in cookies first (takes precedence over all other auth)
+    // ABSOLUTE PRIORITY 1: Check for admin token in cookies FIRST (overrides everything)
     if (req.cookies?.adminToken) {
-      console.log('🍪 authMiddleware: Found admin token in secure cookie, processing with highest priority');
+      console.log('🍪 authMiddleware: Found admin token in secure cookie, processing with ABSOLUTE HIGHEST PRIORITY');
       try {
         const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
         if (jwtPayload) {
@@ -49,17 +49,29 @@ export const authMiddleware = async (
           const user = await storage.getUser(jwtPayload.userId);
           if (!user || !user.isActive) {
             console.error(`❌ authMiddleware: Admin user ${jwtPayload.userId} not found or inactive`);
+            // Clear invalid cookie
+            res.clearCookie('adminToken', { path: '/', httpOnly: true });
             return res.status(404).json({ 
               message: 'Admin user not found or inactive' 
             });
           }
 
-          // Attach admin user data to request in compatible format
+          // Verify admin role from database
+          if (user.role !== 'admin') {
+            console.error(`❌ authMiddleware: User ${jwtPayload.userId} has role ${user.role}, but admin JWT cookie requires admin role`);
+            // Clear cookie for non-admin user
+            res.clearCookie('adminToken', { path: '/', httpOnly: true });
+            return res.status(403).json({ 
+              message: 'Admin access required' 
+            });
+          }
+
+          // Attach admin user data to request with GUARANTEED admin role
           req.user = {
             id: user.id,
             email: user.email || undefined,
             phone: user.phone || undefined,
-            role: user.role || 'admin', // Ensure admin role
+            role: 'admin', // FORCE admin role from JWT cookie
             isVerified: user.isVerified || false,
             firstName: user.firstName,
             lastName: user.lastName,
@@ -71,9 +83,18 @@ export const authMiddleware = async (
             lastLoginAt: user.lastLoginAt,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
+            // Mark as JWT-authenticated admin for downstream middleware
+            authMethod: 'admin_jwt_cookie'
           };
 
-          console.log(`✅ authMiddleware: Admin user ${user.id} authenticated with role: ${user.role}`);
+          console.log(`✅ authMiddleware: ADMIN USER ${user.id} authenticated via JWT cookie with GUARANTEED admin role`);
+          // Update last login timestamp for admin
+          try {
+            await storage.updateUser(user.id, { lastLoginAt: new Date() });
+          } catch (updateError) {
+            console.error('Error updating admin last login:', updateError);
+            // Don't fail the request if we can't update last login
+          }
           return next();
         }
       } catch (adminAuthError) {
@@ -435,52 +456,107 @@ export const requireRole = (allowedRoles: string | string[]) => {
   };
 };
 
-// Composite admin middleware that handles both session and JWT auth
+// Composite admin middleware that handles both session and JWT auth with ABSOLUTE JWT priority
 export async function adminSessionMiddleware(req: Request, res: Response, next: NextFunction) {
   console.log(`🔒 adminSessionMiddleware: Checking admin access`);
   console.log(`🔒 adminSessionMiddleware: req.user present: ${!!req.user}`);
+  console.log(`🔒 adminSessionMiddleware: adminToken cookie present: ${!!req.cookies?.adminToken}`);
   
   try {
     let userId: string | undefined;
+    let authMethod: string = 'unknown';
     
-    // PRIORITY 1: Check for admin JWT cookie FIRST (highest priority)
+    // ABSOLUTE PRIORITY 1: Check for admin JWT cookie FIRST (overrides everything)
     if (req.cookies?.adminToken) {
-      console.log('🍪 adminSessionMiddleware: Found admin token in cookie, using JWT auth');
+      console.log('🍪 adminSessionMiddleware: Found admin token in cookie, using JWT auth with ABSOLUTE PRIORITY');
       try {
         const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
         if (jwtPayload) {
           userId = jwtPayload.userId;
-          console.log(`🔍 adminSessionMiddleware: Using JWT auth, userId: ${userId}`);
+          authMethod = 'admin_jwt_cookie';
+          console.log(`🔍 adminSessionMiddleware: Using JWT auth with ABSOLUTE PRIORITY, userId: ${userId}`);
+          
+          // Get user data from database
+          const user = await storage.getUser(userId);
+          
+          if (!user || !user.isActive) {
+            console.error(`❌ adminSessionMiddleware: Admin user ${userId} not found or inactive`);
+            res.clearCookie('adminToken', { path: '/', httpOnly: true });
+            return res.status(404).json({ message: "Admin user not found or inactive" });
+          }
+
+          // Verify admin role from database
+          if (user.role !== 'admin') {
+            console.error(`❌ adminSessionMiddleware: User ${userId} has role ${user.role}, but admin JWT cookie requires admin role`);
+            res.clearCookie('adminToken', { path: '/', httpOnly: true });
+            return res.status(403).json({ message: "Access denied. Admin role required" });
+          }
+
+          // Set normalized admin user object with GUARANTEED admin role
+          req.user = {
+            id: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: 'admin', // FORCE admin role from JWT cookie
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            authMethod: 'admin_jwt_cookie'
+          };
+          
+          console.log(`✅ adminSessionMiddleware: ADMIN USER ${user.id} authorized via JWT cookie with GUARANTEED admin role`);
+          // Update last login timestamp
+          try {
+            await storage.updateUser(user.id, { lastLoginAt: new Date() });
+          } catch (updateError) {
+            console.error('Error updating admin last login:', updateError);
+          }
+          return next();
         }
       } catch (jwtError) {
         console.error('❌ adminSessionMiddleware: Admin JWT token invalid:', jwtError);
-        return res.status(401).json({ message: "Invalid admin token" });
+        res.clearCookie('adminToken', { path: '/', httpOnly: true });
+        return res.status(401).json({ message: "Invalid admin token - please login again" });
       }
     }
     
-    // PRIORITY 2: Fall back to session/existing user auth if no JWT
-    if (!userId) {
-      if (req.user?.claims?.sub) {
-        // Replit Auth session
-        userId = req.user.claims.sub;
-        console.log(`🔍 adminSessionMiddleware: Using session auth, userId: ${userId}`);
-      } else if (req.user?.id) {
-        // JWT Auth from authMiddleware
-        userId = req.user.id;
-        console.log(`🔍 adminSessionMiddleware: Using existing JWT auth, userId: ${userId}`);
-      } else {
-        console.log('🚫 adminSessionMiddleware: No authenticated user');
-        return res.status(401).json({ message: "Authentication required" });
-      }
+    // PRIORITY 2: Check if authMiddleware already handled admin JWT authentication
+    if (req.user?.authMethod === 'admin_jwt_cookie' && req.user?.role === 'admin') {
+      console.log(`✅ adminSessionMiddleware: Admin ${req.user.id} already authenticated via authMiddleware with JWT cookie`);
+      return next();
+    }
+    
+    // PRIORITY 3: Fall back to session/existing user auth if no JWT
+    if (req.user?.claims?.sub) {
+      // Replit Auth session
+      userId = req.user.claims.sub;
+      authMethod = 'replit_session';
+      console.log(`🔍 adminSessionMiddleware: Using session auth, userId: ${userId}`);
+    } else if (req.user?.id) {
+      // JWT Auth from authMiddleware (non-admin JWT)
+      userId = req.user.id;
+      authMethod = 'existing_auth';
+      console.log(`🔍 adminSessionMiddleware: Using existing auth, userId: ${userId}`);
+    } else {
+      console.log('🚫 adminSessionMiddleware: No authenticated user');
+      return res.status(401).json({ message: "Authentication required" });
     }
 
-    console.log(`🔍 adminSessionMiddleware: Fetching user data for ${userId}`);
+    console.log(`🔍 adminSessionMiddleware: Fetching user data for ${userId} (auth method: ${authMethod})`);
     // Get user from database to check current role
     const user = await storage.getUser(userId);
     
-    if (!user) {
-      console.log(`🚫 adminSessionMiddleware: User ${userId} not found in database`);
-      return res.status(401).json({ message: "User not found" });
+    if (!user || !user.isActive) {
+      console.log(`🚫 adminSessionMiddleware: User ${userId} not found or inactive in database`);
+      return res.status(401).json({ message: "User not found or inactive" });
     }
 
     if (user.role !== 'admin') {
@@ -492,7 +568,8 @@ export async function adminSessionMiddleware(req: Request, res: Response, next: 
     req.user = {
       id: user.id,
       email: user.email || undefined,
-      role: user.role || 'user',
+      phone: user.phone || undefined,
+      role: user.role, // Use role from database
       isVerified: user.isVerified || false,
       firstName: user.firstName,
       lastName: user.lastName,
@@ -504,11 +581,12 @@ export async function adminSessionMiddleware(req: Request, res: Response, next: 
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      authMethod: authMethod,
       // Keep session claims for compatibility
       claims: req.user?.claims
     };
     
-    console.log(`✅ adminSessionMiddleware: Admin ${user.id} authorized`);
+    console.log(`✅ adminSessionMiddleware: Admin ${user.id} authorized via ${authMethod}`);
     next();
   } catch (error) {
     console.error('❌ adminSessionMiddleware error:', error);
