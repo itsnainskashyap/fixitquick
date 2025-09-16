@@ -2107,12 +2107,168 @@ export const accountDeletionRequests = pgTable("account_deletion_requests", {
   createdAtIdx: index("adr_created_at_idx").on(table.createdAt),
 }));
 
+// Tax Categories for organizing taxes
+export const taxCategories = pgTable("tax_categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Basic info
+  name: varchar("name").notNull(),
+  description: text("description"),
+  code: varchar("code").notNull().unique(), // GST, VAT, SERVICE_FEE, etc.
+  
+  // Configuration
+  defaultRate: decimal("default_rate", { precision: 10, scale: 4 }).default("0.0000"), // Default rate for this category
+  applicableServices: jsonb("applicable_services").$type<string[]>().default(sql`'[]'::jsonb`), // Service IDs this applies to
+  priority: integer("priority").default(0), // Order of application
+  
+  // Display and UI
+  displayOrder: integer("display_order").default(0),
+  color: varchar("color").default("#3B82F6"), // Hex color for UI
+  icon: varchar("icon").default("Percent"), // Lucide icon name
+  
+  // Status
+  isActive: boolean("is_active").default(true),
+  
+  // Audit trail
+  createdBy: varchar("created_by").references(() => users.id),
+  updatedBy: varchar("updated_by").references(() => users.id),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
+}, (table) => ({
+  codeIdx: index("tc_code_idx").on(table.code),
+  activeIdx: index("tc_active_idx").on(table.isActive),
+  priorityIdx: index("tc_priority_idx").on(table.priority),
+  displayOrderIdx: index("tc_display_order_idx").on(table.displayOrder),
+}));
+
+// Taxes table for comprehensive tax management
+export const taxes = pgTable("taxes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Basic info
+  name: varchar("name").notNull(),
+  description: text("description"),
+  code: varchar("code").notNull().unique(), // CGST_9, SGST_9, SERVICE_FEE, etc.
+  displayName: varchar("display_name").notNull(), // User-friendly name for invoices
+  
+  // Tax category relationship
+  categoryId: varchar("category_id").references(() => taxCategories.id),
+  
+  // Tax configuration
+  type: varchar("type", { enum: ["percentage", "fixed", "tiered"] }).notNull(),
+  rate: decimal("rate", { precision: 10, scale: 4 }).notNull(), // Percentage rate or fixed amount
+  minAmount: decimal("min_amount", { precision: 10, scale: 2 }).default("0.00"), // Minimum tax amount
+  maxAmount: decimal("max_amount", { precision: 10, scale: 2 }), // Maximum tax amount (null = no limit)
+  
+  // Tiered tax configuration (for complex tax structures)
+  tierConfig: jsonb("tier_config").$type<{
+    tiers: Array<{
+      minOrderValue: number;
+      maxOrderValue?: number;
+      rate: number;
+      type: "percentage" | "fixed";
+    }>;
+  }>(),
+  
+  // Applicability rules
+  serviceCategories: jsonb("service_categories").$type<string[]>().default(sql`'[]'::jsonb`), // Service category IDs
+  partCategories: jsonb("part_categories").$type<string[]>().default(sql`'[]'::jsonb`), // Part category IDs
+  locationBased: boolean("location_based").default(false), // Whether tax is location-specific
+  stateRestrictions: jsonb("state_restrictions").$type<string[]>().default(sql`'[]'::jsonb`), // State codes where applicable
+  cityRestrictions: jsonb("city_restrictions").$type<string[]>().default(sql`'[]'::jsonb`), // City names where applicable
+  
+  // Business logic rules
+  isPrimary: boolean("is_primary").default(false), // Primary taxes (like GST)
+  priority: integer("priority").default(0), // Order of tax application (lower = first)
+  combinable: boolean("combinable").default(true), // Can be combined with other taxes
+  compoundable: boolean("compoundable").default(false), // Tax calculated on tax-inclusive amount
+  
+  // Validity period
+  validFrom: timestamp("valid_from").defaultNow(),
+  validTo: timestamp("valid_to"), // null = no expiry
+  
+  // Order value thresholds
+  minOrderValue: decimal("min_order_value", { precision: 10, scale: 2 }).default("0.00"), // Minimum order value for this tax
+  maxOrderValue: decimal("max_order_value", { precision: 10, scale: 2 }), // Maximum order value for this tax
+  
+  // Tax exemption rules
+  exemptionRules: jsonb("exemption_rules").$type<{
+    userRoles?: string[]; // Exempted user roles
+    serviceCodes?: string[]; // Exempted service codes
+    orderTypes?: string[]; // Exempted order types
+    minimumOrderValue?: number; // Exempt if order above this value
+    promoCodeRequired?: string; // Promo code required for exemption
+  }>(),
+  
+  // Display and calculation settings
+  roundingRule: varchar("rounding_rule", { 
+    enum: ["round", "ceil", "floor", "round_to_nearest_5", "round_to_nearest_10"] 
+  }).default("round"),
+  showOnInvoice: boolean("show_on_invoice").default(true),
+  includeInTotal: boolean("include_in_total").default(true),
+  taxableBaseIncludes: jsonb("taxable_base_includes").$type<{
+    serviceAmount?: boolean;
+    partAmount?: boolean;
+    shippingAmount?: boolean;
+    previousTaxes?: boolean;
+  }>().default(sql`'{"serviceAmount": true, "partAmount": true, "shippingAmount": false, "previousTaxes": false}'::jsonb`),
+  
+  // Status and visibility
+  isActive: boolean("is_active").default(true),
+  isHidden: boolean("is_hidden").default(false), // Hidden from public tax breakdown
+  requiresApproval: boolean("requires_approval").default(false), // Requires admin approval for changes
+  
+  // Compliance and legal
+  legalReference: text("legal_reference"), // Legal reference or notification number
+  hsn_sac_code: varchar("hsn_sac_code"), // HSN/SAC code for tax compliance
+  gstType: varchar("gst_type", { enum: ["cgst", "sgst", "igst", "ugst", "cess"] }), // For Indian GST system
+  
+  // Analytics and tracking
+  totalCollected: decimal("total_collected", { precision: 15, scale: 2 }).default("0.00"),
+  totalOrders: integer("total_orders").default(0),
+  lastUsedAt: timestamp("last_used_at"),
+  
+  // Audit trail
+  createdBy: varchar("created_by").references(() => users.id),
+  lastModifiedBy: varchar("last_modified_by").references(() => users.id),
+  approvedBy: varchar("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  
+  // Change tracking
+  changeHistory: jsonb("change_history").$type<Array<{
+    field: string;
+    oldValue: any;
+    newValue: any;
+    changedBy: string;
+    changedAt: string;
+    reason?: string;
+  }>>().default(sql`'[]'::jsonb`),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
+}, (table) => ({
+  codeIdx: index("tax_code_idx").on(table.code),
+  categoryIdx: index("tax_category_idx").on(table.categoryId),
+  typeIdx: index("tax_type_idx").on(table.type),
+  activeIdx: index("tax_active_idx").on(table.isActive),
+  priorityIdx: index("tax_priority_idx").on(table.priority),
+  locationIdx: index("tax_location_idx").on(table.locationBased),
+  validityIdx: index("tax_validity_idx").on(table.validFrom, table.validTo),
+  primaryIdx: index("tax_primary_idx").on(table.isPrimary),
+  gstTypeIdx: index("tax_gst_type_idx").on(table.gstType),
+}));
+
 // Insert schemas for new tables
 export const insertUserReferralSchema = createInsertSchema(userReferrals).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertReferralRecordSchema = createInsertSchema(referralRecords).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserAgreementSchema = createInsertSchema(userAgreements).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDataExportRequestSchema = createInsertSchema(dataExportRequests).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAccountDeletionRequestSchema = createInsertSchema(accountDeletionRequests).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Tax management insert schemas
+export const insertTaxCategorySchema = createInsertSchema(taxCategories).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Validation schemas for API endpoints
 export const referralCodeGenerateSchema = z.object({
@@ -2176,6 +2332,117 @@ export const accountDeletionRequestCreateSchema = z.object({
   }).optional(),
 });
 
+// Tax Category validation schemas
+export const taxCategoryCreateSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  code: z.string().min(1).max(50).regex(/^[A-Z0-9_]+$/, 'Code must contain only uppercase letters, numbers, and underscores'),
+  defaultRate: z.number().min(0).max(100).optional(),
+  applicableServices: z.array(z.string()).default([]),
+  priority: z.number().int().min(0).default(0),
+  displayOrder: z.number().int().min(0).default(0),
+  color: z.string().regex(/^#[0-9A-F]{6}$/i, 'Invalid hex color').default("#3B82F6"),
+  icon: z.string().default("Percent"),
+  isActive: z.boolean().default(true),
+});
+
+export const taxCategoryUpdateSchema = taxCategoryCreateSchema.partial();
+
+// Tax validation schemas
+export const taxCreateSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  code: z.string().min(1).max(50).regex(/^[A-Z0-9_]+$/, 'Code must contain only uppercase letters, numbers, and underscores'),
+  displayName: z.string().min(1).max(100),
+  categoryId: z.string().uuid().optional(),
+  type: z.enum(["percentage", "fixed", "tiered"]),
+  rate: z.number().min(0),
+  minAmount: z.number().min(0).default(0),
+  maxAmount: z.number().min(0).optional(),
+  tierConfig: z.object({
+    tiers: z.array(z.object({
+      minOrderValue: z.number().min(0),
+      maxOrderValue: z.number().min(0).optional(),
+      rate: z.number().min(0),
+      type: z.enum(["percentage", "fixed"]),
+    })),
+  }).optional(),
+  serviceCategories: z.array(z.string()).default([]),
+  partCategories: z.array(z.string()).default([]),
+  locationBased: z.boolean().default(false),
+  stateRestrictions: z.array(z.string()).default([]),
+  cityRestrictions: z.array(z.string()).default([]),
+  isPrimary: z.boolean().default(false),
+  priority: z.number().int().min(0).default(0),
+  combinable: z.boolean().default(true),
+  compoundable: z.boolean().default(false),
+  validFrom: z.string().datetime().optional(),
+  validTo: z.string().datetime().optional(),
+  minOrderValue: z.number().min(0).default(0),
+  maxOrderValue: z.number().min(0).optional(),
+  exemptionRules: z.object({
+    userRoles: z.array(z.string()).optional(),
+    serviceCodes: z.array(z.string()).optional(),
+    orderTypes: z.array(z.string()).optional(),
+    minimumOrderValue: z.number().min(0).optional(),
+    promoCodeRequired: z.string().optional(),
+  }).optional(),
+  roundingRule: z.enum(["round", "ceil", "floor", "round_to_nearest_5", "round_to_nearest_10"]).default("round"),
+  showOnInvoice: z.boolean().default(true),
+  includeInTotal: z.boolean().default(true),
+  taxableBaseIncludes: z.object({
+    serviceAmount: z.boolean().optional(),
+    partAmount: z.boolean().optional(),
+    shippingAmount: z.boolean().optional(),
+    previousTaxes: z.boolean().optional(),
+  }).default({
+    serviceAmount: true,
+    partAmount: true,
+    shippingAmount: false,
+    previousTaxes: false,
+  }),
+  isActive: z.boolean().default(true),
+  isHidden: z.boolean().default(false),
+  requiresApproval: z.boolean().default(false),
+  legalReference: z.string().max(500).optional(),
+  hsn_sac_code: z.string().max(50).optional(),
+  gstType: z.enum(["cgst", "sgst", "igst", "ugst", "cess"]).optional(),
+});
+
+export const taxUpdateSchema = taxCreateSchema.partial();
+
+// Tax calculation schemas
+export const taxCalculationRequestSchema = z.object({
+  orderValue: z.number().min(0),
+  serviceCategories: z.array(z.string()).default([]),
+  partCategories: z.array(z.string()).default([]),
+  userLocation: z.object({
+    state: z.string().optional(),
+    city: z.string().optional(),
+  }).optional(),
+  userRole: z.string().optional(),
+  promoCode: z.string().optional(),
+  orderType: z.string().optional(),
+});
+
+// Bulk operations schemas
+export const taxBulkOperationSchema = z.object({
+  operation: z.enum(["activate", "deactivate", "delete", "update_priority"]),
+  taxIds: z.array(z.string().uuid()).min(1),
+  data: z.object({
+    isActive: z.boolean().optional(),
+    priority: z.number().int().min(0).optional(),
+  }).optional(),
+});
+
+export const taxStatisticsFiltersSchema = z.object({
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
+  categoryIds: z.array(z.string().uuid()).optional(),
+  stateFilter: z.string().optional(),
+  typeFilter: z.enum(["percentage", "fixed", "tiered"]).optional(),
+});
+
 // Type exports for new tables
 export type UserReferral = typeof userReferrals.$inferSelect;
 export type InsertUserReferral = z.infer<typeof insertUserReferralSchema>;
@@ -2188,6 +2455,12 @@ export type InsertDataExportRequest = z.infer<typeof insertDataExportRequestSche
 export type AccountDeletionRequest = typeof accountDeletionRequests.$inferSelect;
 export type InsertAccountDeletionRequest = z.infer<typeof insertAccountDeletionRequestSchema>;
 
+// Tax management type exports
+export type TaxCategory = typeof taxCategories.$inferSelect;
+export type InsertTaxCategory = z.infer<typeof insertTaxCategorySchema>;
+export type Tax = typeof taxes.$inferSelect;
+export type InsertTax = z.infer<typeof insertTaxSchema>;
+
 // API operation types
 export type ReferralCodeGenerateData = z.infer<typeof referralCodeGenerateSchema>;
 export type ReferralRecordCreateData = z.infer<typeof referralRecordCreateSchema>;
@@ -2195,6 +2468,15 @@ export type ReferralRecordUpdateData = z.infer<typeof referralRecordUpdateSchema
 export type UserAgreementUpdateData = z.infer<typeof userAgreementUpdateSchema>;
 export type DataExportRequestCreateData = z.infer<typeof dataExportRequestCreateSchema>;
 export type AccountDeletionRequestCreateData = z.infer<typeof accountDeletionRequestCreateSchema>;
+
+// Tax management API operation types
+export type TaxCategoryCreateData = z.infer<typeof taxCategoryCreateSchema>;
+export type TaxCategoryUpdateData = z.infer<typeof taxCategoryUpdateSchema>;
+export type TaxCreateData = z.infer<typeof taxCreateSchema>;
+export type TaxUpdateData = z.infer<typeof taxUpdateSchema>;
+export type TaxCalculationRequestData = z.infer<typeof taxCalculationRequestSchema>;
+export type TaxBulkOperationData = z.infer<typeof taxBulkOperationSchema>;
+export type TaxStatisticsFiltersData = z.infer<typeof taxStatisticsFiltersSchema>;
 
 // API operation types for Service Provider Profiles
 export type ServiceProviderProfileUpdateData = z.infer<typeof serviceProviderProfileUpdateSchema>;

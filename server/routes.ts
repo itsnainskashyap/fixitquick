@@ -46,7 +46,12 @@ import {
   supportAgentUpdateSchema,
   supportTicketRatingSchema,
   insertCouponSchema,
-  insertCouponUsageSchema
+  insertCouponUsageSchema,
+  // Tax management schemas
+  insertTaxCategorySchema,
+  insertTaxSchema,
+  taxes,
+  taxCategories
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -11180,6 +11185,851 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch coupons',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // TAX MANAGEMENT SYSTEM
+  // ============================
+
+  // Tax validation schemas
+  const taxCalculationContextSchema = z.object({
+    orderValue: z.number().min(0),
+    serviceCategories: z.array(z.string()).optional(),
+    partCategories: z.array(z.string()).optional(),
+    userLocation: z.object({
+      state: z.string().optional(),
+      city: z.string().optional()
+    }).optional(),
+    userRole: z.string().optional(),
+    promoCode: z.string().optional(),
+    orderType: z.string().optional(),
+    shippingAmount: z.number().min(0).optional()
+  });
+
+  const taxBulkOperationSchema = z.object({
+    taxIds: z.array(z.string()),
+    operation: z.enum(['activate', 'deactivate', 'update_priority', 'delete']),
+    data: z.object({
+      isActive: z.boolean().optional(),
+      priority: z.number().optional()
+    }).optional()
+  });
+
+  // Rate limiter for tax operations
+  const taxCalculationLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 100, // 100 calculations per minute per IP
+    message: 'Too many tax calculation requests. Please wait before calculating again.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // ============================
+  // ADMIN TAX CATEGORY ENDPOINTS
+  // ============================
+
+  // GET /api/v1/admin/tax-categories - List all tax categories
+  app.get('/api/v1/admin/tax-categories', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { isActive, search } = req.query;
+
+      const filters: any = {};
+      if (isActive !== undefined) filters.isActive = isActive === 'true';
+      if (search) filters.search = search as string;
+
+      const categories = await storage.getTaxCategories(filters);
+
+      res.json({
+        success: true,
+        categories: categories,
+        total: categories.length
+      });
+    } catch (error) {
+      console.error('Error fetching tax categories:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax categories',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/tax-categories/:id - Get specific tax category
+  app.get('/api/v1/admin/tax-categories/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const category = await storage.getTaxCategory(id);
+
+      if (!category) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tax category not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        category: category
+      });
+    } catch (error) {
+      console.error('Error fetching tax category:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax category',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/tax-categories - Create new tax category
+  app.post('/api/v1/admin/tax-categories', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const validatedData = insertTaxCategorySchema.parse(req.body);
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Admin authentication required',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const categoryData = {
+        ...validatedData,
+        createdBy: adminId,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const category = await storage.createTaxCategory(categoryData);
+
+      res.status(201).json({
+        success: true,
+        message: 'Tax category created successfully',
+        category: category
+      });
+    } catch (error) {
+      console.error('Error creating tax category:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid tax category data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create tax category',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/tax-categories/:id - Update tax category
+  app.put('/api/v1/admin/tax-categories/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const validatedData = insertTaxCategorySchema.partial().parse(req.body);
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Admin authentication required',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      const updateData = {
+        ...validatedData,
+        lastModifiedBy: adminId,
+        updatedAt: new Date()
+      };
+
+      const category = await storage.updateTaxCategory(id, updateData);
+
+      if (!category) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tax category not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Tax category updated successfully',
+        category: category
+      });
+    } catch (error) {
+      console.error('Error updating tax category:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid tax category data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update tax category',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // DELETE /api/v1/admin/tax-categories/:id - Delete tax category
+  app.delete('/api/v1/admin/tax-categories/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const result = await storage.deleteTaxCategory(id);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: 'DELETE_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error('Error deleting tax category:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete tax category',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/tax-categories/reorder - Reorder tax categories
+  app.post('/api/v1/admin/tax-categories/reorder', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { categoryIds, startOrder = 0 } = req.body;
+
+      if (!Array.isArray(categoryIds)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Category IDs must be an array',
+          error: 'INVALID_INPUT'
+        });
+      }
+
+      await storage.reorderTaxCategories(categoryIds, startOrder);
+
+      res.json({
+        success: true,
+        message: 'Tax categories reordered successfully'
+      });
+    } catch (error) {
+      console.error('Error reordering tax categories:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to reorder tax categories',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/tax-categories/statistics - Get tax category statistics
+  app.get('/api/v1/admin/tax-categories/statistics', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const statistics = await storage.getTaxCategoryStatistics();
+
+      res.json({
+        success: true,
+        statistics: statistics
+      });
+    } catch (error) {
+      console.error('Error fetching tax category statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax category statistics',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // ADMIN TAX MANAGEMENT ENDPOINTS
+  // ============================
+
+  // GET /api/v1/admin/taxes - List all taxes with comprehensive filtering
+  app.get('/api/v1/admin/taxes', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        isActive,
+        categoryId,
+        type,
+        locationBased,
+        search,
+        isPrimary,
+        gstType,
+        limit = '50',
+        offset = '0'
+      } = req.query;
+
+      const filters: any = {};
+      if (isActive !== undefined) filters.isActive = isActive === 'true';
+      if (categoryId) filters.categoryId = categoryId as string;
+      if (type) filters.type = type as string;
+      if (locationBased !== undefined) filters.locationBased = locationBased === 'true';
+      if (search) filters.search = search as string;
+      if (isPrimary !== undefined) filters.isPrimary = isPrimary === 'true';
+      if (gstType) filters.gstType = gstType as string;
+      filters.limit = Math.min(parseInt(limit as string) || 50, 100);
+      filters.offset = parseInt(offset as string) || 0;
+
+      const result = await storage.getTaxes(filters);
+
+      res.json({
+        success: true,
+        taxes: result.taxes,
+        total: result.total,
+        limit: filters.limit,
+        offset: filters.offset
+      });
+    } catch (error) {
+      console.error('Error fetching taxes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch taxes',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/taxes/:id - Get specific tax details
+  app.get('/api/v1/admin/taxes/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const tax = await storage.getTax(id);
+
+      if (!tax) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tax not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        tax: tax
+      });
+    } catch (error) {
+      console.error('Error fetching tax:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/taxes - Create new tax
+  app.post('/api/v1/admin/taxes', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const validatedData = insertTaxSchema.parse(req.body);
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Admin authentication required',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Validate tax configuration
+      const validation = await storage.validateTaxConfiguration(validatedData);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tax configuration validation failed',
+          errors: validation.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+
+      const taxData = {
+        ...validatedData,
+        createdBy: adminId,
+        lastModifiedBy: adminId,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const tax = await storage.createTax(taxData);
+
+      res.status(201).json({
+        success: true,
+        message: 'Tax created successfully',
+        tax: tax
+      });
+    } catch (error) {
+      console.error('Error creating tax:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid tax data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create tax',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/taxes/:id - Update tax
+  app.put('/api/v1/admin/taxes/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const validatedData = insertTaxSchema.partial().parse(req.body);
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Admin authentication required',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Validate tax configuration if critical fields are being updated
+      if (validatedData.rate !== undefined || validatedData.type !== undefined) {
+        const validation = await storage.validateTaxConfiguration({...validatedData, id});
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: 'Tax configuration validation failed',
+            errors: validation.errors,
+            error: 'VALIDATION_ERROR'
+          });
+        }
+      }
+
+      const updateData = {
+        ...validatedData,
+        lastModifiedBy: adminId,
+        updatedAt: new Date()
+      };
+
+      const tax = await storage.updateTax(id, updateData);
+
+      if (!tax) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tax not found',
+          error: 'NOT_FOUND'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Tax updated successfully',
+        tax: tax
+      });
+    } catch (error) {
+      console.error('Error updating tax:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid tax data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update tax',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // DELETE /api/v1/admin/taxes/:id - Delete tax (soft delete)
+  app.delete('/api/v1/admin/taxes/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const result = await storage.deleteTax(id);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: 'DELETE_FAILED'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error('Error deleting tax:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete tax',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // TAX BULK OPERATIONS ENDPOINTS
+  // ============================
+
+  // POST /api/v1/admin/taxes/bulk - Bulk operations (activate/deactivate/delete)
+  app.post('/api/v1/admin/taxes/bulk', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const validatedData = taxBulkOperationSchema.parse(req.body);
+      const result = await storage.bulkUpdateTaxes(validatedData);
+
+      res.json({
+        success: result.success,
+        message: `Bulk operation completed. ${result.updated} taxes ${validatedData.operation}d.`,
+        updated: result.updated,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error performing bulk tax operation:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid bulk operation data',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to perform bulk operation',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/taxes/bulk-activate - Bulk activate taxes
+  app.post('/api/v1/admin/taxes/bulk-activate', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { taxIds } = req.body;
+
+      if (!Array.isArray(taxIds)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tax IDs must be an array',
+          error: 'INVALID_INPUT'
+        });
+      }
+
+      const result = await storage.bulkActivateTaxes(taxIds);
+
+      res.json({
+        success: result.success,
+        message: `${result.activated} taxes activated successfully.`,
+        activated: result.activated,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error bulk activating taxes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to activate taxes',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/taxes/bulk-deactivate - Bulk deactivate taxes
+  app.post('/api/v1/admin/taxes/bulk-deactivate', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { taxIds } = req.body;
+
+      if (!Array.isArray(taxIds)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tax IDs must be an array',
+          error: 'INVALID_INPUT'
+        });
+      }
+
+      const result = await storage.bulkDeactivateTaxes(taxIds);
+
+      res.json({
+        success: result.success,
+        message: `${result.deactivated} taxes deactivated successfully.`,
+        deactivated: result.deactivated,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error('Error bulk deactivating taxes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to deactivate taxes',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // TAX ANALYTICS AND STATISTICS ENDPOINTS
+  // ============================
+
+  // GET /api/v1/admin/taxes/statistics - Comprehensive tax statistics and analytics
+  app.get('/api/v1/admin/taxes/statistics', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { dateRange, categoryId } = req.query;
+
+      const filters: any = {};
+      if (dateRange) filters.dateRange = dateRange;
+      if (categoryId) filters.categoryId = categoryId;
+
+      const statistics = await storage.getTaxStatistics(filters);
+
+      res.json({
+        success: true,
+        statistics: statistics
+      });
+    } catch (error) {
+      console.error('Error fetching tax statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax statistics',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/taxes/calculate-preview - Preview tax calculations for testing
+  app.post('/api/v1/admin/taxes/calculate-preview', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { taxIds, orderValue } = req.body;
+
+      if (!Array.isArray(taxIds) || typeof orderValue !== 'number') {
+        return res.status(400).json({
+          success: false,
+          message: 'Tax IDs (array) and order value (number) are required',
+          error: 'INVALID_INPUT'
+        });
+      }
+
+      const preview = await storage.previewTaxCalculation(taxIds, orderValue);
+
+      res.json({
+        success: true,
+        preview: preview.preview,
+        totalTax: preview.totalTax,
+        totalAmount: orderValue + preview.totalTax,
+        conflicts: preview.conflicts
+      });
+    } catch (error) {
+      console.error('Error calculating tax preview:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate tax preview',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/taxes/:id/performance - Get tax performance report
+  app.get('/api/v1/admin/taxes/:id/performance', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { dateRange } = req.query;
+
+      const report = await storage.getTaxPerformanceReport(id, { dateRange });
+
+      res.json({
+        success: true,
+        report: report
+      });
+    } catch (error) {
+      console.error('Error fetching tax performance report:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tax performance report',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // ============================
+  // PUBLIC TAX CALCULATION ENDPOINTS
+  // ============================
+
+  // POST /api/v1/taxes/calculate - Calculate taxes for order (public endpoint)
+  app.post('/api/v1/taxes/calculate', taxCalculationLimiter, optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const validatedData = taxCalculationContextSchema.parse(req.body);
+      
+      const calculation = await storage.calculateTaxes(validatedData);
+
+      res.json({
+        success: true,
+        calculation: {
+          taxes: calculation.taxes.map(tax => ({
+            taxId: tax.tax.id,
+            taxName: tax.tax.name,
+            taxCode: tax.tax.code,
+            type: tax.tax.type,
+            appliedRate: tax.appliedRate,
+            taxableAmount: tax.taxableAmount,
+            calculatedAmount: tax.calculatedAmount
+          })),
+          totalTaxAmount: calculation.totalTaxAmount,
+          totalAmount: calculation.totalAmount,
+          breakdown: calculation.breakdown
+        }
+      });
+    } catch (error) {
+      console.error('Error calculating taxes:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid calculation parameters',
+          errors: error.errors,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate taxes',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/taxes/applicable - Get applicable taxes for service/location (public endpoint)
+  app.get('/api/v1/taxes/applicable', taxCalculationLimiter, optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const {
+        serviceCategories,
+        partCategories,
+        orderValue,
+        state,
+        city,
+        userRole,
+        orderType,
+        promoCode
+      } = req.query;
+
+      const context: any = {
+        orderValue: parseFloat(orderValue as string) || 0
+      };
+
+      if (serviceCategories) context.serviceCategories = (serviceCategories as string).split(',');
+      if (partCategories) context.partCategories = (partCategories as string).split(',');
+      if (state || city) context.userLocation = { state: state as string, city: city as string };
+      if (userRole) context.userRole = userRole as string;
+      if (orderType) context.orderType = orderType as string;
+      if (promoCode) context.promoCode = promoCode as string;
+
+      const applicableTaxes = await storage.getApplicableTaxes(context);
+
+      res.json({
+        success: true,
+        applicableTaxes: applicableTaxes.map(tax => ({
+          id: tax.id,
+          name: tax.name,
+          code: tax.code,
+          type: tax.type,
+          rate: tax.rate,
+          displayName: tax.displayName,
+          description: tax.description,
+          isPrimary: tax.isPrimary,
+          priority: tax.priority
+        })),
+        count: applicableTaxes.length
+      });
+    } catch (error) {
+      console.error('Error fetching applicable taxes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch applicable taxes',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/taxes/by-category/:categoryId - Get taxes by category (public endpoint)
+  app.get('/api/v1/taxes/by-category/:categoryId', taxCalculationLimiter, optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { categoryId } = req.params;
+      const { activeOnly = 'true' } = req.query;
+
+      const taxes = await storage.getTaxesByCategory(categoryId, activeOnly === 'true');
+
+      res.json({
+        success: true,
+        taxes: taxes.map(tax => ({
+          id: tax.id,
+          name: tax.name,
+          code: tax.code,
+          type: tax.type,
+          rate: tax.rate,
+          displayName: tax.displayName,
+          minOrderValue: tax.minOrderValue,
+          maxOrderValue: tax.maxOrderValue
+        })),
+        count: taxes.length
+      });
+    } catch (error) {
+      console.error('Error fetching taxes by category:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch taxes by category',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // GET /api/v1/taxes/by-location - Get location-based taxes (public endpoint)
+  app.get('/api/v1/taxes/by-location', taxCalculationLimiter, optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { state, city, activeOnly = 'true' } = req.query;
+
+      const taxes = await storage.getTaxesByLocation(
+        state as string,
+        city as string,
+        activeOnly === 'true'
+      );
+
+      res.json({
+        success: true,
+        taxes: taxes.map(tax => ({
+          id: tax.id,
+          name: tax.name,
+          code: tax.code,
+          type: tax.type,
+          rate: tax.rate,
+          displayName: tax.displayName,
+          stateRestrictions: tax.stateRestrictions,
+          cityRestrictions: tax.cityRestrictions
+        })),
+        count: taxes.length
+      });
+    } catch (error) {
+      console.error('Error fetching taxes by location:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch taxes by location',
         error: 'INTERNAL_ERROR'
       });
     }

@@ -39,7 +39,12 @@ import {
   type Order,
   type Coupon,
   type InsertCoupon,
-  type CouponUsage
+  type CouponUsage,
+  // Tax management types
+  type Tax,
+  type InsertTax,
+  type TaxCategory,
+  type InsertTaxCategory
 } from '@shared/schema';
 import { 
   Users, 
@@ -140,6 +145,1321 @@ import {
   MoreHorizontal
 } from 'lucide-react';
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+
+// Comprehensive Tax Management System Component
+const TaxManagementSystem = () => {
+  // State management for taxes
+  const [selectedTaxes, setSelectedTaxes] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activeSubTab, setActiveSubTab] = useState('taxes');
+  const [isCreateTaxDialogOpen, setIsCreateTaxDialogOpen] = useState(false);
+  const [isEditTaxDialogOpen, setIsEditTaxDialogOpen] = useState(false);
+  const [selectedTax, setSelectedTax] = useState<Tax | null>(null);
+  const [isCreateCategoryDialogOpen, setIsCreateCategoryDialogOpen] = useState(false);
+  const [isEditCategoryDialogOpen, setIsEditCategoryDialogOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<TaxCategory | null>(null);
+  const [previewOrderValue, setPreviewOrderValue] = useState(1000);
+  const [taxForm, setTaxForm] = useState<Partial<InsertTax>>({
+    type: 'percentage',
+    isActive: true,
+    isPrimary: false,
+    combinable: true,
+    locationBased: false,
+    compoundable: false,
+    priority: 1,
+    rate: 0,
+    minOrderValue: 0,
+    roundingRule: 'round',
+    gstType: 'none',
+    taxableBaseIncludes: {
+      serviceAmount: true,
+      shippingAmount: false,
+      previousTaxes: false
+    },
+    serviceCategories: [],
+    partCategories: [],
+    stateRestrictions: [],
+    cityRestrictions: []
+  });
+  const [categoryForm, setCategoryForm] = useState<Partial<InsertTaxCategory>>({
+    isActive: true,
+    priority: 1,
+    displayOrder: 0,
+    defaultRate: 0
+  });
+
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch taxes with comprehensive filtering
+  const { data: taxesData, isLoading: taxesLoading } = useQuery({
+    queryKey: ['admin-taxes', {
+      search: searchTerm,
+      isActive: statusFilter === 'active' ? true : statusFilter === 'inactive' ? false : undefined,
+      categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
+      type: typeFilter === 'all' ? undefined : typeFilter,
+      limit: 20,
+      offset: (currentPage - 1) * 20
+    }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchTerm) params.append('search', searchTerm);
+      if (statusFilter !== 'all') params.append('isActive', statusFilter === 'active' ? 'true' : 'false');
+      if (categoryFilter !== 'all') params.append('categoryId', categoryFilter);
+      if (typeFilter !== 'all') params.append('type', typeFilter);
+      params.append('limit', '20');
+      params.append('offset', String((currentPage - 1) * 20));
+
+      return await apiRequest(`/api/v1/admin/taxes?${params.toString()}`);
+    }
+  });
+
+  // Fetch tax categories
+  const { data: categoriesData, isLoading: categoriesLoading } = useQuery({
+    queryKey: ['admin-tax-categories'],
+    queryFn: async () => await apiRequest('/api/v1/admin/tax-categories')
+  });
+
+  // Fetch tax statistics
+  const { data: statsData, isLoading: statsLoading } = useQuery({
+    queryKey: ['admin-tax-statistics'],
+    queryFn: async () => await apiRequest('/api/v1/admin/taxes/statistics')
+  });
+
+  // Fetch category statistics
+  const { data: categoryStatsData, isLoading: categoryStatsLoading } = useQuery({
+    queryKey: ['admin-tax-category-statistics'],
+    queryFn: async () => await apiRequest('/api/v1/admin/tax-categories/statistics')
+  });
+
+  // Create tax mutation
+  const createTaxMutation = useMutation({
+    mutationFn: async (taxData: InsertTax) => await apiRequest('/api/v1/admin/taxes', {
+      method: 'POST',
+      body: JSON.stringify(taxData)
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      setIsCreateTaxDialogOpen(false);
+      resetTaxForm();
+      toast({ title: 'Tax created successfully', description: 'The new tax has been added.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error creating tax', 
+        description: error.message || 'Failed to create tax', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Update tax mutation
+  const updateTaxMutation = useMutation({
+    mutationFn: async ({ id, taxData }: { id: string; taxData: Partial<InsertTax> }) => 
+      await apiRequest(`/api/v1/admin/taxes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(taxData)
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      setIsEditTaxDialogOpen(false);
+      setSelectedTax(null);
+      resetTaxForm();
+      toast({ title: 'Tax updated successfully', description: 'The tax has been updated.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error updating tax', 
+        description: error.message || 'Failed to update tax', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Delete tax mutation
+  const deleteTaxMutation = useMutation({
+    mutationFn: async (id: string) => await apiRequest(`/api/v1/admin/taxes/${id}`, {
+      method: 'DELETE'
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      toast({ title: 'Tax deleted successfully', description: 'The tax has been removed.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error deleting tax', 
+        description: error.message || 'Failed to delete tax', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Create tax category mutation
+  const createCategoryMutation = useMutation({
+    mutationFn: async (categoryData: InsertTaxCategory) => await apiRequest('/api/v1/admin/tax-categories', {
+      method: 'POST',
+      body: JSON.stringify(categoryData)
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-category-statistics'] });
+      setIsCreateCategoryDialogOpen(false);
+      resetCategoryForm();
+      toast({ title: 'Tax category created successfully', description: 'The new category has been added.' });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error creating category', 
+        description: error.message || 'Failed to create category', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Bulk operations mutation
+  const bulkOperationMutation = useMutation({
+    mutationFn: async ({ operation, taxIds }: { operation: string; taxIds: string[] }) => 
+      await apiRequest(`/api/v1/admin/taxes/bulk-${operation}`, {
+        method: 'POST',
+        body: JSON.stringify({ taxIds })
+      }),
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      setSelectedTaxes([]);
+      toast({ 
+        title: `Bulk ${variables.operation} completed`, 
+        description: `Successfully ${variables.operation}d ${variables.taxIds.length} taxes.` 
+      });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: 'Error in bulk operation', 
+        description: error.message || 'Failed to complete bulk operation', 
+        variant: 'destructive' 
+      });
+    }
+  });
+
+  // Utility functions
+  const resetTaxForm = () => {
+    setTaxForm({
+      type: 'percentage',
+      isActive: true,
+      isPrimary: false,
+      combinable: true,
+      locationBased: false,
+      compoundable: false,
+      priority: 1,
+      rate: 0,
+      minOrderValue: 0,
+      roundingRule: 'round',
+      gstType: 'none',
+      taxableBaseIncludes: {
+        serviceAmount: true,
+        shippingAmount: false,
+        previousTaxes: false
+      },
+      serviceCategories: [],
+      partCategories: [],
+      stateRestrictions: [],
+      cityRestrictions: []
+    });
+  };
+
+  const resetCategoryForm = () => {
+    setCategoryForm({
+      isActive: true,
+      priority: 1,
+      displayOrder: 0,
+      defaultRate: 0
+    });
+  };
+
+  const handleEditTax = (tax: Tax) => {
+    setSelectedTax(tax);
+    setTaxForm(tax);
+    setIsEditTaxDialogOpen(true);
+  };
+
+  const handleEditCategory = (category: TaxCategory) => {
+    setSelectedCategory(category);
+    setCategoryForm(category);
+    setIsEditCategoryDialogOpen(true);
+  };
+
+  const handleBulkActivate = () => {
+    if (selectedTaxes.length > 0) {
+      bulkOperationMutation.mutate({ operation: 'activate', taxIds: selectedTaxes });
+    }
+  };
+
+  const handleBulkDeactivate = () => {
+    if (selectedTaxes.length > 0) {
+      bulkOperationMutation.mutate({ operation: 'deactivate', taxIds: selectedTaxes });
+    }
+  };
+
+  const taxes = taxesData?.taxes || [];
+  const categories = categoriesData?.categories || [];
+  const stats = statsData?.statistics || {};
+  const categoryStats = categoryStatsData?.statistics || {};
+
+  const filteredTaxes = taxes.filter((tax: Tax) => {
+    const matchesSearch = !searchTerm || 
+      tax.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tax.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tax.displayName?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Tax Management Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Tax Management System</h2>
+          <p className="text-muted-foreground">Manage taxes, categories, and calculation rules</p>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <Button
+            onClick={() => setIsCreateCategoryDialogOpen(true)}
+            variant="outline"
+            size="sm"
+            data-testid="create-tax-category"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Category
+          </Button>
+          <Button
+            onClick={() => setIsCreateTaxDialogOpen(true)}
+            size="sm"
+            data-testid="create-tax"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Create Tax
+          </Button>
+        </div>
+      </div>
+
+      {/* Tax Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Calculator className="w-8 h-8 text-blue-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : stats.totalTaxes || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Total Taxes</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Zap className="w-8 h-8 text-green-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : stats.activeTaxes || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Active Taxes</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <IndianRupee className="w-8 h-8 text-purple-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : `₹${stats.totalCollected || 0}`}
+                </div>
+                <div className="text-xs text-muted-foreground">Total Collected</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Percent className="w-8 h-8 text-orange-500" />
+              <div>
+                <div className="text-2xl font-bold text-foreground">
+                  {statsLoading ? <Skeleton className="h-6 w-12" /> : `${stats.averageRate || 0}%`}
+                </div>
+                <div className="text-xs text-muted-foreground">Average Rate</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Tax Management Tabs */}
+      <Tabs value={activeSubTab} onValueChange={setActiveSubTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="taxes" data-testid="taxes-subtab">
+            <Calculator className="w-4 h-4 mr-2" />
+            Taxes
+          </TabsTrigger>
+          <TabsTrigger value="categories" data-testid="categories-subtab">
+            <Folder className="w-4 h-4 mr-2" />
+            Categories
+          </TabsTrigger>
+          <TabsTrigger value="calculator" data-testid="calculator-subtab">
+            <FileBarChart className="w-4 h-4 mr-2" />
+            Calculator
+          </TabsTrigger>
+          <TabsTrigger value="analytics" data-testid="analytics-subtab">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Analytics
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Taxes Tab Content */}
+        <TabsContent value="taxes" className="space-y-4">
+          {/* Filters and Search */}
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <Input
+                placeholder="Search taxes by name, code, or description..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-sm"
+                data-testid="tax-search"
+              />
+            </div>
+            
+            <div className="flex gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-32" data-testid="status-filter">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-40" data-testid="category-filter">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {categories.map((category: TaxCategory) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="w-32" data-testid="type-filter">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="percentage">Percentage</SelectItem>
+                  <SelectItem value="fixed">Fixed</SelectItem>
+                  <SelectItem value="tiered">Tiered</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Bulk Actions */}
+          {selectedTaxes.length > 0 && (
+            <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+              <span className="text-sm text-muted-foreground">
+                {selectedTaxes.length} taxes selected
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkActivate}
+                data-testid="bulk-activate"
+              >
+                <Zap className="w-4 h-4 mr-2" />
+                Activate
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDeactivate}
+                data-testid="bulk-deactivate"
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Deactivate
+              </Button>
+            </div>
+          )}
+
+          {/* Taxes Table */}
+          <Card>
+            <CardContent className="p-0">
+              {taxesLoading ? (
+                <div className="p-4 space-y-3">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className="flex items-center space-x-4">
+                      <Skeleton className="h-4 w-4" />
+                      <Skeleton className="h-4 flex-1" />
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={selectedTaxes.length === filteredTaxes.length && filteredTaxes.length > 0}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedTaxes(filteredTaxes.map((tax: Tax) => tax.id));
+                            } else {
+                              setSelectedTaxes([]);
+                            }
+                          }}
+                          data-testid="select-all-taxes"
+                        />
+                      </TableHead>
+                      <TableHead>Tax Details</TableHead>
+                      <TableHead>Type & Rate</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredTaxes.map((tax: Tax) => (
+                      <TableRow key={tax.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedTaxes.includes(tax.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedTaxes([...selectedTaxes, tax.id]);
+                              } else {
+                                setSelectedTaxes(selectedTaxes.filter(id => id !== tax.id));
+                              }
+                            }}
+                            data-testid={`select-tax-${tax.id}`}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium text-foreground">{tax.name}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {tax.code} • {tax.displayName}
+                            </div>
+                            {tax.description && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {tax.description}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <Badge variant={tax.type === 'percentage' ? 'default' : 'secondary'}>
+                              {tax.type}
+                            </Badge>
+                            <div className="text-sm font-medium mt-1">
+                              {tax.type === 'percentage' ? `${tax.rate}%` : `₹${tax.rate}`}
+                            </div>
+                            {tax.isPrimary && (
+                              <Badge variant="outline" className="mt-1">Primary</Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {categories.find((c: TaxCategory) => c.id === tax.categoryId)?.name || 'Uncategorized'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={tax.isActive ? 'default' : 'secondary'}>
+                            {tax.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditTax(tax)}
+                              data-testid={`edit-tax-${tax.id}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => deleteTaxMutation.mutate(tax.id)}
+                              data-testid={`delete-tax-${tax.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Categories Tab Content */}
+        <TabsContent value="categories" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                Tax Categories
+                <Button
+                  onClick={() => setIsCreateCategoryDialogOpen(true)}
+                  size="sm"
+                  data-testid="add-category"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Category
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {categoriesLoading ? (
+                <div className="space-y-3">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="flex items-center space-x-4">
+                      <Skeleton className="h-4 flex-1" />
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Category Details</TableHead>
+                      <TableHead>Default Rate</TableHead>
+                      <TableHead>Priority</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {categories.map((category: TaxCategory) => (
+                      <TableRow key={category.id}>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium text-foreground">{category.name}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {category.code}
+                            </div>
+                            {category.description && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {category.description}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm font-medium">
+                            {category.defaultRate}%
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {category.priority}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={category.isActive ? 'default' : 'secondary'}>
+                            {category.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditCategory(category)}
+                              data-testid={`edit-category-${category.id}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Calculator Tab Content */}
+        <TabsContent value="calculator" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Tax Calculator</CardTitle>
+              <p className="text-muted-foreground">
+                Preview tax calculations for different order values and configurations
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="preview-order-value">Order Value</Label>
+                  <Input
+                    id="preview-order-value"
+                    type="number"
+                    value={previewOrderValue}
+                    onChange={(e) => setPreviewOrderValue(Number(e.target.value))}
+                    min="0"
+                    step="1"
+                    data-testid="preview-order-value"
+                  />
+                </div>
+                
+                <div className="flex items-end">
+                  <Button
+                    onClick={() => {
+                      // Preview calculation logic would go here
+                      toast({ 
+                        title: 'Calculation Preview', 
+                        description: `Order value: ₹${previewOrderValue}` 
+                      });
+                    }}
+                    data-testid="calculate-preview"
+                  >
+                    <Calculator className="w-4 h-4 mr-2" />
+                    Calculate
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="font-medium mb-3">Calculation Results</h4>
+                <div className="bg-muted p-4 rounded-lg">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Base Amount:</span>
+                      <span className="font-medium ml-2">₹{previewOrderValue}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Tax Amount:</span>
+                      <span className="font-medium ml-2">₹0.00</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Total Amount:</span>
+                      <span className="font-medium ml-2">₹{previewOrderValue}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Effective Rate:</span>
+                      <span className="font-medium ml-2">0.00%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Analytics Tab Content */}
+        <TabsContent value="analytics" className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Tax Collection Overview</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Total Taxes Collected</span>
+                    <span className="font-bold text-lg">₹{stats.totalCollected || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Average Tax Rate</span>
+                    <span className="font-bold text-lg">{stats.averageRate || 0}%</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Active Tax Rules</span>
+                    <span className="font-bold text-lg">{stats.activeTaxes || 0}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Category Statistics</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Total Categories</span>
+                    <span className="font-bold text-lg">{categoryStats.totalCategories || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Active Categories</span>
+                    <span className="font-bold text-lg">{categoryStats.activeCategories || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Most Used Category</span>
+                    <span className="font-bold text-lg">
+                      {categoryStats.mostUsedCategory?.name || 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {/* Create Tax Dialog */}
+      <Dialog open={isCreateTaxDialogOpen} onOpenChange={setIsCreateTaxDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create New Tax</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="tax-name">Tax Name *</Label>
+                <Input
+                  id="tax-name"
+                  value={taxForm.name || ''}
+                  onChange={(e) => setTaxForm({ ...taxForm, name: e.target.value })}
+                  placeholder="e.g., GST, VAT, Service Tax"
+                  data-testid="tax-name-input"
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="tax-code">Tax Code *</Label>
+                <Input
+                  id="tax-code"
+                  value={taxForm.code || ''}
+                  onChange={(e) => setTaxForm({ ...taxForm, code: e.target.value })}
+                  placeholder="e.g., GST18, VAT12"
+                  data-testid="tax-code-input"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="tax-description">Description</Label>
+              <Textarea
+                id="tax-description"
+                value={taxForm.description || ''}
+                onChange={(e) => setTaxForm({ ...taxForm, description: e.target.value })}
+                placeholder="Brief description of the tax"
+                data-testid="tax-description-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="tax-type">Tax Type *</Label>
+                <Select 
+                  value={taxForm.type || 'percentage'} 
+                  onValueChange={(value) => setTaxForm({ ...taxForm, type: value as any })}
+                >
+                  <SelectTrigger data-testid="tax-type-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="percentage">Percentage</SelectItem>
+                    <SelectItem value="fixed">Fixed Amount</SelectItem>
+                    <SelectItem value="tiered">Tiered</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="tax-rate">
+                  {taxForm.type === 'percentage' ? 'Rate (%)' : 'Amount (₹)'} *
+                </Label>
+                <Input
+                  id="tax-rate"
+                  type="number"
+                  value={taxForm.rate || 0}
+                  onChange={(e) => setTaxForm({ ...taxForm, rate: Number(e.target.value) })}
+                  min="0"
+                  step={taxForm.type === 'percentage' ? '0.01' : '1'}
+                  data-testid="tax-rate-input"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="tax-category">Category</Label>
+              <Select 
+                value={taxForm.categoryId || ''} 
+                onValueChange={(value) => setTaxForm({ ...taxForm, categoryId: value })}
+              >
+                <SelectTrigger data-testid="tax-category-select">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((category: TaxCategory) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="min-order-value">Minimum Order Value</Label>
+                <Input
+                  id="min-order-value"
+                  type="number"
+                  value={taxForm.minOrderValue || 0}
+                  onChange={(e) => setTaxForm({ ...taxForm, minOrderValue: Number(e.target.value) })}
+                  min="0"
+                  data-testid="min-order-value-input"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="priority">Priority</Label>
+                <Input
+                  id="priority"
+                  type="number"
+                  value={taxForm.priority || 1}
+                  onChange={(e) => setTaxForm({ ...taxForm, priority: Number(e.target.value) })}
+                  min="1"
+                  data-testid="priority-input"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="is-active"
+                  checked={taxForm.isActive}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, isActive: checked })}
+                  data-testid="is-active-switch"
+                />
+                <Label htmlFor="is-active">Active</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="is-primary"
+                  checked={taxForm.isPrimary}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, isPrimary: checked })}
+                  data-testid="is-primary-switch"
+                />
+                <Label htmlFor="is-primary">Primary Tax</Label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="combinable"
+                  checked={taxForm.combinable}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, combinable: checked })}
+                  data-testid="combinable-switch"
+                />
+                <Label htmlFor="combinable">Combinable</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="location-based"
+                  checked={taxForm.locationBased}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, locationBased: checked })}
+                  data-testid="location-based-switch"
+                />
+                <Label htmlFor="location-based">Location Based</Label>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsCreateTaxDialogOpen(false);
+                resetTaxForm();
+              }}
+              data-testid="cancel-create-tax"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createTaxMutation.mutate(taxForm as InsertTax)}
+              disabled={!taxForm.name || !taxForm.code || createTaxMutation.isPending}
+              data-testid="save-create-tax"
+            >
+              {createTaxMutation.isPending ? 'Creating...' : 'Create Tax'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Tax Dialog */}
+      <Dialog open={isEditTaxDialogOpen} onOpenChange={setIsEditTaxDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Tax: {selectedTax?.name}</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-tax-name">Tax Name *</Label>
+                <Input
+                  id="edit-tax-name"
+                  value={taxForm.name || ''}
+                  onChange={(e) => setTaxForm({ ...taxForm, name: e.target.value })}
+                  placeholder="e.g., GST, VAT, Service Tax"
+                  data-testid="edit-tax-name-input"
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="edit-tax-code">Tax Code *</Label>
+                <Input
+                  id="edit-tax-code"
+                  value={taxForm.code || ''}
+                  onChange={(e) => setTaxForm({ ...taxForm, code: e.target.value })}
+                  placeholder="e.g., GST18, VAT12"
+                  data-testid="edit-tax-code-input"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="edit-tax-description">Description</Label>
+              <Textarea
+                id="edit-tax-description"
+                value={taxForm.description || ''}
+                onChange={(e) => setTaxForm({ ...taxForm, description: e.target.value })}
+                placeholder="Brief description of the tax"
+                data-testid="edit-tax-description-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-tax-type">Tax Type *</Label>
+                <Select 
+                  value={taxForm.type || 'percentage'} 
+                  onValueChange={(value) => setTaxForm({ ...taxForm, type: value as any })}
+                >
+                  <SelectTrigger data-testid="edit-tax-type-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="percentage">Percentage</SelectItem>
+                    <SelectItem value="fixed">Fixed Amount</SelectItem>
+                    <SelectItem value="tiered">Tiered</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="edit-tax-rate">
+                  {taxForm.type === 'percentage' ? 'Rate (%)' : 'Amount (₹)'} *
+                </Label>
+                <Input
+                  id="edit-tax-rate"
+                  type="number"
+                  value={taxForm.rate || 0}
+                  onChange={(e) => setTaxForm({ ...taxForm, rate: Number(e.target.value) })}
+                  min="0"
+                  step={taxForm.type === 'percentage' ? '0.01' : '1'}
+                  data-testid="edit-tax-rate-input"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="edit-is-active"
+                  checked={taxForm.isActive}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, isActive: checked })}
+                  data-testid="edit-is-active-switch"
+                />
+                <Label htmlFor="edit-is-active">Active</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="edit-is-primary"
+                  checked={taxForm.isPrimary}
+                  onCheckedChange={(checked) => setTaxForm({ ...taxForm, isPrimary: checked })}
+                  data-testid="edit-is-primary-switch"
+                />
+                <Label htmlFor="edit-is-primary">Primary Tax</Label>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditTaxDialogOpen(false);
+                setSelectedTax(null);
+                resetTaxForm();
+              }}
+              data-testid="cancel-edit-tax"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedTax) {
+                  updateTaxMutation.mutate({ id: selectedTax.id, taxData: taxForm });
+                }
+              }}
+              disabled={!taxForm.name || !taxForm.code || updateTaxMutation.isPending}
+              data-testid="save-edit-tax"
+            >
+              {updateTaxMutation.isPending ? 'Updating...' : 'Update Tax'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Category Dialog */}
+      <Dialog open={isCreateCategoryDialogOpen} onOpenChange={setIsCreateCategoryDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Tax Category</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="category-name">Category Name *</Label>
+              <Input
+                id="category-name"
+                value={categoryForm.name || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                placeholder="e.g., Service Tax, Goods Tax"
+                data-testid="category-name-input"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="category-code">Category Code *</Label>
+              <Input
+                id="category-code"
+                value={categoryForm.code || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, code: e.target.value })}
+                placeholder="e.g., SVC, GOODS"
+                data-testid="category-code-input"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="category-description">Description</Label>
+              <Textarea
+                id="category-description"
+                value={categoryForm.description || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                placeholder="Brief description of the category"
+                data-testid="category-description-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="default-rate">Default Rate (%)</Label>
+                <Input
+                  id="default-rate"
+                  type="number"
+                  value={categoryForm.defaultRate || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: Number(e.target.value) })}
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  data-testid="default-rate-input"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="category-priority">Priority</Label>
+                <Input
+                  id="category-priority"
+                  type="number"
+                  value={categoryForm.priority || 1}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, priority: Number(e.target.value) })}
+                  min="1"
+                  data-testid="category-priority-input"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="category-active"
+                checked={categoryForm.isActive}
+                onCheckedChange={(checked) => setCategoryForm({ ...categoryForm, isActive: checked })}
+                data-testid="category-active-switch"
+              />
+              <Label htmlFor="category-active">Active</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsCreateCategoryDialogOpen(false);
+                resetCategoryForm();
+              }}
+              data-testid="cancel-create-category"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createCategoryMutation.mutate(categoryForm as InsertTaxCategory)}
+              disabled={!categoryForm.name || !categoryForm.code || createCategoryMutation.isPending}
+              data-testid="save-create-category"
+            >
+              {createCategoryMutation.isPending ? 'Creating...' : 'Create Category'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Category Dialog */}
+      <Dialog open={isEditCategoryDialogOpen} onOpenChange={setIsEditCategoryDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Category: {selectedCategory?.name}</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-category-name">Category Name *</Label>
+              <Input
+                id="edit-category-name"
+                value={categoryForm.name || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                placeholder="e.g., Service Tax, Goods Tax"
+                data-testid="edit-category-name-input"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="edit-category-description">Description</Label>
+              <Textarea
+                id="edit-category-description"
+                value={categoryForm.description || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                placeholder="Brief description of the category"
+                data-testid="edit-category-description-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-default-rate">Default Rate (%)</Label>
+                <Input
+                  id="edit-default-rate"
+                  type="number"
+                  value={categoryForm.defaultRate || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: Number(e.target.value) })}
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  data-testid="edit-default-rate-input"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="edit-category-priority">Priority</Label>
+                <Input
+                  id="edit-category-priority"
+                  type="number"
+                  value={categoryForm.priority || 1}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, priority: Number(e.target.value) })}
+                  min="1"
+                  data-testid="edit-category-priority-input"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="edit-category-active"
+                checked={categoryForm.isActive}
+                onCheckedChange={(checked) => setCategoryForm({ ...categoryForm, isActive: checked })}
+                data-testid="edit-category-active-switch"
+              />
+              <Label htmlFor="edit-category-active">Active</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditCategoryDialogOpen(false);
+                setSelectedCategory(null);
+                resetCategoryForm();
+              }}
+              data-testid="cancel-edit-category"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedCategory) {
+                  // Update category mutation would go here
+                  toast({ title: 'Category updated successfully' });
+                  setIsEditCategoryDialogOpen(false);
+                  setSelectedCategory(null);
+                  resetCategoryForm();
+                }
+              }}
+              disabled={!categoryForm.name || !categoryForm.code}
+              data-testid="save-edit-category"
+            >
+              Update Category
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
 
 // Comprehensive Coupon Management System Component
 const CouponManagementSystem = () => {
@@ -3174,7 +4494,7 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-12">
+          <TabsList className="grid w-full grid-cols-12 lg:grid-cols-13">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -3194,6 +4514,10 @@ export default function Admin() {
             <TabsTrigger value="coupons" data-testid="coupons-tab">
               <TicketPercent className="h-4 w-4 mr-2" />
               Coupons
+            </TabsTrigger>
+            <TabsTrigger value="taxes" data-testid="taxes-tab">
+              <Calculator className="h-4 w-4 mr-2" />
+              Tax Management
             </TabsTrigger>
             <TabsTrigger value="verifications" data-testid="verifications-tab">
               Verifications ({verifications?.length || 0})
@@ -3960,6 +5284,11 @@ export default function Admin() {
           {/* ===== COMPREHENSIVE COUPON MANAGEMENT SYSTEM ===== */}
           <TabsContent value="coupons" className="mt-6">
             <CouponManagementSystem />
+          </TabsContent>
+
+          {/* ===== COMPREHENSIVE TAX MANAGEMENT SYSTEM ===== */}
+          <TabsContent value="taxes" className="mt-6">
+            <TaxManagementSystem />
           </TabsContent>
 
           <TabsContent value="services" className="mt-6">

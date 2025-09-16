@@ -93,6 +93,15 @@ import {
   type UserAgreementUpdateData,
   type DataExportRequestCreateData,
   type AccountDeletionRequestCreateData,
+  // Tax management imports
+  type TaxCategory,
+  type InsertTaxCategory,
+  type Tax,
+  type InsertTax,
+  taxCategories,
+  taxes,
+  insertTaxCategorySchema,
+  insertTaxSchema,
   serviceBookings,
   providerJobRequests,
   users,
@@ -541,6 +550,197 @@ export interface IStorage {
   // Settings methods
   getSetting(key: string): Promise<unknown>;
   setSetting(key: string, value: unknown, description?: string): Promise<void>;
+
+  // Tax Category methods
+  getTaxCategories(filters?: { isActive?: boolean; search?: string }): Promise<TaxCategory[]>;
+  getTaxCategory(id: string): Promise<TaxCategory | undefined>;
+  createTaxCategory(category: InsertTaxCategory): Promise<TaxCategory>;
+  updateTaxCategory(id: string, data: Partial<InsertTaxCategory>): Promise<TaxCategory | undefined>;
+  deleteTaxCategory(id: string): Promise<{ success: boolean; message: string }>;
+  getTaxCategoriesByPriority(activeOnly?: boolean): Promise<TaxCategory[]>;
+  reorderTaxCategories(categoryIds: string[], startOrder?: number): Promise<void>;
+  getTaxCategoryStatistics(): Promise<{
+    totalCategories: number;
+    activeCategories: number;
+    averageRate: number;
+    mostUsedCategory: TaxCategory | null;
+  }>;
+
+  // Tax methods - Core CRUD
+  getTaxes(filters?: { 
+    isActive?: boolean; 
+    categoryId?: string; 
+    type?: string; 
+    locationBased?: boolean;
+    search?: string;
+    isPrimary?: boolean;
+    gstType?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ taxes: Tax[]; total: number }>;
+  getTax(id: string): Promise<Tax | undefined>;
+  getTaxByCode(code: string): Promise<Tax | undefined>;
+  createTax(tax: InsertTax): Promise<Tax>;
+  updateTax(id: string, data: Partial<InsertTax>): Promise<Tax | undefined>;
+  deleteTax(id: string): Promise<{ success: boolean; message: string }>;
+
+  // Tax applicability and filtering
+  getApplicableTaxes(context: {
+    serviceCategories?: string[];
+    partCategories?: string[];
+    orderValue: number;
+    userLocation?: { state?: string; city?: string };
+    userRole?: string;
+    orderType?: string;
+    promoCode?: string;
+  }): Promise<Tax[]>;
+  getTaxesByCategory(categoryId: string, activeOnly?: boolean): Promise<Tax[]>;
+  getTaxesByService(serviceId: string, orderValue?: number): Promise<Tax[]>;
+  getTaxesByLocation(state?: string, city?: string, activeOnly?: boolean): Promise<Tax[]>;
+  getTaxesByGSTType(gstType: string, activeOnly?: boolean): Promise<Tax[]>;
+
+  // Tax calculation engine
+  calculateTaxes(params: {
+    orderValue: number;
+    serviceCategories?: string[];
+    partCategories?: string[];
+    userLocation?: { state?: string; city?: string };
+    userRole?: string;
+    promoCode?: string;
+    orderType?: string;
+    shippingAmount?: number;
+  }): Promise<{
+    taxes: Array<{
+      tax: Tax;
+      taxableAmount: number;
+      calculatedAmount: number;
+      appliedRate: number;
+    }>;
+    totalTaxAmount: number;
+    totalAmount: number;
+    breakdown: {
+      baseAmount: number;
+      totalTaxAmount: number;
+      finalAmount: number;
+    };
+  }>;
+  previewTaxCalculation(taxIds: string[], orderValue: number): Promise<{
+    preview: Array<{
+      tax: Tax;
+      calculatedAmount: number;
+      appliedRate: number;
+    }>;
+    totalTax: number;
+    conflicts: string[];
+  }>;
+
+  // Tax validation and business rules
+  validateTaxConfiguration(tax: Partial<InsertTax>): Promise<{ valid: boolean; errors: string[] }>;
+  validateTaxCombination(taxIds: string[]): Promise<{ valid: boolean; conflicts: string[] }>;
+  checkTaxCodeAvailability(code: string, excludeId?: string): Promise<{ available: boolean; suggestions?: string[] }>;
+  validateTaxRules(tax: Tax, orderContext: any): Promise<{ applicable: boolean; reasons: string[] }>;
+
+  // Bulk operations
+  bulkUpdateTaxes(operations: {
+    taxIds: string[];
+    operation: 'activate' | 'deactivate' | 'update_priority' | 'delete';
+    data?: {
+      isActive?: boolean;
+      priority?: number;
+    };
+  }): Promise<{ success: boolean; updated: number; errors: string[] }>;
+  bulkActivateTaxes(taxIds: string[]): Promise<{ success: boolean; activated: number; errors: string[] }>;
+  bulkDeactivateTaxes(taxIds: string[]): Promise<{ success: boolean; deactivated: number; errors: string[] }>;
+
+  // Tax analytics and statistics
+  getTaxStatistics(filters?: {
+    dateFrom?: string;
+    dateTo?: string;
+    categoryIds?: string[];
+    stateFilter?: string;
+    typeFilter?: string;
+  }): Promise<{
+    totalTaxes: number;
+    activeTaxes: number;
+    totalCollected: number;
+    averageRate: number;
+    topPerformingTaxes: Array<{
+      id: string;
+      name: string;
+      code: string;
+      totalCollected: number;
+      totalOrders: number;
+      averageAmount: number;
+    }>;
+    categoryBreakdown: Array<{
+      categoryId: string;
+      categoryName: string;
+      taxCount: number;
+      totalCollected: number;
+    }>;
+    locationBreakdown: Array<{
+      location: string;
+      taxCount: number;
+      totalCollected: number;
+    }>;
+    typeBreakdown: Array<{
+      type: string;
+      count: number;
+      totalCollected: number;
+    }>;
+  }>;
+  getTaxPerformanceReport(taxId: string, dateRange?: { from: string; to: string }): Promise<{
+    tax: Tax;
+    totalOrders: number;
+    totalCollected: number;
+    averageOrderValue: number;
+    averageTaxAmount: number;
+    usageRate: number;
+    timeSeries: Array<{
+      date: string;
+      orders: number;
+      collected: number;
+    }>;
+  }>;
+
+  // Tax compliance and audit
+  getTaxAuditTrail(taxId?: string, limit?: number): Promise<Array<{
+    id: string;
+    taxId: string;
+    action: string;
+    oldValues: any;
+    newValues: any;
+    changedBy: string;
+    changedAt: string;
+    reason?: string;
+  }>>;
+  updateTaxUsageStats(taxId: string, orderValue: number, taxAmount: number): Promise<void>;
+  archiveExpiredTaxes(): Promise<{ archived: number; errors: string[] }>;
+
+  // Tax exemption and special rules
+  checkTaxExemption(taxId: string, context: {
+    userRole?: string;
+    orderValue?: number;
+    promoCode?: string;
+    serviceCategories?: string[];
+  }): Promise<{ exempt: boolean; reason?: string }>;
+  getExemptionRules(taxId: string): Promise<any>;
+  applyTaxExemptions(taxes: Tax[], context: any): Promise<Tax[]>;
+
+  // Advanced tax features
+  getTaxTiers(taxId: string): Promise<any>;
+  calculateTieredTax(taxId: string, orderValue: number): Promise<{
+    tierApplied: any;
+    calculatedAmount: number;
+    effectiveRate: number;
+  }>;
+  generateTaxCode(baseName: string, type: string): Promise<string>;
+  duplicateTax(taxId: string, modifications?: Partial<InsertTax>): Promise<Tax>;
+
+  // Integration methods
+  syncTaxWithOrders(taxId: string): Promise<{ success: boolean; ordersUpdated: number }>;
+  recalculateTaxForOrders(taxId: string, orderIds?: string[]): Promise<{ success: boolean; ordersRecalculated: number; errors: string[] }>;
+  validateTaxIntegrity(): Promise<{ valid: boolean; issues: string[]; fixedIssues: string[] }>;
 
   // User Address methods
   getUserAddresses(userId: string): Promise<UserAddress[]>;
@@ -7170,6 +7370,1186 @@ export class PostgresStorage implements IStorage {
       console.error(`❌ storage.processAccountDeletion: Error processing deletion id: ${id}:`, error);
       return false;
     }
+  }
+
+  // ========================================
+  // TAX MANAGEMENT STORAGE IMPLEMENTATIONS
+  // ========================================
+
+  // Tax Category methods implementation
+  async getTaxCategories(filters?: { isActive?: boolean; search?: string }): Promise<TaxCategory[]> {
+    try {
+      const conditions: SQL[] = [];
+      
+      if (filters?.isActive !== undefined) {
+        conditions.push(eq(taxCategories.isActive, filters.isActive));
+      }
+      
+      if (filters?.search) {
+        conditions.push(or(
+          ilike(taxCategories.name, `%${filters.search}%`),
+          ilike(taxCategories.code, `%${filters.search}%`),
+          ilike(taxCategories.description, `%${filters.search}%`)
+        ));
+      }
+
+      const whereClause = combineConditions(conditions);
+      
+      const result = await db.select().from(taxCategories)
+        .where(whereClause)
+        .orderBy(asc(taxCategories.displayOrder), asc(taxCategories.name));
+      
+      return result;
+    } catch (error) {
+      console.error('❌ storage.getTaxCategories: Error fetching tax categories:', error);
+      return [];
+    }
+  }
+
+  async getTaxCategory(id: string): Promise<TaxCategory | undefined> {
+    try {
+      const result = await db.select().from(taxCategories)
+        .where(eq(taxCategories.id, id))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getTaxCategory: Error fetching category ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async createTaxCategory(category: InsertTaxCategory): Promise<TaxCategory> {
+    try {
+      const result = await db.insert(taxCategories).values({
+        ...category,
+        updatedAt: new Date(),
+      }).returning();
+      
+      console.log('✅ storage.createTaxCategory: Tax category created:', result[0]);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.createTaxCategory: Error creating tax category:', error);
+      throw error;
+    }
+  }
+
+  async updateTaxCategory(id: string, data: Partial<InsertTaxCategory>): Promise<TaxCategory | undefined> {
+    try {
+      const result = await db.update(taxCategories)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(taxCategories.id, id))
+        .returning();
+      
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateTaxCategory: Error updating category ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async deleteTaxCategory(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Check if category has associated taxes
+      const associatedTaxes = await db.select().from(taxes)
+        .where(eq(taxes.categoryId, id))
+        .limit(1);
+      
+      if (associatedTaxes.length > 0) {
+        return { 
+          success: false, 
+          message: 'Cannot delete category. There are taxes associated with this category.' 
+        };
+      }
+
+      const result = await db.delete(taxCategories)
+        .where(eq(taxCategories.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        return { success: false, message: 'Tax category not found.' };
+      }
+
+      return { success: true, message: 'Tax category deleted successfully.' };
+    } catch (error) {
+      console.error(`❌ storage.deleteTaxCategory: Error deleting category ${id}:`, error);
+      return { success: false, message: 'Failed to delete tax category.' };
+    }
+  }
+
+  async getTaxCategoriesByPriority(activeOnly = true): Promise<TaxCategory[]> {
+    try {
+      const conditions: SQL[] = [];
+      
+      if (activeOnly) {
+        conditions.push(eq(taxCategories.isActive, true));
+      }
+
+      const whereClause = combineConditions(conditions);
+      
+      const result = await db.select().from(taxCategories)
+        .where(whereClause)
+        .orderBy(asc(taxCategories.priority), asc(taxCategories.displayOrder));
+      
+      return result;
+    } catch (error) {
+      console.error('❌ storage.getTaxCategoriesByPriority: Error:', error);
+      return [];
+    }
+  }
+
+  async reorderTaxCategories(categoryIds: string[], startOrder = 0): Promise<void> {
+    try {
+      const updatePromises = categoryIds.map((id, index) => 
+        db.update(taxCategories)
+          .set({ displayOrder: startOrder + index, updatedAt: new Date() })
+          .where(eq(taxCategories.id, id))
+      );
+      
+      await Promise.all(updatePromises);
+      console.log('✅ storage.reorderTaxCategories: Categories reordered successfully');
+    } catch (error) {
+      console.error('❌ storage.reorderTaxCategories: Error reordering categories:', error);
+      throw error;
+    }
+  }
+
+  async getTaxCategoryStatistics(): Promise<{
+    totalCategories: number;
+    activeCategories: number;
+    averageRate: number;
+    mostUsedCategory: TaxCategory | null;
+  }> {
+    try {
+      const totalCategories = await db.select({ count: count() }).from(taxCategories);
+      const activeCategories = await db.select({ count: count() })
+        .from(taxCategories)
+        .where(eq(taxCategories.isActive, true));
+
+      // Calculate average default rate
+      const averageRateResult = await db.select({
+        avgRate: sql<number>`AVG(${taxCategories.defaultRate})`
+      }).from(taxCategories).where(eq(taxCategories.isActive, true));
+
+      // Find most used category (category with most associated taxes)
+      const mostUsedResult = await db.select({
+        category: taxCategories,
+        taxCount: count(taxes.id)
+      }).from(taxCategories)
+        .leftJoin(taxes, eq(taxes.categoryId, taxCategories.id))
+        .where(eq(taxCategories.isActive, true))
+        .groupBy(taxCategories.id)
+        .orderBy(desc(count(taxes.id)))
+        .limit(1);
+
+      return {
+        totalCategories: totalCategories[0]?.count || 0,
+        activeCategories: activeCategories[0]?.count || 0,
+        averageRate: Number(averageRateResult[0]?.avgRate || 0),
+        mostUsedCategory: mostUsedResult[0]?.category || null,
+      };
+    } catch (error) {
+      console.error('❌ storage.getTaxCategoryStatistics: Error:', error);
+      return {
+        totalCategories: 0,
+        activeCategories: 0,
+        averageRate: 0,
+        mostUsedCategory: null,
+      };
+    }
+  }
+
+  // Tax methods - Core CRUD implementation
+  async getTaxes(filters?: { 
+    isActive?: boolean; 
+    categoryId?: string; 
+    type?: string; 
+    locationBased?: boolean;
+    search?: string;
+    isPrimary?: boolean;
+    gstType?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ taxes: Tax[]; total: number }> {
+    try {
+      const conditions: SQL[] = [];
+      
+      if (filters?.isActive !== undefined) {
+        conditions.push(eq(taxes.isActive, filters.isActive));
+      }
+      
+      if (filters?.categoryId) {
+        conditions.push(eq(taxes.categoryId, filters.categoryId));
+      }
+      
+      if (filters?.type) {
+        conditions.push(eq(taxes.type, filters.type));
+      }
+      
+      if (filters?.locationBased !== undefined) {
+        conditions.push(eq(taxes.locationBased, filters.locationBased));
+      }
+      
+      if (filters?.isPrimary !== undefined) {
+        conditions.push(eq(taxes.isPrimary, filters.isPrimary));
+      }
+      
+      if (filters?.gstType) {
+        conditions.push(eq(taxes.gstType, filters.gstType));
+      }
+      
+      if (filters?.search) {
+        conditions.push(or(
+          ilike(taxes.name, `%${filters.search}%`),
+          ilike(taxes.code, `%${filters.search}%`),
+          ilike(taxes.displayName, `%${filters.search}%`),
+          ilike(taxes.description, `%${filters.search}%`)
+        ));
+      }
+
+      const whereClause = combineConditions(conditions);
+      
+      // Get total count
+      const totalResult = await db.select({ count: count() }).from(taxes).where(whereClause);
+      const total = totalResult[0]?.count || 0;
+      
+      // Get taxes with pagination
+      let query = db.select().from(taxes).where(whereClause);
+      
+      if (filters?.limit) {
+        query = query.limit(filters.limit);
+      }
+      
+      if (filters?.offset) {
+        query = query.offset(filters.offset);
+      }
+      
+      const result = await query.orderBy(asc(taxes.priority), asc(taxes.name));
+      
+      return { taxes: result, total };
+    } catch (error) {
+      console.error('❌ storage.getTaxes: Error fetching taxes:', error);
+      return { taxes: [], total: 0 };
+    }
+  }
+
+  async getTax(id: string): Promise<Tax | undefined> {
+    try {
+      const result = await db.select().from(taxes)
+        .where(eq(taxes.id, id))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getTax: Error fetching tax ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async getTaxByCode(code: string): Promise<Tax | undefined> {
+    try {
+      const result = await db.select().from(taxes)
+        .where(eq(taxes.code, code))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getTaxByCode: Error fetching tax by code ${code}:`, error);
+      return undefined;
+    }
+  }
+
+  async createTax(tax: InsertTax): Promise<Tax> {
+    try {
+      const result = await db.insert(taxes).values({
+        ...tax,
+        updatedAt: new Date(),
+      }).returning();
+      
+      console.log('✅ storage.createTax: Tax created:', result[0]);
+      return result[0];
+    } catch (error) {
+      console.error('❌ storage.createTax: Error creating tax:', error);
+      throw error;
+    }
+  }
+
+  async updateTax(id: string, data: Partial<InsertTax>): Promise<Tax | undefined> {
+    try {
+      // Add change tracking if modifying critical fields
+      const existingTax = await this.getTax(id);
+      if (existingTax && (data.rate !== undefined || data.type !== undefined)) {
+        const changeHistory = existingTax.changeHistory || [];
+        const timestamp = new Date().toISOString();
+        
+        if (data.rate !== undefined && Number(data.rate) !== Number(existingTax.rate)) {
+          changeHistory.push({
+            field: 'rate',
+            oldValue: existingTax.rate,
+            newValue: data.rate,
+            changedBy: data.lastModifiedBy || 'system',
+            changedAt: timestamp,
+          });
+        }
+        
+        data.changeHistory = changeHistory;
+      }
+
+      const result = await db.update(taxes)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(taxes.id, id))
+        .returning();
+      
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateTax: Error updating tax ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async deleteTax(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Check if tax is being used in active orders (in a real implementation)
+      // For now, we'll just perform the delete
+      const result = await db.delete(taxes)
+        .where(eq(taxes.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        return { success: false, message: 'Tax not found.' };
+      }
+
+      return { success: true, message: 'Tax deleted successfully.' };
+    } catch (error) {
+      console.error(`❌ storage.deleteTax: Error deleting tax ${id}:`, error);
+      return { success: false, message: 'Failed to delete tax.' };
+    }
+  }
+
+  // Tax applicability and filtering methods
+  async getApplicableTaxes(context: {
+    serviceCategories?: string[];
+    partCategories?: string[];
+    orderValue: number;
+    userLocation?: { state?: string; city?: string };
+    userRole?: string;
+    orderType?: string;
+    promoCode?: string;
+  }): Promise<Tax[]> {
+    try {
+      const conditions: SQL[] = [
+        eq(taxes.isActive, true),
+        gte(sql`${context.orderValue}`, taxes.minOrderValue),
+      ];
+
+      // Check validity period
+      const now = new Date();
+      conditions.push(lte(taxes.validFrom, now));
+      conditions.push(or(
+        sql`${taxes.validTo} IS NULL`,
+        gte(taxes.validTo, now)
+      ));
+
+      // Check max order value if specified
+      conditions.push(or(
+        sql`${taxes.maxOrderValue} IS NULL`,
+        lte(sql`${context.orderValue}`, taxes.maxOrderValue)
+      ));
+
+      const whereClause = combineConditions(conditions);
+
+      const result = await db.select().from(taxes)
+        .where(whereClause)
+        .orderBy(asc(taxes.priority));
+
+      // Filter by business rules (to be implemented with more complex logic)
+      let applicableTaxes = result.filter(tax => {
+        // Service category check
+        if (context.serviceCategories && tax.serviceCategories.length > 0) {
+          const hasMatch = context.serviceCategories.some(cat => 
+            tax.serviceCategories.includes(cat)
+          );
+          if (!hasMatch) return false;
+        }
+
+        // Part category check
+        if (context.partCategories && tax.partCategories.length > 0) {
+          const hasMatch = context.partCategories.some(cat => 
+            tax.partCategories.includes(cat)
+          );
+          if (!hasMatch) return false;
+        }
+
+        // Location-based check
+        if (tax.locationBased) {
+          if (tax.stateRestrictions.length > 0 && context.userLocation?.state) {
+            if (!tax.stateRestrictions.includes(context.userLocation.state)) {
+              return false;
+            }
+          }
+          
+          if (tax.cityRestrictions.length > 0 && context.userLocation?.city) {
+            if (!tax.cityRestrictions.includes(context.userLocation.city)) {
+              return false;
+            }
+          }
+        }
+
+        return true;
+      });
+
+      // Apply exemption rules
+      applicableTaxes = await this.applyTaxExemptions(applicableTaxes, context);
+
+      return applicableTaxes;
+    } catch (error) {
+      console.error('❌ storage.getApplicableTaxes: Error:', error);
+      return [];
+    }
+  }
+
+  async getTaxesByCategory(categoryId: string, activeOnly = true): Promise<Tax[]> {
+    try {
+      const conditions: SQL[] = [eq(taxes.categoryId, categoryId)];
+      
+      if (activeOnly) {
+        conditions.push(eq(taxes.isActive, true));
+      }
+
+      const whereClause = combineConditions(conditions);
+      
+      const result = await db.select().from(taxes)
+        .where(whereClause)
+        .orderBy(asc(taxes.priority), asc(taxes.name));
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getTaxesByCategory: Error for category ${categoryId}:`, error);
+      return [];
+    }
+  }
+
+  async getTaxesByService(serviceId: string, orderValue = 0): Promise<Tax[]> {
+    try {
+      // In a real implementation, this would involve joining with services table
+      // For now, we'll get all active taxes
+      const result = await db.select().from(taxes)
+        .where(and(
+          eq(taxes.isActive, true),
+          lte(taxes.minOrderValue, orderValue)
+        ))
+        .orderBy(asc(taxes.priority));
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getTaxesByService: Error for service ${serviceId}:`, error);
+      return [];
+    }
+  }
+
+  async getTaxesByLocation(state?: string, city?: string, activeOnly = true): Promise<Tax[]> {
+    try {
+      const conditions: SQL[] = [];
+      
+      if (activeOnly) {
+        conditions.push(eq(taxes.isActive, true));
+      }
+
+      // Location-based taxes
+      conditions.push(eq(taxes.locationBased, true));
+
+      const whereClause = combineConditions(conditions);
+      
+      const result = await db.select().from(taxes)
+        .where(whereClause)
+        .orderBy(asc(taxes.priority));
+
+      // Filter by location restrictions
+      return result.filter(tax => {
+        if (state && tax.stateRestrictions.length > 0) {
+          return tax.stateRestrictions.includes(state);
+        }
+        if (city && tax.cityRestrictions.length > 0) {
+          return tax.cityRestrictions.includes(city);
+        }
+        return true;
+      });
+    } catch (error) {
+      console.error(`❌ storage.getTaxesByLocation: Error for ${state}, ${city}:`, error);
+      return [];
+    }
+  }
+
+  async getTaxesByGSTType(gstType: string, activeOnly = true): Promise<Tax[]> {
+    try {
+      const conditions: SQL[] = [eq(taxes.gstType, gstType)];
+      
+      if (activeOnly) {
+        conditions.push(eq(taxes.isActive, true));
+      }
+
+      const whereClause = combineConditions(conditions);
+      
+      const result = await db.select().from(taxes)
+        .where(whereClause)
+        .orderBy(asc(taxes.priority));
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getTaxesByGSTType: Error for type ${gstType}:`, error);
+      return [];
+    }
+  }
+
+  // Tax calculation engine implementation
+  async calculateTaxes(params: {
+    orderValue: number;
+    serviceCategories?: string[];
+    partCategories?: string[];
+    userLocation?: { state?: string; city?: string };
+    userRole?: string;
+    promoCode?: string;
+    orderType?: string;
+    shippingAmount?: number;
+  }): Promise<{
+    taxes: Array<{
+      tax: Tax;
+      taxableAmount: number;
+      calculatedAmount: number;
+      appliedRate: number;
+    }>;
+    totalTaxAmount: number;
+    totalAmount: number;
+    breakdown: {
+      baseAmount: number;
+      totalTaxAmount: number;
+      finalAmount: number;
+    };
+  }> {
+    try {
+      const applicableTaxes = await this.getApplicableTaxes(params);
+      const calculations: Array<{
+        tax: Tax;
+        taxableAmount: number;
+        calculatedAmount: number;
+        appliedRate: number;
+      }> = [];
+
+      let runningTotal = params.orderValue;
+      let totalTaxAmount = 0;
+
+      // Sort taxes by priority for correct calculation order
+      const sortedTaxes = applicableTaxes.sort((a, b) => a.priority - b.priority);
+
+      for (const tax of sortedTaxes) {
+        const taxableAmount = this.calculateTaxableAmount(tax, {
+          orderValue: params.orderValue,
+          shippingAmount: params.shippingAmount || 0,
+          previousTaxes: calculations,
+          runningTotal,
+        });
+
+        let calculatedAmount = 0;
+        let appliedRate = Number(tax.rate);
+
+        if (tax.type === 'percentage') {
+          calculatedAmount = (taxableAmount * appliedRate) / 100;
+        } else if (tax.type === 'fixed') {
+          calculatedAmount = appliedRate;
+        } else if (tax.type === 'tiered' && tax.tierConfig) {
+          const tierResult = await this.calculateTieredTax(tax.id, taxableAmount);
+          calculatedAmount = tierResult.calculatedAmount;
+          appliedRate = tierResult.effectiveRate;
+        }
+
+        // Apply min/max limits
+        if (tax.minAmount && calculatedAmount < Number(tax.minAmount)) {
+          calculatedAmount = Number(tax.minAmount);
+        }
+        if (tax.maxAmount && calculatedAmount > Number(tax.maxAmount)) {
+          calculatedAmount = Number(tax.maxAmount);
+        }
+
+        // Apply rounding rule
+        calculatedAmount = this.applyRounding(calculatedAmount, tax.roundingRule);
+
+        calculations.push({
+          tax,
+          taxableAmount,
+          calculatedAmount,
+          appliedRate,
+        });
+
+        totalTaxAmount += calculatedAmount;
+
+        // If tax is compoundable, add to running total for next tax calculation
+        if (tax.compoundable) {
+          runningTotal += calculatedAmount;
+        }
+      }
+
+      return {
+        taxes: calculations,
+        totalTaxAmount,
+        totalAmount: params.orderValue + totalTaxAmount,
+        breakdown: {
+          baseAmount: params.orderValue,
+          totalTaxAmount,
+          finalAmount: params.orderValue + totalTaxAmount,
+        },
+      };
+    } catch (error) {
+      console.error('❌ storage.calculateTaxes: Error calculating taxes:', error);
+      return {
+        taxes: [],
+        totalTaxAmount: 0,
+        totalAmount: params.orderValue,
+        breakdown: {
+          baseAmount: params.orderValue,
+          totalTaxAmount: 0,
+          finalAmount: params.orderValue,
+        },
+      };
+    }
+  }
+
+  private calculateTaxableAmount(tax: Tax, context: {
+    orderValue: number;
+    shippingAmount: number;
+    previousTaxes: any[];
+    runningTotal: number;
+  }): number {
+    let taxableAmount = 0;
+
+    const includes = tax.taxableBaseIncludes;
+
+    if (includes.serviceAmount) {
+      taxableAmount += context.orderValue;
+    }
+
+    if (includes.shippingAmount) {
+      taxableAmount += context.shippingAmount;
+    }
+
+    if (includes.previousTaxes) {
+      const previousTaxAmount = context.previousTaxes.reduce((sum, calc) => 
+        sum + calc.calculatedAmount, 0
+      );
+      taxableAmount += previousTaxAmount;
+    }
+
+    return taxableAmount || context.orderValue;
+  }
+
+  private applyRounding(amount: number, rule: string): number {
+    switch (rule) {
+      case 'ceil':
+        return Math.ceil(amount);
+      case 'floor':
+        return Math.floor(amount);
+      case 'round_to_nearest_5':
+        return Math.round(amount / 5) * 5;
+      case 'round_to_nearest_10':
+        return Math.round(amount / 10) * 10;
+      case 'round':
+      default:
+        return Math.round(amount * 100) / 100; // Round to 2 decimal places
+    }
+  }
+
+  async previewTaxCalculation(taxIds: string[], orderValue: number): Promise<{
+    preview: Array<{
+      tax: Tax;
+      calculatedAmount: number;
+      appliedRate: number;
+    }>;
+    totalTax: number;
+    conflicts: string[];
+  }> {
+    try {
+      const taxes = await Promise.all(
+        taxIds.map(id => this.getTax(id))
+      );
+      const validTaxes = taxes.filter(tax => tax !== undefined) as Tax[];
+
+      const preview: Array<{
+        tax: Tax;
+        calculatedAmount: number;
+        appliedRate: number;
+      }> = [];
+
+      let totalTax = 0;
+      const conflicts: string[] = [];
+
+      // Check for conflicts
+      const conflictCheck = await this.validateTaxCombination(taxIds);
+      conflicts.push(...conflictCheck.conflicts);
+
+      for (const tax of validTaxes) {
+        let calculatedAmount = 0;
+        let appliedRate = Number(tax.rate);
+
+        if (tax.type === 'percentage') {
+          calculatedAmount = (orderValue * appliedRate) / 100;
+        } else if (tax.type === 'fixed') {
+          calculatedAmount = appliedRate;
+        }
+
+        calculatedAmount = this.applyRounding(calculatedAmount, tax.roundingRule);
+
+        preview.push({
+          tax,
+          calculatedAmount,
+          appliedRate,
+        });
+
+        totalTax += calculatedAmount;
+      }
+
+      return { preview, totalTax, conflicts };
+    } catch (error) {
+      console.error('❌ storage.previewTaxCalculation: Error:', error);
+      return { preview: [], totalTax: 0, conflicts: ['Calculation error'] };
+    }
+  }
+
+  // Tax validation and business rules implementation
+  async validateTaxConfiguration(tax: Partial<InsertTax>): Promise<{ valid: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    try {
+      // Validate rate based on type
+      if (tax.type === 'percentage' && tax.rate !== undefined) {
+        if (Number(tax.rate) < 0 || Number(tax.rate) > 100) {
+          errors.push('Percentage tax rate must be between 0 and 100');
+        }
+      }
+
+      if (tax.type === 'fixed' && tax.rate !== undefined) {
+        if (Number(tax.rate) < 0) {
+          errors.push('Fixed tax amount cannot be negative');
+        }
+      }
+
+      // Validate min/max amounts
+      if (tax.minAmount !== undefined && tax.maxAmount !== undefined) {
+        if (Number(tax.minAmount) > Number(tax.maxAmount)) {
+          errors.push('Minimum amount cannot be greater than maximum amount');
+        }
+      }
+
+      // Validate order value thresholds
+      if (tax.minOrderValue !== undefined && tax.maxOrderValue !== undefined) {
+        if (Number(tax.minOrderValue) > Number(tax.maxOrderValue)) {
+          errors.push('Minimum order value cannot be greater than maximum order value');
+        }
+      }
+
+      // Validate code uniqueness
+      if (tax.code) {
+        const existingTax = await this.getTaxByCode(tax.code);
+        if (existingTax) {
+          errors.push('Tax code already exists');
+        }
+      }
+
+      // Validate validity period
+      if (tax.validFrom && tax.validTo) {
+        if (new Date(tax.validFrom) >= new Date(tax.validTo)) {
+          errors.push('Valid from date must be before valid to date');
+        }
+      }
+
+      return { valid: errors.length === 0, errors };
+    } catch (error) {
+      console.error('❌ storage.validateTaxConfiguration: Error:', error);
+      return { valid: false, errors: ['Validation failed'] };
+    }
+  }
+
+  async validateTaxCombination(taxIds: string[]): Promise<{ valid: boolean; conflicts: string[] }> {
+    try {
+      const taxes = await Promise.all(taxIds.map(id => this.getTax(id)));
+      const validTaxes = taxes.filter(tax => tax !== undefined) as Tax[];
+      const conflicts: string[] = [];
+
+      // Check for primary tax conflicts (only one primary tax allowed)
+      const primaryTaxes = validTaxes.filter(tax => tax.isPrimary);
+      if (primaryTaxes.length > 1) {
+        conflicts.push(`Multiple primary taxes detected: ${primaryTaxes.map(t => t.name).join(', ')}`);
+      }
+
+      // Check for non-combinable taxes
+      const nonCombinableTaxes = validTaxes.filter(tax => !tax.combinable);
+      if (nonCombinableTaxes.length > 0 && validTaxes.length > 1) {
+        conflicts.push(`Non-combinable taxes cannot be used with other taxes: ${nonCombinableTaxes.map(t => t.name).join(', ')}`);
+      }
+
+      // Check for GST type conflicts (CGST + SGST vs IGST)
+      const cgstTaxes = validTaxes.filter(tax => tax.gstType === 'cgst');
+      const sgstTaxes = validTaxes.filter(tax => tax.gstType === 'sgst');
+      const igstTaxes = validTaxes.filter(tax => tax.gstType === 'igst');
+      
+      if ((cgstTaxes.length > 0 || sgstTaxes.length > 0) && igstTaxes.length > 0) {
+        conflicts.push('Cannot combine CGST/SGST with IGST');
+      }
+
+      return { valid: conflicts.length === 0, conflicts };
+    } catch (error) {
+      console.error('❌ storage.validateTaxCombination: Error:', error);
+      return { valid: false, conflicts: ['Validation failed'] };
+    }
+  }
+
+  async checkTaxCodeAvailability(code: string, excludeId?: string): Promise<{ available: boolean; suggestions?: string[] }> {
+    try {
+      const existingTax = await this.getTaxByCode(code);
+      
+      if (!existingTax || (excludeId && existingTax.id === excludeId)) {
+        return { available: true };
+      }
+
+      // Generate suggestions
+      const suggestions = [
+        `${code}_V2`,
+        `${code}_NEW`,
+        `${code}_${new Date().getFullYear()}`,
+        `${code}_${Math.floor(Math.random() * 1000)}`,
+      ];
+
+      return { available: false, suggestions };
+    } catch (error) {
+      console.error('❌ storage.checkTaxCodeAvailability: Error:', error);
+      return { available: false };
+    }
+  }
+
+  async validateTaxRules(tax: Tax, orderContext: any): Promise<{ applicable: boolean; reasons: string[] }> {
+    const reasons: string[] = [];
+
+    try {
+      // Check if tax is active
+      if (!tax.isActive) {
+        reasons.push('Tax is not active');
+        return { applicable: false, reasons };
+      }
+
+      // Check validity period
+      const now = new Date();
+      if (tax.validFrom && new Date(tax.validFrom) > now) {
+        reasons.push('Tax is not yet valid');
+      }
+      if (tax.validTo && new Date(tax.validTo) < now) {
+        reasons.push('Tax has expired');
+      }
+
+      // Check order value thresholds
+      if (orderContext.orderValue < Number(tax.minOrderValue)) {
+        reasons.push(`Order value below minimum threshold (${tax.minOrderValue})`);
+      }
+      if (tax.maxOrderValue && orderContext.orderValue > Number(tax.maxOrderValue)) {
+        reasons.push(`Order value above maximum threshold (${tax.maxOrderValue})`);
+      }
+
+      return { applicable: reasons.length === 0, reasons };
+    } catch (error) {
+      console.error('❌ storage.validateTaxRules: Error:', error);
+      return { applicable: false, reasons: ['Validation failed'] };
+    }
+  }
+
+  // Bulk operations implementation
+  async bulkUpdateTaxes(operations: {
+    taxIds: string[];
+    operation: 'activate' | 'deactivate' | 'update_priority' | 'delete';
+    data?: {
+      isActive?: boolean;
+      priority?: number;
+    };
+  }): Promise<{ success: boolean; updated: number; errors: string[] }> {
+    try {
+      const errors: string[] = [];
+      let updated = 0;
+
+      for (const taxId of operations.taxIds) {
+        try {
+          switch (operations.operation) {
+            case 'activate':
+              await this.updateTax(taxId, { isActive: true });
+              updated++;
+              break;
+            case 'deactivate':
+              await this.updateTax(taxId, { isActive: false });
+              updated++;
+              break;
+            case 'update_priority':
+              if (operations.data?.priority !== undefined) {
+                await this.updateTax(taxId, { priority: operations.data.priority });
+                updated++;
+              }
+              break;
+            case 'delete':
+              const deleteResult = await this.deleteTax(taxId);
+              if (deleteResult.success) {
+                updated++;
+              } else {
+                errors.push(`Failed to delete tax ${taxId}: ${deleteResult.message}`);
+              }
+              break;
+          }
+        } catch (error) {
+          errors.push(`Failed to update tax ${taxId}: ${error}`);
+        }
+      }
+
+      return {
+        success: errors.length === 0,
+        updated,
+        errors,
+      };
+    } catch (error) {
+      console.error('❌ storage.bulkUpdateTaxes: Error:', error);
+      return { success: false, updated: 0, errors: ['Bulk operation failed'] };
+    }
+  }
+
+  async bulkActivateTaxes(taxIds: string[]): Promise<{ success: boolean; activated: number; errors: string[] }> {
+    const result = await this.bulkUpdateTaxes({
+      taxIds,
+      operation: 'activate',
+    });
+    
+    return {
+      success: result.success,
+      activated: result.updated,
+      errors: result.errors,
+    };
+  }
+
+  async bulkDeactivateTaxes(taxIds: string[]): Promise<{ success: boolean; deactivated: number; errors: string[] }> {
+    const result = await this.bulkUpdateTaxes({
+      taxIds,
+      operation: 'deactivate',
+    });
+    
+    return {
+      success: result.success,
+      deactivated: result.updated,
+      errors: result.errors,
+    };
+  }
+
+  // Tax exemption and special rules implementation
+  async checkTaxExemption(taxId: string, context: {
+    userRole?: string;
+    orderValue?: number;
+    promoCode?: string;
+    serviceCategories?: string[];
+  }): Promise<{ exempt: boolean; reason?: string }> {
+    try {
+      const tax = await this.getTax(taxId);
+      if (!tax || !tax.exemptionRules) {
+        return { exempt: false };
+      }
+
+      const rules = tax.exemptionRules;
+
+      // Check user role exemption
+      if (rules.userRoles && context.userRole && rules.userRoles.includes(context.userRole)) {
+        return { exempt: true, reason: `Exempt for user role: ${context.userRole}` };
+      }
+
+      // Check minimum order value exemption
+      if (rules.minimumOrderValue && context.orderValue && context.orderValue >= rules.minimumOrderValue) {
+        return { exempt: true, reason: `Exempt for orders above ₹${rules.minimumOrderValue}` };
+      }
+
+      // Check promo code exemption
+      if (rules.promoCodeRequired && context.promoCode === rules.promoCodeRequired) {
+        return { exempt: true, reason: `Exempt with promo code: ${context.promoCode}` };
+      }
+
+      return { exempt: false };
+    } catch (error) {
+      console.error(`❌ storage.checkTaxExemption: Error for tax ${taxId}:`, error);
+      return { exempt: false };
+    }
+  }
+
+  async getExemptionRules(taxId: string): Promise<any> {
+    try {
+      const tax = await this.getTax(taxId);
+      return tax?.exemptionRules || {};
+    } catch (error) {
+      console.error(`❌ storage.getExemptionRules: Error for tax ${taxId}:`, error);
+      return {};
+    }
+  }
+
+  async applyTaxExemptions(taxes: Tax[], context: any): Promise<Tax[]> {
+    try {
+      const exemptTaxes: Tax[] = [];
+
+      for (const tax of taxes) {
+        const exemptionCheck = await this.checkTaxExemption(tax.id, context);
+        if (!exemptionCheck.exempt) {
+          exemptTaxes.push(tax);
+        }
+      }
+
+      return exemptTaxes;
+    } catch (error) {
+      console.error('❌ storage.applyTaxExemptions: Error:', error);
+      return taxes; // Return original list if exemption check fails
+    }
+  }
+
+  // Advanced tax features implementation
+  async getTaxTiers(taxId: string): Promise<any> {
+    try {
+      const tax = await this.getTax(taxId);
+      return tax?.tierConfig || null;
+    } catch (error) {
+      console.error(`❌ storage.getTaxTiers: Error for tax ${taxId}:`, error);
+      return null;
+    }
+  }
+
+  async calculateTieredTax(taxId: string, orderValue: number): Promise<{
+    tierApplied: any;
+    calculatedAmount: number;
+    effectiveRate: number;
+  }> {
+    try {
+      const tax = await this.getTax(taxId);
+      if (!tax || !tax.tierConfig || !tax.tierConfig.tiers) {
+        return { tierApplied: null, calculatedAmount: 0, effectiveRate: 0 };
+      }
+
+      const tiers = tax.tierConfig.tiers;
+      
+      // Find applicable tier
+      const applicableTier = tiers.find(tier => {
+        const minMatch = orderValue >= tier.minOrderValue;
+        const maxMatch = !tier.maxOrderValue || orderValue <= tier.maxOrderValue;
+        return minMatch && maxMatch;
+      });
+
+      if (!applicableTier) {
+        return { tierApplied: null, calculatedAmount: 0, effectiveRate: 0 };
+      }
+
+      let calculatedAmount = 0;
+      if (applicableTier.type === 'percentage') {
+        calculatedAmount = (orderValue * applicableTier.rate) / 100;
+      } else if (applicableTier.type === 'fixed') {
+        calculatedAmount = applicableTier.rate;
+      }
+
+      return {
+        tierApplied: applicableTier,
+        calculatedAmount,
+        effectiveRate: applicableTier.rate,
+      };
+    } catch (error) {
+      console.error(`❌ storage.calculateTieredTax: Error for tax ${taxId}:`, error);
+      return { tierApplied: null, calculatedAmount: 0, effectiveRate: 0 };
+    }
+  }
+
+  async generateTaxCode(baseName: string, type: string): Promise<string> {
+    try {
+      const sanitizedBase = baseName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      const typePrefix = type.toUpperCase();
+      let code = `${typePrefix}_${sanitizedBase}`;
+
+      // Check if code exists, if so add suffix
+      let suffix = 1;
+      while (!(await this.checkTaxCodeAvailability(code)).available) {
+        code = `${typePrefix}_${sanitizedBase}_${suffix}`;
+        suffix++;
+      }
+
+      return code;
+    } catch (error) {
+      console.error('❌ storage.generateTaxCode: Error:', error);
+      return `TAX_${Date.now()}`;
+    }
+  }
+
+  async duplicateTax(taxId: string, modifications?: Partial<InsertTax>): Promise<Tax> {
+    try {
+      const originalTax = await this.getTax(taxId);
+      if (!originalTax) {
+        throw new Error('Original tax not found');
+      }
+
+      // Generate new code
+      const newCode = await this.generateTaxCode(originalTax.name, 'COPY');
+
+      const newTaxData: InsertTax = {
+        ...originalTax,
+        id: undefined as any,
+        code: newCode,
+        name: `${originalTax.name} (Copy)`,
+        isActive: false, // Start as inactive
+        totalCollected: '0.00',
+        totalOrders: 0,
+        lastUsedAt: undefined,
+        changeHistory: [],
+        createdAt: undefined,
+        updatedAt: undefined,
+        ...modifications,
+      };
+
+      return await this.createTax(newTaxData);
+    } catch (error) {
+      console.error(`❌ storage.duplicateTax: Error duplicating tax ${taxId}:`, error);
+      throw error;
+    }
+  }
+
+  // Placeholder implementations for remaining methods (to be implemented based on business needs)
+  async getTaxStatistics(filters?: any): Promise<any> {
+    // Implementation would involve complex aggregation queries
+    return { totalTaxes: 0, activeTaxes: 0, totalCollected: 0, averageRate: 0 };
+  }
+
+  async getTaxPerformanceReport(taxId: string, dateRange?: any): Promise<any> {
+    // Implementation would involve order history analysis
+    return { tax: null, totalOrders: 0, totalCollected: 0 };
+  }
+
+  async getTaxAuditTrail(taxId?: string, limit?: number): Promise<any[]> {
+    // Implementation would involve audit log queries
+    return [];
+  }
+
+  async updateTaxUsageStats(taxId: string, orderValue: number, taxAmount: number): Promise<void> {
+    // Implementation would update tax usage statistics
+  }
+
+  async archiveExpiredTaxes(): Promise<{ archived: number; errors: string[] }> {
+    // Implementation would archive expired taxes
+    return { archived: 0, errors: [] };
+  }
+
+  async syncTaxWithOrders(taxId: string): Promise<{ success: boolean; ordersUpdated: number }> {
+    // Implementation would sync tax with existing orders
+    return { success: true, ordersUpdated: 0 };
+  }
+
+  async recalculateTaxForOrders(taxId: string, orderIds?: string[]): Promise<{ success: boolean; ordersRecalculated: number; errors: string[] }> {
+    // Implementation would recalculate taxes for orders
+    return { success: true, ordersRecalculated: 0, errors: [] };
+  }
+
+  async validateTaxIntegrity(): Promise<{ valid: boolean; issues: string[]; fixedIssues: string[] }> {
+    // Implementation would validate tax data integrity
+    return { valid: true, issues: [], fixedIssues: [] };
   }
 
 }
