@@ -2174,9 +2174,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
       const ADMIN_ID = 'admin-001'; // Fixed admin ID for consistency
       
-      // Validate environment configuration
-      if (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH) {
+      // Development bypass when environment variables aren't available
+      const isDevelopment = process.env.NODE_ENV === 'development';
+      const devBypassEnabled = isDevelopment && process.env.DEV_ADMIN_ENABLED === 'true';
+      
+      // Check for dev bypass credentials
+      let isDevBypass = false;
+      if (devBypassEnabled && email === 'nainspagal@gmail.com' && password === 'Sinha@1357') {
+        isDevBypass = true;
+        console.log('🔧 Development admin bypass used');
+      }
+      
+      // Validate environment configuration (skip for dev bypass)
+      if (!isDevBypass && (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH)) {
         console.error('❌ Admin credentials not configured in environment variables');
+        console.log('💡 For development testing, set DEV_ADMIN_ENABLED=true');
         return res.status(500).json({
           success: false,
           message: 'Server configuration error'
@@ -2191,8 +2203,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Validate credentials using constant-time comparison for security
-      const isValidEmail = email === ADMIN_EMAIL;
-      const isValidPassword = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+      let isValidEmail, isValidPassword;
+      
+      if (isDevBypass) {
+        isValidEmail = true;
+        isValidPassword = true;
+      } else {
+        isValidEmail = email === ADMIN_EMAIL;
+        isValidPassword = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+      }
       
       if (!isValidEmail || !isValidPassword) {
         console.warn('❌ Invalid admin login attempt:', {
@@ -2222,7 +2241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Create admin user without id (auto-generated)
           const newUser = await storage.createUser({
-            email: ADMIN_EMAIL,
+            email: isDevBypass ? 'nainspagal@gmail.com' : ADMIN_EMAIL,
             firstName: 'Administrator',
             lastName: 'Admin',
             role: 'admin',
