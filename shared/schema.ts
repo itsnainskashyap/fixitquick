@@ -535,52 +535,26 @@ export const serviceProviders = pgTable("service_providers", {
   ratingIdx: index("sp_rating_idx").on(table.rating),
 }));
 
-// Service Provider Profiles for onboarding system
+// Service Provider Profiles for order workflow system
 export const serviceProviderProfiles = pgTable("service_provider_profiles", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
-  
-  // Business Information
-  businessName: varchar("business_name").notNull(),
-  businessType: varchar("business_type", { enum: ["individual", "company"] }).notNull(),
-  contactName: varchar("contact_name").notNull(),
-  phone: varchar("phone").notNull(),
-  email: varchar("email"),
-  
-  // Service Details
-  serviceCategories: jsonb("service_categories").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
-  serviceAreas: jsonb("service_areas").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
-  
-  // Address Information
-  address: jsonb("address").$type<{
-    street: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    coordinates?: { lat: number; lng: number };
-  }>(),
-  
-  // Document Management
-  documents: jsonb("documents").$type<{
-    businessLicense?: { url: string; filename: string; uploadedAt: string };
-    idProof?: { url: string; filename: string; uploadedAt: string };
-    certifications?: Array<{ url: string; filename: string; title: string; uploadedAt: string }>;
-  }>().notNull().default(sql`'{}'::jsonb`),
-  
-  // Verification Status
-  verificationStatus: varchar("verification_status", {
-    enum: ["draft", "documents_submitted", "under_review", "approved", "rejected"]
-  }).notNull().default("draft"),
-  rejectionReason: text("rejection_reason"),
-  
-  // Timestamps
+  providerId: varchar("provider_id").primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  servicesOffered: jsonb("services_offered").$type<string[]>().notNull().default(sql`'[]'::jsonb`), // Array of service IDs they can provide
+  coverageRadiusKm: integer("coverage_radius_km").notNull().default(25), // How far they travel (in kilometers)
+  lastKnownLocation: jsonb("last_known_location").$type<{
+    latitude: number;
+    longitude: number;
+    updatedAt: string;
+  }>(), // JSONB with lat/lng coordinates
+  onlineStatus: varchar("online_status", { 
+    enum: ["online", "offline", "busy"] 
+  }).notNull().default("offline"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow().$onUpdate(() => sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
-  userIdIdx: index("spp_user_id_idx").on(table.userId),
-  verificationStatusIdx: index("spp_verification_status_idx").on(table.verificationStatus),
-  businessTypeIdx: index("spp_business_type_idx").on(table.businessType),
-  createdAtIdx: index("spp_created_at_idx").on(table.createdAt),
+  providerIdx: index("spp_provider_idx").on(table.providerId),
+  onlineStatusIdx: index("spp_online_status_idx").on(table.onlineStatus),
+  coverageRadiusIdx: index("spp_coverage_radius_idx").on(table.coverageRadiusKm),
+  servicesOfferedIdx: index("spp_services_offered_idx").on(table.servicesOffered),
 }));
 
 // Enhanced parts categories with hierarchy support
@@ -689,45 +663,47 @@ export const parts = pgTable("parts", {
   statusIdx: index("parts_status_idx").on(table.availabilityStatus),
 }));
 
-// Orders for services and parts
+// Orders table - Core order workflow system
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id),
-  type: varchar("type", { enum: ["service", "parts"] }).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  serviceId: varchar("service_id").references(() => services.id).notNull(),
+  addressId: varchar("address_id"), // Customer address reference
   status: varchar("status", { 
-    enum: ["pending", "accepted", "in_progress", "completed", "cancelled", "refunded"] 
-  }).default("pending"),
-  items: jsonb("items").$type<{
-    id: string;
-    name: string;
-    price: number;
-    quantity: number;
-    type: "service" | "part";
-  }[]>(),
-  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
-  serviceProviderId: varchar("service_provider_id").references(() => users.id),
-  partsProviderId: varchar("parts_provider_id").references(() => users.id),
-  scheduledAt: timestamp("scheduled_at"),
-  completedAt: timestamp("completed_at"),
-  location: jsonb("location").$type<{
-    address: string;
-    latitude: number;
-    longitude: number;
-    instructions?: string;
-  }>(),
-  paymentMethod: varchar("payment_method", { enum: ["online", "cod", "wallet"] }),
-  paymentStatus: varchar("payment_status", { enum: ["pending", "paid", "failed", "refunded"] }).default("pending"),
-  razorpayOrderId: varchar("razorpay_order_id"),
-  notes: text("notes"),
-  rating: integer("rating"),
-  review: text("review"),
-  photos: jsonb("photos").$type<{
-    before?: string[];
-    after?: string[];
-  }>(),
+    enum: ["pending_assignment", "matching", "assigned", "in_progress", "completed", "cancelled"] 
+  }).default("pending_assignment"),
+  providerId: varchar("provider_id").references(() => users.id), // Nullable, assigned provider ID
+  acceptedAt: timestamp("accepted_at"), // When provider accepted
+  acceptDeadlineAt: timestamp("accept_deadline_at").notNull(), // 5-minute deadline for provider response
+  meta: jsonb("meta").$type<{
+    basePrice?: number;
+    totalAmount?: number;
+    serviceFee?: number;
+    taxes?: number;
+    notes?: string;
+    customerNotes?: string;
+    specialRequirements?: string[];
+    estimatedDuration?: number;
+    urgencyLevel?: "normal" | "urgent";
+    paymentMethod?: "online" | "cod" | "wallet";
+    paymentStatus?: "pending" | "paid" | "failed" | "refunded";
+    location?: {
+      address: string;
+      latitude: number;
+      longitude: number;
+      instructions?: string;
+    };
+  }>().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  userIdx: index("orders_user_idx").on(table.userId),
+  serviceIdx: index("orders_service_idx").on(table.serviceId),
+  providerIdx: index("orders_provider_idx").on(table.providerId),
+  statusIdx: index("orders_status_idx").on(table.status),
+  deadlineIdx: index("orders_deadline_idx").on(table.acceptDeadlineAt),
+  createdAtIdx: index("orders_created_at_idx").on(table.createdAt),
+}));
 
 // Wallet transactions
 export const walletTransactions = pgTable("wallet_transactions", {
@@ -1254,38 +1230,28 @@ export const serviceBookings = pgTable("service_bookings", {
   matchingExpiresIdx: index("sb_matching_expires_idx").on(table.matchingExpiresAt),
 }));
 
-// Provider Job Requests - Race-to-accept system
+// Provider Job Requests - Race-to-accept system for order workflow
 export const providerJobRequests = pgTable("provider_job_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  bookingId: varchar("booking_id").references(() => serviceBookings.id).notNull(),
+  orderId: varchar("order_id").references(() => orders.id).notNull(),
   providerId: varchar("provider_id").references(() => users.id).notNull(),
-  
-  // Request details
-  sentAt: timestamp("sent_at").defaultNow(),
-  expiresAt: timestamp("expires_at").notNull(),
-  
-  // Provider response
   status: varchar("status", { 
-    enum: ["sent", "viewed", "accepted", "declined", "expired", "cancelled"] 
-  }).default("sent"),
-  respondedAt: timestamp("responded_at"),
-  responseTime: integer("response_time"), // seconds
-  
-  // Location and distance
-  distanceKm: decimal("distance_km", { precision: 6, scale: 2 }),
-  estimatedTravelTime: integer("estimated_travel_time"), // minutes
-  
-  // Provider specifics
-  quotedPrice: decimal("quoted_price", { precision: 10, scale: 2 }),
-  estimatedArrival: timestamp("estimated_arrival"),
-  providerNotes: text("provider_notes"),
-  
+    enum: ["pending", "sent", "accepted", "declined", "expired"] 
+  }).default("pending"),
+  sentAt: timestamp("sent_at"), // When request was sent to provider
+  respondedAt: timestamp("responded_at"), // When provider responded (accepted/declined)
+  priority: integer("priority").notNull(), // 1 = primary, 2 = first backup, etc.
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
-  bookingIdx: index("pjr_booking_idx").on(table.bookingId),
+  orderIdx: index("pjr_order_idx").on(table.orderId),
   providerIdx: index("pjr_provider_idx").on(table.providerId),
   statusIdx: index("pjr_status_idx").on(table.status),
-  expiresIdx: index("pjr_expires_idx").on(table.expiresAt),
+  priorityIdx: index("pjr_priority_idx").on(table.priority),
+  orderProviderIdx: index("pjr_order_provider_idx").on(table.orderId, table.providerId),
+  orderStatusPriorityIdx: index("pjr_order_status_priority_idx").on(table.orderId, table.status, table.priority),
+  // Unique constraint to prevent duplicate offers to same provider for same order
+  unique: [table.orderId, table.providerId],
 }));
 
 // Service Workflow Tracking - Real-time status updates
@@ -1610,7 +1576,7 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({ id: true, createdAt: true });
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
 export const insertServiceBookingSchema = createInsertSchema(serviceBookings).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertProviderJobRequestSchema = createInsertSchema(providerJobRequests).omit({ id: true, createdAt: true });
+export const insertProviderJobRequestSchema = createInsertSchema(providerJobRequests).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Enhanced parts management insert schemas
 export const insertPartsCategorySchema = createInsertSchema(partsCategories).omit({ id: true, createdAt: true });
