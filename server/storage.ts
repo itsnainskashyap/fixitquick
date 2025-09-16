@@ -193,7 +193,7 @@ import {
 } from "@shared/schema";
 
 // Helper function to safely combine conditions for Drizzle where clauses
-function combineConditions(conditions: SQL[]): SQL | undefined {
+function combineConditions(conditions: SQL[]): SQL<unknown> | undefined {
   if (conditions.length === 0) {
     return undefined;
   } else if (conditions.length === 1) {
@@ -1537,10 +1537,13 @@ export class PostgresStorage implements IStorage {
     if (rootId) {
       // Get tree starting from specific root - include the root and all descendants
       // This would need path-based filtering for proper subtree selection
-      conditions.push(or(
+      const rootCondition = or(
         eq(serviceCategories.id, rootId),
         like(serviceCategories.categoryPath, `%${rootId}%`)
-      ));
+      );
+      if (rootCondition) {
+        conditions.push(rootCondition);
+      }
     } else {
       // Get entire tree - return ALL categories, not just root level
       // Frontend will handle tree structure building
@@ -1551,9 +1554,14 @@ export class PostgresStorage implements IStorage {
     }
     
     const whereClause = combineConditions(conditions);
-    return await db.select().from(serviceCategories)
-      .where(whereClause)
-      .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    if (whereClause) {
+      return await db.select().from(serviceCategories)
+        .where(whereClause)
+        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    } else {
+      return await db.select().from(serviceCategories)
+        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    }
   }
 
   async getCategoryPath(categoryId: string): Promise<ServiceCategory[]> {
@@ -1620,7 +1628,7 @@ export class PostgresStorage implements IStorage {
       if (parent) {
         newLevel = (parent.level || 0) + 1;
         newDepth = (parent.depth || 0) + 1;
-        newCategoryPath = parent.categoryPath + parent.slug + '/';
+        newCategoryPath = (parent.categoryPath || '/') + (parent.slug || '') + '/';
       }
     }
     
@@ -2012,8 +2020,6 @@ export class PostgresStorage implements IStorage {
 
   // Order methods
   async getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]> {
-    let query = db.select().from(orders);
-    
     const conditions: SQL[] = [];
     if (filters?.userId) {
       conditions.push(eq(orders.userId, filters.userId));
@@ -2023,17 +2029,19 @@ export class PostgresStorage implements IStorage {
     }
     
     const whereClause = combineConditions(conditions);
+    let baseQuery = db.select().from(orders);
+    
     if (whereClause) {
-      query = query.where(whereClause);
+      baseQuery = baseQuery.where(whereClause);
     }
     
-    query = query.orderBy(desc(orders.createdAt));
+    baseQuery = baseQuery.orderBy(desc(orders.createdAt));
     
     if (filters?.limit) {
-      query = query.limit(filters.limit);
+      return await baseQuery.limit(filters.limit);
     }
     
-    return await query;
+    return await baseQuery;
   }
 
   async getOrder(id: string): Promise<Order | undefined> {
@@ -2078,10 +2086,13 @@ export class PostgresStorage implements IStorage {
     }
     
     const whereClause = combineConditions(conditions);
+    if (whereClause) {
+      return await db.select().from(orders)
+        .where(whereClause)
+        .orderBy(desc(orders.createdAt));
+    }
     return await db.select().from(orders)
-      .where(whereClause!)
-      .orderBy(desc(orders.createdAt))
-      .execute();
+      .orderBy(desc(orders.createdAt));
   }
 
   async getOrdersByProvider(providerId: string, status?: string): Promise<Order[]> {

@@ -2314,7 +2314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isValidPassword = true;
       } else {
         isValidEmail = email === ADMIN_EMAIL;
-        isValidPassword = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+        isValidPassword = ADMIN_PASSWORD_HASH ? await bcrypt.compare(password, ADMIN_PASSWORD_HASH) : false;
       }
       
       if (!isValidEmail || !isValidPassword) {
@@ -3581,6 +3581,447 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error validating hierarchy:', error);
       res.status(500).json({ message: 'Failed to validate hierarchy' });
+    }
+  });
+
+  // ============================================================================
+  // ADMIN SERVICES MANAGEMENT API - Complete CRUD operations for services
+  // ============================================================================
+
+  // Service validation schemas
+  const serviceCreateSchema = z.object({
+    name: z.string().min(1, 'Service name is required').max(100, 'Service name cannot exceed 100 characters'),
+    description: z.string().min(1, 'Service description is required').max(1000, 'Description cannot exceed 1000 characters'),
+    categoryId: z.string().min(1, 'Category is required'),
+    basePrice: z.string().or(z.number()).transform(val => String(val)),
+    estimatedDuration: z.number().min(5, 'Duration must be at least 5 minutes').max(1440, 'Duration cannot exceed 24 hours'),
+    iconType: z.enum(['emoji', 'image']).default('emoji'),
+    iconValue: z.string().min(1, 'Icon value is required'),
+    images: z.array(z.string().url()).optional().default([]),
+    workflowSteps: z.array(z.object({
+      step: z.string().min(1),
+      description: z.string().min(1),
+      estimatedMinutes: z.number().min(1)
+    })).optional().default([]),
+    requirements: z.array(z.string()).optional().default([]),
+    skillsRequired: z.array(z.string()).optional().default([]),
+    toolsRequired: z.array(z.string()).optional().default([]),
+    allowInstantBooking: z.boolean().default(true),
+    allowScheduledBooking: z.boolean().default(true),
+    advanceBookingDays: z.number().min(0).max(90).default(7),
+    isActive: z.boolean().default(true),
+    isTestService: z.boolean().default(false)
+  });
+
+  const serviceUpdateSchema = serviceCreateSchema.partial();
+
+  const bulkServiceUpdateSchema = z.object({
+    serviceIds: z.array(z.string().min(1)).min(1, 'At least one service must be selected'),
+    updates: z.object({
+      isActive: z.boolean().optional(),
+      categoryId: z.string().optional(),
+      basePrice: z.string().optional()
+    })
+  });
+
+  // GET /api/v1/admin/services - List all services with admin filters
+  app.get('/api/v1/admin/services', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { 
+        categoryId, 
+        isActive, 
+        isTestService, 
+        search, 
+        sortBy = 'createdAt',
+        sortOrder = 'desc',
+        page = 1,
+        limit = 20
+      } = req.query;
+
+      const filters: any = {};
+      
+      if (categoryId && categoryId !== 'all') {
+        filters.categoryId = categoryId as string;
+      }
+      
+      if (isActive !== undefined) {
+        filters.isActive = isActive === 'true';
+      }
+      
+      if (isTestService !== undefined) {
+        filters.isTestService = isTestService === 'true';
+      }
+
+      let services = await storage.getServices(filters);
+
+      // Apply search filter
+      if (search && typeof search === 'string' && search.trim()) {
+        const searchTerm = search.toLowerCase();
+        services = services.filter(service => 
+          service.name.toLowerCase().includes(searchTerm) ||
+          service.description?.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      // Apply sorting
+      services.sort((a, b) => {
+        let comparison = 0;
+        switch (sortBy) {
+          case 'name':
+            comparison = a.name.localeCompare(b.name);
+            break;
+          case 'basePrice':
+            comparison = parseFloat(a.basePrice) - parseFloat(b.basePrice);
+            break;
+          case 'totalBookings':
+            comparison = (a.totalBookings || 0) - (b.totalBookings || 0);
+            break;
+          case 'rating':
+            comparison = parseFloat(a.rating || '0') - parseFloat(b.rating || '0');
+            break;
+          case 'createdAt':
+          default:
+            comparison = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+            break;
+        }
+        return sortOrder === 'desc' ? -comparison : comparison;
+      });
+
+      // Apply pagination
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const startIndex = (pageNum - 1) * limitNum;
+      const paginatedServices = services.slice(startIndex, startIndex + limitNum);
+
+      // Get category names for services
+      const servicesWithCategories = await Promise.all(
+        paginatedServices.map(async (service) => {
+          const category = service.categoryId ? await storage.getServiceCategory(service.categoryId) : null;
+          return {
+            ...service,
+            categoryName: category?.name || 'Uncategorized'
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: servicesWithCategories,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: services.length,
+          totalPages: Math.ceil(services.length / limitNum)
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching admin services:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to fetch services' 
+      });
+    }
+  });
+
+  // GET /api/v1/admin/services/:id - Get specific service with admin details
+  app.get('/api/v1/admin/services/:id', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const service = await storage.getService(id);
+      
+      if (!service) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'Service not found' 
+        });
+      }
+
+      // Get category information
+      const category = service.categoryId ? await storage.getServiceCategory(service.categoryId) : null;
+
+      res.json({
+        success: true,
+        data: {
+          ...service,
+          categoryName: category?.name || 'Uncategorized',
+          categoryPath: category?.categoryPath || ''
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching service:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to fetch service' 
+      });
+    }
+  });
+
+  // POST /api/v1/admin/services - Create new service
+  app.post('/api/v1/admin/services', adminSessionMiddleware, async (req, res) => {
+    try {
+      const validatedData = serviceCreateSchema.parse(req.body);
+      
+      // Verify category exists
+      const category = await storage.getServiceCategory(validatedData.categoryId);
+      if (!category) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid category ID'
+        });
+      }
+
+      // Create service
+      const service = await storage.createService({
+        ...validatedData,
+        slug: validatedData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        rating: '0.00',
+        totalBookings: 0,
+        icon: validatedData.iconType === 'emoji' ? validatedData.iconValue : '🔧' // Legacy icon field for backward compatibility
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Service created successfully',
+        data: service
+      });
+    } catch (error) {
+      console.error('Error creating service:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: error.errors
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create service'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/services/:id - Update service
+  app.put('/api/v1/admin/services/:id', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const validatedData = serviceUpdateSchema.parse(req.body);
+
+      // Check if service exists
+      const existingService = await storage.getService(id);
+      if (!existingService) {
+        return res.status(404).json({
+          success: false,
+          message: 'Service not found'
+        });
+      }
+
+      // Verify category exists if being updated
+      if (validatedData.categoryId) {
+        const category = await storage.getServiceCategory(validatedData.categoryId);
+        if (!category) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid category ID'
+          });
+        }
+      }
+
+      // Update slug if name is being updated
+      if (validatedData.name) {
+        validatedData.slug = validatedData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
+
+      const updatedService = await storage.updateService(id, validatedData);
+
+      if (!updatedService) {
+        return res.status(404).json({
+          success: false,
+          message: 'Service not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Service updated successfully',
+        data: updatedService
+      });
+    } catch (error) {
+      console.error('Error updating service:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: error.errors
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update service'
+      });
+    }
+  });
+
+  // DELETE /api/v1/admin/services/:id - Delete service
+  app.delete('/api/v1/admin/services/:id', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const result = await storage.deleteService(id);
+      
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete service'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/services/bulk-update - Bulk update services
+  app.post('/api/v1/admin/services/bulk-update', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { serviceIds, updates } = bulkServiceUpdateSchema.parse(req.body);
+      
+      const results = {
+        success: 0,
+        failed: 0,
+        errors: [] as string[]
+      };
+
+      for (const serviceId of serviceIds) {
+        try {
+          const updatedService = await storage.updateService(serviceId, updates);
+          if (updatedService) {
+            results.success++;
+          } else {
+            results.failed++;
+            results.errors.push(`Service ${serviceId} not found`);
+          }
+        } catch (error) {
+          results.failed++;
+          results.errors.push(`Failed to update service ${serviceId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+
+      res.json({
+        success: results.failed === 0,
+        message: `Updated ${results.success} services, ${results.failed} failed`,
+        results
+      });
+    } catch (error) {
+      console.error('Error bulk updating services:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: error.errors
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk update services'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/services/statistics - Get service statistics
+  app.get('/api/v1/admin/services/statistics', adminSessionMiddleware, async (req, res) => {
+    try {
+      const allServices = await storage.getServices();
+      const activeServices = allServices.filter(s => s.isActive);
+      const testServices = allServices.filter(s => s.isTestService);
+      
+      // Calculate category distribution
+      const categoryStats = new Map();
+      for (const service of allServices) {
+        if (service.categoryId) {
+          const category = await storage.getServiceCategory(service.categoryId);
+          const categoryName = category?.name || 'Uncategorized';
+          categoryStats.set(categoryName, (categoryStats.get(categoryName) || 0) + 1);
+        }
+      }
+
+      // Calculate price ranges
+      const priceRanges = {
+        low: allServices.filter(s => parseFloat(s.basePrice) <= 500).length,
+        medium: allServices.filter(s => parseFloat(s.basePrice) > 500 && parseFloat(s.basePrice) <= 2000).length,
+        high: allServices.filter(s => parseFloat(s.basePrice) > 2000).length
+      };
+
+      res.json({
+        success: true,
+        statistics: {
+          total: allServices.length,
+          active: activeServices.length,
+          inactive: allServices.length - activeServices.length,
+          test: testServices.length,
+          avgPrice: allServices.length > 0 ? 
+            allServices.reduce((sum, s) => sum + parseFloat(s.basePrice), 0) / allServices.length : 0,
+          totalBookings: allServices.reduce((sum, s) => sum + (s.totalBookings || 0), 0),
+          avgRating: allServices.length > 0 ? 
+            allServices.reduce((sum, s) => sum + parseFloat(s.rating || '0'), 0) / allServices.length : 0,
+          categoryDistribution: Object.fromEntries(categoryStats),
+          priceRanges
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching service statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch service statistics'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/services/:id/image - Update service image
+  app.put('/api/v1/admin/services/:id/image', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { imageUrl, iconType = 'image' } = serviceImageUrlSchema.parse(req.body);
+
+      const service = await storage.getService(id);
+      if (!service) {
+        return res.status(404).json({
+          success: false,
+          message: 'Service not found'
+        });
+      }
+
+      const updatedService = await storage.updateService(id, {
+        iconType: iconType as 'emoji' | 'image',
+        iconValue: imageUrl,
+        images: [...(service.images || []), imageUrl]
+      });
+
+      res.json({
+        success: true,
+        message: 'Service image updated successfully',
+        data: updatedService
+      });
+    } catch (error) {
+      console.error('Error updating service image:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: error.errors
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update service image'
+      });
     }
   });
 
