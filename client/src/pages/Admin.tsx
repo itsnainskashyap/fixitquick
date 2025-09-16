@@ -51,7 +51,7 @@ import {
 interface CouponFormData {
   code?: string;
   title?: string;
-  description?: string;
+  description?: string | null;
   type: 'percentage' | 'fixed_amount' | 'free_delivery' | 'service_specific';
   value?: string;
   maxDiscountAmount?: string | null;
@@ -4371,7 +4371,8 @@ export default function Admin() {
   const { data: categoryHierarchy } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/hierarchy'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
+      const response = await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
+      return await response.json();
     },
     enabled: !!user,
   });
@@ -4380,7 +4381,8 @@ export default function Admin() {
   const { data: mainCategories, isLoading: mainCategoriesLoading } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/main'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories/main');
+      const response = await apiRequest('GET', '/api/v1/admin/categories/main');
+      return await response.json();
     },
     enabled: !!user,
   });
@@ -4393,8 +4395,11 @@ export default function Admin() {
 
   // Sync local categories with React Query data
   useEffect(() => {
-    if (mainCategories && !isDragging) {
+    if (mainCategories && Array.isArray(mainCategories) && !isDragging) {
       setLocalCategories(mainCategories);
+    } else if (mainCategories && !Array.isArray(mainCategories)) {
+      console.warn('mainCategories is not an array:', mainCategories);
+      setLocalCategories([]);
     }
   }, [mainCategories, isDragging]);
 
@@ -4402,7 +4407,8 @@ export default function Admin() {
   const { data: services } = useQuery<Service[]>({
     queryKey: ['/api/v1/services'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/services');
+      const response = await apiRequest('GET', '/api/v1/services');
+      return await response.json();
     },
     enabled: !!user,
   });
@@ -4616,8 +4622,8 @@ export default function Admin() {
       });
       
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to upload image');
+        const error = await response.text();
+        throw new Error(error || 'Failed to upload image');
       }
       
       return response.json();
@@ -6249,11 +6255,11 @@ export default function Admin() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Categories</SelectItem>
-                    {mainCategories?.map((category) => (
+                    {Array.isArray(mainCategories) ? mainCategories.map((category) => (
                       <SelectItem key={category.id} value={category.id}>
                         {category.icon} {category.name}
                       </SelectItem>
-                    ))}
+                    )) : null}
                   </SelectContent>
                 </Select>
               </div>
@@ -6262,7 +6268,7 @@ export default function Admin() {
               {servicesList && servicesList.length > 0 ? (
                 <div className="grid gap-4">
                   {filteredServices.map((service: Service) => {
-                    const category = mainCategories?.find(c => c.id === service.categoryId);
+                    const category = Array.isArray(mainCategories) ? mainCategories.find(c => c.id === service.categoryId) : null;
                     return (
                       <Card key={service.id} className="transition-all duration-200 hover:shadow-lg">
                         <CardContent className="p-6">
@@ -6954,11 +6960,11 @@ export default function Admin() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="null">None (Main Category)</SelectItem>
-                    {mainCategories?.map((category) => (
+                    {Array.isArray(mainCategories) ? mainCategories.map((category) => (
                       <SelectItem key={category.id} value={category.id}>
                         {category.icon} {category.name}
                       </SelectItem>
-                    ))}
+                    )) : null}
                   </SelectContent>
                 </Select>
               </div>
@@ -7222,11 +7228,11 @@ export default function Admin() {
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {mainCategories?.map((category) => (
+                      {Array.isArray(mainCategories) ? mainCategories.map((category) => (
                         <SelectItem key={category.id} value={category.id}>
                           {category.icon} {category.name}
                         </SelectItem>
-                      ))}
+                      )) : null}
                     </SelectContent>
                   </Select>
                 </div>
@@ -7489,11 +7495,11 @@ export default function Admin() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="null">None (Main Category)</SelectItem>
-                    {mainCategories?.filter(cat => cat.id !== selectedCategory?.id).map((category) => (
+                    {Array.isArray(mainCategories) ? mainCategories.filter(cat => cat.id !== selectedCategory?.id).map((category) => (
                       <SelectItem key={category.id} value={category.id}>
                         {category.icon} {category.name}
                       </SelectItem>
-                    ))}
+                    )) : null}
                   </SelectContent>
                 </Select>
               </div>

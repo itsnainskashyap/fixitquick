@@ -280,7 +280,7 @@ export default function Parts() {
         cartItemsCount={getItemCount()}
       />
 
-      <main className="pt-32 px-4 pb-6">
+      <main className="pt-52 px-4 pb-6">
         {/* Hero Section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2" data-testid="text-page-title">

@@ -1,10 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
 import { ServiceCard, ServiceCardSkeleton } from '@/components/ServiceCard';
-import { CartSidebar } from '@/components/CartSidebar';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
 import { useHorizontalScroll } from '@/hooks/useHorizontalScroll';
 import { Button } from '@/components/ui/button';
@@ -15,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useQuery } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
 import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine, ChevronLeft } from 'lucide-react';
 
 interface Service {
@@ -59,8 +57,7 @@ interface CategoryTreeNode extends ServiceCategory {
 
 export default function Services() {
   const [, setLocation] = useLocation();
-  const { addItem, getItemCount } = useCart();
-  const [isCartOpen, setIsCartOpen] = useState(false);
+  const { addItem } = useCart();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedCategoryPath, setSelectedCategoryPath] = useState<CategoryBreadcrumb[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
@@ -102,11 +99,8 @@ export default function Services() {
   // Load category breadcrumb path
   const loadCategoryPath = async (categoryId: string) => {
     try {
-      const response = await fetch(`/api/v1/categories/${categoryId}/path`);
-      if (response.ok) {
-        const path = await response.json();
-        setSelectedCategoryPath(path);
-      }
+      const path = await apiRequest('GET', `/api/v1/categories/${categoryId}/path`);
+      setSelectedCategoryPath(path);
     } catch (error) {
       console.error('Error loading category path:', error);
     }
@@ -396,13 +390,8 @@ export default function Services() {
   });
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header
-        onCartClick={() => setIsCartOpen(true)}
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-32 px-4 pb-6">
+    <div className="min-h-screen bg-background">
+      <main className="px-4 pb-6">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -665,13 +654,6 @@ export default function Services() {
           )}
         </motion.div>
       </main>
-
-      <CartSidebar
-        isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
-      />
-
-      <BottomNavigation />
     </div>
   );
 }

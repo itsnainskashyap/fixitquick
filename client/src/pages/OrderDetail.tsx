@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation, useRoute } from 'wouter';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -333,7 +331,7 @@ export default function OrderDetail() {
     return (
       <div className="min-h-screen bg-background pb-20">
         <Header />
-        <main className="pt-32 px-4 pb-6">
+        <main className="pt-52 px-4 pb-6">
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
@@ -350,7 +348,7 @@ export default function OrderDetail() {
     return (
       <div className="min-h-screen bg-background pb-20">
         <Header />
-        <main className="pt-32 px-4 pb-6">
+        <main className="pt-52 px-4 pb-6">
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <AlertTriangle className="w-8 h-8 mx-auto mb-4 text-destructive" />
@@ -378,7 +376,7 @@ export default function OrderDetail() {
     <div className="min-h-screen bg-background pb-20">
       <Header />
 
-      <main className="pt-32 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

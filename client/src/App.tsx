@@ -53,7 +53,7 @@ import HelpSupport from "@/pages/HelpSupport";
 import LegalPrivacy from "@/pages/LegalPrivacy";
 
 // Import components
-import { FloatingCartWidget } from "@/components/FloatingCartWidget";
+import Layout, { MinimalLayout } from "@/components/Layout";
 
 // Dashboard routing based on user role
 const getDashboardRoute = (role: string) => {
@@ -173,97 +173,97 @@ function PublicRoute({ component: Component }: { component: React.ComponentType 
 function Router() {
   return (
     <Switch>
-      {/* Public Routes */}
+      {/* Auth Routes - No layout wrapper */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
-      <Route path="/admin/login" component={AdminLogin} />
+      <Route path="/admin/login" component={() => <AdminLogin />} />
       
-      {/* Smart Home Route - Redirects authenticated users to their role-based dashboard */}
-      <Route path="/" component={SmartHome} />
-      <Route path="/services" component={() => <ProtectedRoute component={Services} />} />
-      <Route path="/services/:categoryId" component={() => <ProtectedRoute component={Services} />} />
-      <Route path="/services/:serviceId/book" component={() => <ProtectedRoute component={ServiceBooking} />} />
-      <Route path="/parts" component={() => <ProtectedRoute component={Parts} />} />
-      <Route path="/parts/:partId" component={() => <ProtectedRoute component={PartDetail} />} />
-      <Route path="/search" component={() => <ProtectedRoute component={SearchResults} />} />
-      <Route path="/cart" component={() => <ProtectedRoute component={Cart} />} />
-      <Route path="/checkout" component={() => <ProtectedRoute component={Checkout} />} />
-      <Route path="/orders" component={() => <ProtectedRoute component={Orders} />} />
-      <Route path="/orders/:orderId" component={() => <ProtectedRoute component={OrderDetail} />} />
-      <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
-      <Route path="/payment-methods" component={() => <ProtectedRoute component={PaymentMethods} />} />
-      <Route path="/account" component={() => <ProtectedRoute component={Account} />} />
-      <Route path="/account/edit" component={() => <ProtectedRoute component={AccountEdit} />} />
-      <Route path="/account/language" component={() => <ProtectedRoute component={LanguageRegion} />} />
-      <Route path="/account/referral" component={() => <ProtectedRoute component={ReferEarn} />} />
-      <Route path="/support" component={() => <ProtectedRoute component={HelpSupport} />} />
-      <Route path="/legal" component={() => <ProtectedRoute component={LegalPrivacy} />} />
-      <Route path="/location" component={() => <ProtectedRoute component={Location} />} />
+      {/* All other routes wrapped with Layout */}
+      <Route path="/" component={() => <Layout><SmartHome /></Layout>} />
+      <Route path="/services" component={() => <Layout><ProtectedRoute component={Services} /></Layout>} />
+      <Route path="/services/:categoryId" component={() => <Layout><ProtectedRoute component={Services} /></Layout>} />
+      <Route path="/services/:serviceId/book" component={() => <Layout><ProtectedRoute component={ServiceBooking} /></Layout>} />
+      <Route path="/parts" component={() => <Layout><ProtectedRoute component={Parts} /></Layout>} />
+      <Route path="/parts/:partId" component={() => <Layout><ProtectedRoute component={PartDetail} /></Layout>} />
+      <Route path="/search" component={() => <Layout><ProtectedRoute component={SearchResults} /></Layout>} />
+      <Route path="/cart" component={() => <Layout><ProtectedRoute component={Cart} /></Layout>} />
+      <Route path="/checkout" component={() => <Layout><ProtectedRoute component={Checkout} /></Layout>} />
+      <Route path="/orders" component={() => <Layout><ProtectedRoute component={Orders} /></Layout>} />
+      <Route path="/orders/:orderId" component={() => <Layout><ProtectedRoute component={OrderDetail} /></Layout>} />
+      <Route path="/wallet" component={() => <Layout><ProtectedRoute component={Wallet} /></Layout>} />
+      <Route path="/payment-methods" component={() => <Layout><ProtectedRoute component={PaymentMethods} /></Layout>} />
+      <Route path="/account" component={() => <Layout><ProtectedRoute component={Account} /></Layout>} />
+      <Route path="/account/edit" component={() => <Layout><ProtectedRoute component={AccountEdit} /></Layout>} />
+      <Route path="/account/language" component={() => <Layout><ProtectedRoute component={LanguageRegion} /></Layout>} />
+      <Route path="/account/referral" component={() => <Layout><ProtectedRoute component={ReferEarn} /></Layout>} />
+      <Route path="/support" component={() => <Layout><ProtectedRoute component={HelpSupport} /></Layout>} />
+      <Route path="/legal" component={() => <Layout><ProtectedRoute component={LegalPrivacy} /></Layout>} />
+      <Route path="/location" component={() => <Layout><ProtectedRoute component={Location} /></Layout>} />
       
       {/* Category Hierarchy Routes */}
-      <Route path="/categories/:categoryId/subcategories" component={() => <ProtectedRoute component={Subcategories} />} />
+      <Route path="/categories/:categoryId/subcategories" component={() => <Layout><ProtectedRoute component={Subcategories} /></Layout>} />
       
       {/* Provider Registration Routes */}
       <Route 
         path="/provider/register" 
-        component={() => <ProtectedRoute component={ProviderRegistration} />} 
+        component={() => <Layout><ProtectedRoute component={ProviderRegistration} /></Layout>} 
       />
       <Route 
         path="/parts-provider/register" 
-        component={() => <ProtectedRoute component={PartProviderRegistration} />} 
+        component={() => <Layout><ProtectedRoute component={PartProviderRegistration} /></Layout>} 
       />
       <Route 
         path="/provider-pending" 
-        component={() => <ProtectedRoute component={ProviderPending} />} 
+        component={() => <Layout><ProtectedRoute component={ProviderPending} /></Layout>} 
       />
       <Route 
         path="/parts-provider-pending" 
-        component={() => <ProtectedRoute component={PartsProviderPending} />} 
+        component={() => <Layout><ProtectedRoute component={PartsProviderPending} /></Layout>} 
       />
       
       {/* Service Provider Routes */}
       <Route 
         path="/provider" 
-        component={() => <ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} />} 
+        component={() => <Layout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></Layout>} 
       />
       <Route 
         path="/service-provider-dashboard" 
-        component={() => <ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} />} 
+        component={() => <Layout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></Layout>} 
       />
       
       {/* Parts Provider Routes */}
       <Route 
         path="/parts-provider" 
-        component={() => <ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} />} 
+        component={() => <Layout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></Layout>} 
       />
       <Route 
         path="/parts-provider-dashboard" 
-        component={() => <ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} />} 
+        component={() => <Layout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></Layout>} 
       />
       
       {/* Admin Routes */}
       <Route 
         path="/admin" 
-        component={() => <AdminProtectedRoute component={Admin} />} 
+        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
       />
       <Route 
         path="/admin/dashboard" 
-        component={() => <AdminProtectedRoute component={Admin} />} 
+        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
       />
       <Route 
         path="/admin/users" 
-        component={() => <AdminProtectedRoute component={Admin} />} 
+        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
       />
       <Route 
         path="/admin/orders" 
-        component={() => <AdminProtectedRoute component={Admin} />} 
+        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
       />
       <Route 
         path="/admin/verifications" 
-        component={() => <AdminProtectedRoute component={Admin} />} 
+        component={() => <Layout><AdminProtectedRoute component={Admin} /></Layout>} 
       />
       
       {/* 404 Fallback */}
-      <Route component={NotFound} />
+      <Route component={() => <Layout><NotFound /></Layout>} />
     </Switch>
   );
 }
@@ -274,7 +274,6 @@ function App() {
       <TooltipProvider>
         <Toaster />
         <Router />
-        <FloatingCartWidget />
       </TooltipProvider>
     </CartProvider>
   );

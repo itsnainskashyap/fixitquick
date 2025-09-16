@@ -126,20 +126,20 @@ export function Header({
               <span className="font-bold text-lg text-foreground">FixitQuick</span>
             </motion.div>
 
-            {/* Right side - Role Navigation, Wallet, Location, Notifications, Cart */}
-            <div className="flex items-center space-x-2 md:space-x-3">
-              {/* Role-based Navigation Menu - Only show for authenticated users */}
+            {/* Right side - Mobile-optimized layout */}
+            <div className="flex items-center space-x-1 sm:space-x-2 md:space-x-3">
+              {/* Role-based Navigation Menu - Mobile dropdown for authenticated users */}
               {isAuthenticated && navigationItems.length > 0 && (
-                <div className="relative hidden md:block">
+                <div className="relative">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setShowRoleMenu(!showRoleMenu)}
-                    className="flex items-center space-x-1 bg-primary/5 border-primary/20 hover:bg-primary/10 transition-colors"
+                    className="flex items-center space-x-1 bg-primary/5 border-primary/20 hover:bg-primary/10 transition-colors p-2 sm:px-3"
                     data-testid="role-navigation-button"
                   >
                     <Menu className="w-4 h-4 text-primary" />
-                    <span className="text-sm font-semibold text-foreground hidden lg:inline">
+                    <span className="text-sm font-semibold text-foreground hidden sm:inline">
                       {user?.role === 'service_provider' ? 'Provider' :
                        user?.role === 'parts_provider' ? 'Parts' :
                        user?.role === 'admin' ? 'Admin' : 'Menu'}
@@ -187,7 +187,7 @@ export function Header({
                 </div>
               )}
 
-              {/* Wallet Balance - Only show for authenticated users */}
+              {/* Wallet Balance - Mobile optimized */}
               {isAuthenticated && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8 }}
@@ -198,30 +198,33 @@ export function Header({
                     variant="outline"
                     size="sm"
                     onClick={handleWalletClick}
-                    className="flex items-center space-x-1 bg-primary/5 border-primary/20 hover:bg-primary/10 transition-colors"
+                    className="flex items-center space-x-1 bg-primary/5 border-primary/20 hover:bg-primary/10 transition-colors px-2 sm:px-3"
                     data-testid="wallet-balance-button"
                   >
                     <Wallet className="w-4 h-4 text-primary" />
                     {walletLoading ? (
-                      <Skeleton className="h-4 w-12" />
+                      <Skeleton className="h-4 w-8 sm:w-12" />
                     ) : (
-                      <span className="text-sm font-semibold text-foreground">
+                      <span className="text-xs sm:text-sm font-semibold text-foreground">
                         ₹{parseFloat(walletData?.balance || '0').toFixed(0)}
                       </span>
                     )}
-                    <Plus className="w-3 h-3 text-muted-foreground ml-1" />
+                    <Plus className="w-3 h-3 text-muted-foreground ml-1 hidden sm:block" />
                   </Button>
                 </motion.div>
               )}
 
-              {/* Region Selector - controlled by VITE_I18N_ENABLED feature flag */}
-              <RegionSelector />
+              {/* Region Selector - Mobile optimized */}
+              <div className="hidden sm:block">
+                <RegionSelector />
+              </div>
               
-              {/* Language Switcher - controlled by VITE_I18N_ENABLED feature flag */}
-              <LanguageSwitcher />
+              {/* Language Switcher - Mobile optimized */}
+              <div className="hidden sm:block">
+                <LanguageSwitcher />
+              </div>
 
-
-              {/* Notifications - Real-time Notification Center */}
+              {/* Notifications - Mobile optimized */}
               {isAuthenticated && (
                 <NotificationCenter compact={true} className="hidden sm:block" />
               )}
@@ -333,7 +336,7 @@ export function Header({
                 </motion.div>
               </div>
 
-              {/* Promotional Media Carousel */}
+              {/* Promotional Media Carousel - Mobile optimized */}
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -343,7 +346,7 @@ export function Header({
                 <PromotionalMediaCarousel
                   placement="header"
                   userId={user.id}
-                  className="w-full h-48 md:h-56 rounded-xl shadow-lg border border-border/50"
+                  className="w-full h-32 sm:h-40 md:h-48 lg:h-56 rounded-lg sm:rounded-xl shadow-md sm:shadow-lg border border-border/50"
                   showNavigation={true}
                   showIndicators={true}
                   autoAdvance={true}

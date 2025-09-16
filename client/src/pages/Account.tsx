@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import AvatarUpload from '@/components/AvatarUpload';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { RegionSelector } from '@/components/RegionSelector';
@@ -90,8 +88,7 @@ export default function Account() {
   // Email update mutation
   const updateEmailMutation = useMutation({
     mutationFn: async (data: EmailUpdateFormData) => {
-      const response = await apiRequest('PATCH', '/api/v1/users/me/email', data);
-      return response.json();
+      return await apiRequest('PATCH', '/api/v1/users/me/email', data);
     },
     onSuccess: (data) => {
       // Update user context with new email
@@ -254,10 +251,8 @@ export default function Account() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header />
-
-      <main className="pt-32 px-4 pb-6">
+    <div className="min-h-screen bg-background">
+      <main className="px-4 py-6">
         {/* Profile Header Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -766,8 +761,6 @@ export default function Account() {
           </p>
         </motion.div>
       </main>
-
-      <BottomNavigation />
     </div>
   );
 }

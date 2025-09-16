@@ -62,8 +62,7 @@ export default function Checkout() {
   // SECURE: Create order mutation
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
-      const response = await apiRequest('POST', '/api/v1/orders', orderData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/orders', orderData);
     },
     onError: (error: any) => {
       console.error('Order creation error:', error);
@@ -78,8 +77,7 @@ export default function Checkout() {
   // SECURE: Pay for order mutation (server validates everything)
   const payOrderMutation = useMutation({
     mutationFn: async (orderId: string) => {
-      const response = await apiRequest('POST', `/api/v1/orders/${orderId}/pay`, {});
-      return response.json();
+      return await apiRequest('POST', `/api/v1/orders/${orderId}/pay`, {});
     },
     onSuccess: (data, orderId) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/wallet/balance'] });
@@ -243,7 +241,7 @@ export default function Checkout() {
         cartItemsCount={getItemCount()}
       />
 
-      <main className="pt-32 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

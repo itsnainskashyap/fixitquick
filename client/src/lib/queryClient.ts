@@ -12,7 +12,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
   customHeaders?: Record<string, string>,
-): Promise<Response> {
+): Promise<any> {
   const authHeaders = getAuthHeaders();
   const headers: Record<string, string> = {
     ...(data ? { "Content-Type": "application/json" } : {}),
@@ -51,6 +51,39 @@ export async function apiRequest(
       console.log('💡 Available dev endpoints: POST /api/dev/login/:userId');
     }
   }
+
+  await throwIfResNotOk(res);
+  
+  // Parse JSON response for consistent API contract
+  const contentType = res.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    return await res.json();
+  }
+  
+  // For non-JSON responses, return the response text
+  return await res.text();
+}
+
+// Utility function for when raw Response object is needed
+export async function apiRequestRaw(
+  method: string,
+  url: string,
+  data?: unknown | undefined,
+  customHeaders?: Record<string, string>,
+): Promise<Response> {
+  const authHeaders = getAuthHeaders();
+  const headers: Record<string, string> = {
+    ...(data ? { "Content-Type": "application/json" } : {}),
+    ...authHeaders,
+    ...customHeaders,
+  };
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: data ? JSON.stringify(data) : undefined,
+    credentials: "include",
+  });
 
   await throwIfResNotOk(res);
   return res;

@@ -40,6 +40,9 @@
   --font-sans: 'Inter', sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: 'Monaco', monospace;
+  
+  /* Dynamic Layout Variables */
+  --header-height: 208px; /* Default fallback height (pt-52 equivalent) */
 }
 
 .dark {
@@ -76,6 +79,43 @@
 }
 
 @layer components {
+  /* Layout System */
+  .layout-container {
+    position: relative;
+    min-height: 100vh;
+  }
+  
+  .header-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    background-color: hsl(var(--background));
+    border-bottom: 1px solid hsl(var(--border));
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  }
+  
+  .main-content {
+    min-height: calc(100vh - var(--header-height, 208px));
+    transition: padding-top 0.3s ease;
+  }
+  
+  /* Responsive layout adjustments */
+  @media (min-width: 768px) {
+    .main-content {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+  }
+  
+  @media (min-width: 1024px) {
+    .main-content {
+      padding-left: 2rem;
+      padding-right: 2rem;
+    }
+  }
+
   .service-card {
     @apply bg-card border rounded-lg p-4 text-center cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
     border-color: rgba(147, 51, 234, 0.2);
@@ -481,10 +521,17 @@ html {
   border-top-color: rgb(147, 51, 234);
 }
 
-/* Cart sidebar styles */
+/* Cart sidebar styles - Mobile optimized */
 .cart-sidebar {
-  @apply fixed inset-y-0 right-0 w-80 bg-background border-l shadow-xl z-50 transform transition-transform duration-300;
+  @apply fixed inset-y-0 right-0 bg-background border-l shadow-xl z-50 transform transition-transform duration-300;
   border-left-color: rgba(147, 51, 234, 0.2);
+  width: min(320px, 90vw); /* Mobile-first responsive width */
+}
+
+@media (min-width: 640px) {
+  .cart-sidebar {
+    width: 320px; /* Fixed width for larger screens */
+  }
 }
 
 .cart-sidebar.open {
@@ -546,11 +593,7 @@ html {
 }
 
 /* Responsive design helpers */
-@media (max-width: 768px) {
-  .cart-sidebar {
-    @apply w-full;
-  }
-}
+/* Remove old mobile cart styles - using new responsive approach */
 
 /* Accessibility improvements */
 @media (prefers-reduced-motion: reduce) {

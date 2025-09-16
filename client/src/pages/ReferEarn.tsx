@@ -188,7 +188,7 @@ export default function ReferEarn() {
     return (
       <div className="min-h-screen bg-background">
         <Header />
-        <main className="pt-32 px-4 pb-20">
+        <main className="pt-52 px-4 pb-20">
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
@@ -206,7 +206,7 @@ export default function ReferEarn() {
     <div className="min-h-screen bg-background pb-20">
       <Header />
 
-      <main className="pt-32 px-4 pb-6">
+      <main className="pt-52 px-4 pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

@@ -223,8 +223,7 @@ export default function ServiceBooking() {
       urgency: 'low' | 'normal' | 'high' | 'urgent';
       maxDistance?: number;
     }) => {
-      const response = await apiRequest('POST', '/api/v1/service-bookings/find-providers', criteria);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/service-bookings/find-providers', criteria);
     },
     onSuccess: (providers: MatchedProvider[]) => {
       setMatchedProviders(providers);
@@ -250,8 +249,7 @@ export default function ServiceBooking() {
   // Enhanced service booking mutation
   const createServiceBookingMutation = useMutation({
     mutationFn: async (bookingData: any) => {
-      const response = await apiRequest('POST', '/api/v1/service-bookings', bookingData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/service-bookings', bookingData);
     },
     onSuccess: (booking: ServiceBooking) => {
       setCurrentBooking(booking);
@@ -285,8 +283,7 @@ export default function ServiceBooking() {
   // Create legacy order mutation (for backward compatibility)
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
-      const response = await apiRequest('POST', '/api/v1/orders', orderData);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/orders', orderData);
     },
     onSuccess: (order) => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
@@ -457,7 +454,7 @@ export default function ServiceBooking() {
     <div className="min-h-screen bg-background pb-20">
       <Header />
       
-      <main className="pt-32 px-4 pb-6">
+      <main className="pt-52 px-4 pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

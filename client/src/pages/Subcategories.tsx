@@ -77,7 +77,7 @@ export default function Subcategories() {
         cartItemsCount={getItemCount()}
       />
 
-      <main className="pt-32 px-4 pb-6">
+      <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
         {/* Breadcrumb Navigation */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

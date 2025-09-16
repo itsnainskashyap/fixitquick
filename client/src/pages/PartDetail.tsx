@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation, useParams } from 'wouter';
-import { Header } from '@/components/Header';
-import { CartSidebar } from '@/components/CartSidebar';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -146,12 +143,8 @@ export default function PartDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background pb-20">
-        <Header
-          onCartClick={() => setIsCartOpen(true)}
-          cartItemsCount={getItemCount()}
-        />
-        <main className="pt-32 px-4">
+      <div className="min-h-screen bg-background">
+        <main className="px-4 py-6">
           <div className="max-w-6xl mx-auto">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Image skeleton */}
@@ -179,12 +172,8 @@ export default function PartDetail() {
 
   if (error || !part) {
     return (
-      <div className="min-h-screen bg-background pb-20">
-        <Header
-          onCartClick={() => setIsCartOpen(true)}
-          cartItemsCount={getItemCount()}
-        />
-        <main className="pt-32 px-4">
+      <div className="min-h-screen bg-background">
+        <main className="px-4 py-6">
           <div className="max-w-2xl mx-auto text-center py-12">
             <Package className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
             <h1 className="text-2xl font-bold mb-2">Part Not Found</h1>
@@ -201,13 +190,8 @@ export default function PartDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header
-        onCartClick={() => setIsCartOpen(true)}
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-32 px-4 pb-6">
+    <div className="min-h-screen bg-background">
+      <main className="px-4 py-6">
         <div className="max-w-6xl mx-auto">
           {/* Back Button */}
           <Button
@@ -538,8 +522,6 @@ export default function PartDetail() {
         </div>
       </main>
 
-      <CartSidebar isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
-      <BottomNavigation />
     </div>
   );
 }

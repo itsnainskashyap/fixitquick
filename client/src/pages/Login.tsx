@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { apiRequest } from '@/lib/queryClient';
 import { Loader2, Mail, ArrowRight, Smartphone } from 'lucide-react';
 import PhoneLogin from '@/components/auth/PhoneLogin';
 import OtpVerification from '@/components/auth/OtpVerification';
@@ -131,28 +132,17 @@ export default function Login() {
   const handleLocationSetupSuccess = async (locationData: any) => {
     try {
       // Update user location on backend
-      const response = await fetch('/api/v1/auth/location', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
+      const updatedUserData = await apiRequest('PATCH', '/api/v1/auth/location', {
+        location: {
+          latitude: locationData.latitude,
+          longitude: locationData.longitude,
+          city: locationData.city,
+          address: locationData.address,
+          pincode: locationData.pincode,
         },
-        body: JSON.stringify({
-          location: {
-            latitude: locationData.latitude,
-            longitude: locationData.longitude,
-            city: locationData.city,
-            address: locationData.address,
-            pincode: locationData.pincode,
-          },
-        }),
+      }, {
+        'Authorization': `Bearer ${accessToken}`,
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to save location');
-      }
-
-      const updatedUserData = await response.json();
       
       // Complete sign in with updated location data
       // updatedUserData already has { success, message, user } structure

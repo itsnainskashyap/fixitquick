@@ -133,7 +133,7 @@ export function CartSidebar({
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: -20 }}
                           transition={{ delay: index * 0.1 }}
-                          className="flex items-center justify-between p-3 border border-border rounded-lg bg-card"
+                          className="flex items-center justify-between p-2 sm:p-3 border border-border rounded-lg bg-card"
                           data-testid={`cart-item-${item.id}`}
                         >
                           <div className="flex items-center space-x-3 flex-1">
@@ -160,7 +160,7 @@ export function CartSidebar({
                               <Minus className="w-3 h-3" />
                             </Button>
                             
-                            <span className="text-sm font-medium w-8 text-center">{item.quantity}</span>
+                            <span className="text-sm font-medium w-8 text-center text-foreground">{item.quantity}</span>
                             
                             <Button
                               variant="outline"

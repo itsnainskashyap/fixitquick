@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -357,10 +355,8 @@ export default function Orders() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background pb-20">
-        <Header onCartClick={() => setLocation('/cart')} cartItemsCount={getItemCount()} />
-        
-        <main className="pt-32 px-4 pb-6">
+      <div className="min-h-screen bg-background">
+        <main className="px-4 py-6">
           {/* Page Header Skeleton */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -430,20 +426,13 @@ export default function Orders() {
             ))}
           </div>
         </main>
-        
-        <BottomNavigation />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header 
-        onCartClick={() => setLocation('/cart')} 
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-32 px-4 pb-6">
+    <div className="min-h-screen bg-background">
+      <main className="px-4 py-6">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -612,8 +601,6 @@ export default function Orders() {
           </Tabs>
         </motion.div>
       </main>
-
-      <BottomNavigation />
     </div>
   );
 }

@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
 import { ServiceCard } from '@/components/ServiceCard';
-import { CartSidebar } from '@/components/CartSidebar';
-import { BottomNavigation } from '@/components/BottomNavigation';
-import { PWAInstallPrompt } from '@/components/PWAInstallPrompt';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
 import { useUserLocation } from '@/hooks/useUserLocation';
@@ -50,7 +46,6 @@ export default function Home() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { addItem, getItemCount } = useCart();
-  const [isCartOpen, setIsCartOpen] = useState(false);
   const { location: userLocation, status: locationStatus, error: locationError, detectLocation } = useUserLocation();
 
   // Fetch main categories (level 0) from backend for home page
@@ -103,9 +98,6 @@ export default function Home() {
   };
 
 
-  const handleLocationClick = () => {
-    setLocation('/location');
-  };
 
 
   const getUserGreeting = () => {
@@ -125,16 +117,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <PWAInstallPrompt />
-      
-      <Header
-        onCartClick={() => setIsCartOpen(true)}
-        onLocationClick={handleLocationClick}
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-32 px-4 pb-6">
+    <div className="px-4 pb-6">
         {/* Welcome Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -518,14 +501,6 @@ export default function Home() {
             </div>
           )}
         </motion.div>
-      </main>
-
-      <CartSidebar
-        isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
-      />
-
-      <BottomNavigation />
     </div>
   );
 }

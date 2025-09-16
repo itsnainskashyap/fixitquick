@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -98,7 +96,7 @@ export default function Cart() {
         cartItemsCount={getItemCount()}
       />
 
-      <main className="pt-32 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
