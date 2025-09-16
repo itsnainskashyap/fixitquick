@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles, TrendingUp, Clock, Star, MapPin, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import PromotionalMediaCarousel from '@/components/PromotionalMediaCarousel';
 
 interface ServiceCategory {
   id: string;
@@ -255,6 +256,36 @@ export default function Home() {
               Wallet: ₹{walletData.balance}
             </Button>
           </div>
+        </motion.div>
+
+        {/* Promotional Media Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="mb-6"
+        >
+          <PromotionalMediaCarousel
+            placement="header"
+            userId={user?.id}
+            className="rounded-lg overflow-hidden shadow-sm"
+            showNavigation={true}
+            showIndicators={true}
+            autoAdvance={true}
+            autoAdvanceDelay={4000}
+            maxItems={5}
+            onMediaClick={(media) => {
+              // Handle media click - redirect to target URL if available
+              if (media.targetUrl) {
+                window.open(media.targetUrl, '_blank');
+              }
+            }}
+            onMediaView={(mediaId) => {
+              // Track media views for analytics
+              console.log('Media viewed:', mediaId);
+            }}
+            data-testid="promotional-media-carousel"
+          />
         </motion.div>
 
         {/* Service Categories Grid */}
