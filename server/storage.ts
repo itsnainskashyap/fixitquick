@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, count, like, ilike, inArray, sql, type SQL, or, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, count, like, ilike, inArray, sql, type SQL, or, gte, lte, not } from "drizzle-orm";
 import { db } from "./db";
 import {
   type User,
@@ -192,14 +192,15 @@ import {
   insertServiceProviderProfileSchema,
 } from "@shared/schema";
 
-// Helper function to safely combine conditions for Drizzle where clauses
-function combineConditions(conditions: SQL[]): SQL<unknown> | undefined {
-  if (conditions.length === 0) {
+// Single typed combinator utility for WHERE conditions
+function whereAll(...conditions: Array<SQL<boolean> | undefined>): SQL<boolean> | undefined {
+  const validConditions = conditions.filter(Boolean) as SQL<boolean>[];
+  if (validConditions.length === 0) {
     return undefined;
-  } else if (conditions.length === 1) {
-    return conditions[0];
+  } else if (validConditions.length === 1) {
+    return validConditions[0];
   } else {
-    return and(...conditions);
+    return and(...validConditions);
   }
 }
 
@@ -1405,7 +1406,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(serviceCategories.isActive, true));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     const query = db.select().from(serviceCategories)
       .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     
@@ -1423,7 +1424,7 @@ export class PostgresStorage implements IStorage {
     }
     
     return await db.select().from(serviceCategories)
-      .where(combineConditions(conditions)!)
+      .where(whereAll(...conditions)!)
       .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
   }
 
@@ -1439,7 +1440,7 @@ export class PostgresStorage implements IStorage {
     }
     
     return await db.select().from(serviceCategories)
-      .where(combineConditions(conditions)!)
+      .where(whereAll(...conditions)!)
       .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
   }
 
@@ -1453,7 +1454,7 @@ export class PostgresStorage implements IStorage {
       // Get all descendants of a specific category
       const conditions: SQL[] = [eq(serviceCategories.parentId, parentId)];
       return await db.select().from(serviceCategories)
-        .where(combineConditions(conditions)!)
+        .where(whereAll(...conditions)!)
         .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     } else {
       // Get all categories ordered by hierarchy
@@ -1595,7 +1596,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(lte(serviceCategories.level, 1));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       return await db.select().from(serviceCategories)
         .where(whereClause)
@@ -1846,7 +1847,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(services.isTestService, filters.isTestService));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       return await baseQuery.where(whereClause).execute();
     } else {
@@ -2049,7 +2050,7 @@ export class PostgresStorage implements IStorage {
 
   // Order methods
   async getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]> {
-    const conditions: SQL[] = [];
+    const conditions: SQL<unknown>[] = [];
     if (filters?.userId) {
       conditions.push(eq(orders.userId, filters.userId));
     }
@@ -2057,12 +2058,10 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(orders.status, filters.status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     let baseQuery = db.select().from(orders);
     
-    if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
-    }
+    baseQuery = whereClause ? baseQuery.where(whereClause) : baseQuery;
     
     baseQuery = baseQuery.orderBy(desc(orders.createdAt));
     
@@ -2112,7 +2111,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       return await db.select().from(orders)
         .where(whereClause)
@@ -2129,7 +2128,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     return await db.select().from(orders)
       .where(whereClause!)
       .orderBy(desc(orders.createdAt));
@@ -2368,7 +2367,7 @@ export class PostgresStorage implements IStorage {
   async getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean; sortBy?: 'newest' | 'oldest' | 'price-asc' | 'price-desc' | 'rating' }): Promise<Part[]> {
     let baseQuery = db.select().from(parts);
     
-    const conditions: SQL[] = [];
+    const conditions: SQL<unknown>[] = [];
     if (filters?.isActive !== undefined) {
       conditions.push(eq(parts.isActive, filters.isActive));
     }
@@ -2379,13 +2378,11 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(parts.providerId, filters.providerId));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     
     // FIXED: Reliable sorting with proper fallbacks
     let sortedQuery = baseQuery;
-    if (whereClause) {
-      sortedQuery = sortedQuery.where(whereClause);
-    }
+    sortedQuery = whereClause ? sortedQuery.where(whereClause) : sortedQuery;
     
     // Apply sorting (default to newest first)
     const sortBy = filters?.sortBy || 'newest';
@@ -2725,7 +2722,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       return await baseQuery.where(whereClause);
     } else {
@@ -2799,10 +2796,10 @@ export class PostgresStorage implements IStorage {
     .orderBy(desc(serviceProviders.createdAt));
 
     if (limit) {
-      query = query.limit(limit);
+      query = limit ? query.limit(limit) : query;
     }
 
-    return await query as any[];
+    return await query;
   }
 
   async updateVerificationStatus(userId: string, params: {
@@ -3345,7 +3342,7 @@ export class PostgresStorage implements IStorage {
   async getReviews(filters?: { orderId?: string; revieweeId?: string }): Promise<Review[]> {
     let baseQuery = db.select().from(reviews);
     
-    const conditions: SQL[] = [];
+    const conditions: SQL<unknown>[] = [];
     if (filters?.orderId) {
       conditions.push(eq(reviews.orderId, filters.orderId));
     }
@@ -3353,10 +3350,8 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(reviews.revieweeId, filters.revieweeId));
     }
     
-    const whereClause = combineConditions(conditions);
-    if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
-    }
+    const whereClause = whereAll(...conditions);
+    baseQuery = whereClause ? baseQuery.where(whereClause) : baseQuery;
     
     return await baseQuery.orderBy(desc(reviews.createdAt));
   }
@@ -3429,11 +3424,9 @@ export class PostgresStorage implements IStorage {
       );
     }
     
-    const whereClause = combineConditions(conditions);
-    if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
-      countQuery = countQuery.where(whereClause);
-    }
+    const whereClause = whereAll(...conditions);
+    baseQuery = whereClause ? baseQuery.where(whereClause) : baseQuery;
+    countQuery = whereClause ? countQuery.where(whereClause) : countQuery;
     
     const [couponResults, totalResults] = await Promise.all([
       baseQuery.orderBy(desc(coupons.createdAt)).limit(limit).offset(offset),
@@ -3572,7 +3565,11 @@ export class PostgresStorage implements IStorage {
     
     // Check user restrictions
     if (coupon.userRestrictions) {
-      const restrictions = coupon.userRestrictions as any;
+      const restrictions = coupon.userRestrictions as { 
+        firstTimeOnly?: boolean;
+        specificUsers?: string[];
+        excludeUsers?: string[];
+      };
       
       if (restrictions.firstTimeOnly) {
         const userOrderCount = await db.select({ count: count(orders.id) })
@@ -3693,8 +3690,9 @@ export class PostgresStorage implements IStorage {
     
     if (filters?.userId) {
       const userFilter = eq(couponUsage.userId, filters.userId);
-      baseQuery = baseQuery.where(and(eq(couponUsage.couponId, couponId), userFilter));
-      countQuery = countQuery.where(and(eq(couponUsage.couponId, couponId), userFilter));
+      const combinedFilter = and(eq(couponUsage.couponId, couponId), userFilter);
+      baseQuery = baseQuery.where(combinedFilter);
+      countQuery = countQuery.where(combinedFilter);
     }
     
     const [usageResults, totalResults] = await Promise.all([
@@ -4004,12 +4002,13 @@ export class PostgresStorage implements IStorage {
     
     // Filter by categories if specified
     if (categoryIds.length > 0) {
-      baseQuery = baseQuery.where(and(
+      const categoryFilter = and(
         eq(coupons.isActive, true),
         sql`${coupons.validFrom} <= NOW()`,
         sql`${coupons.validUntil} > NOW()`,
         sql`${coupons.serviceCategories} && ${JSON.stringify(categoryIds)}`
-      ));
+      );
+      baseQuery = baseQuery.where(categoryFilter);
     }
     
     const results = await baseQuery.orderBy(desc(coupons.priority), desc(coupons.createdAt));
@@ -4067,7 +4066,7 @@ export class PostgresStorage implements IStorage {
       );
     }
     
-    const baseQuery = db.select().from(coupons).where(combineConditions(conditions) || sql`1=1`);
+    const baseQuery = db.select().from(coupons).where(whereAll(...conditions) || sql`1=1`);
     const results = await baseQuery.orderBy(desc(coupons.priority), desc(coupons.createdAt));
     
     // Filter based on user eligibility and usage
@@ -4077,7 +4076,11 @@ export class PostgresStorage implements IStorage {
       
       // Check user restrictions
       if (coupon.userRestrictions) {
-        const restrictions = coupon.userRestrictions as any;
+        const restrictions = coupon.userRestrictions as {
+          firstTimeOnly?: boolean;
+          specificUsers?: string[];
+          excludeUsers?: string[];
+        };
         
         if (restrictions.specificUsers && !restrictions.specificUsers.includes(userId)) {
           eligible = false;
@@ -4140,7 +4143,7 @@ export class PostgresStorage implements IStorage {
     
     const duplicatedCoupon: InsertCoupon = {
       ...originalCoupon,
-      id: undefined as any, // Remove id to let DB generate new one
+      // id is auto-generated by DB
       code: newCode,
       title: modifications.title || originalCoupon.title + ' (Copy)',
       usageCount: 0,
@@ -4151,8 +4154,7 @@ export class PostgresStorage implements IStorage {
       averageOrderValue: null,
       conversionRate: null,
       ...modifications,
-      createdAt: undefined as any, // Let DB set this
-      updatedAt: undefined as any  // Let DB set this
+      // createdAt and updatedAt are handled by DB defaults
     };
     
     return await this.createCoupon(duplicatedCoupon);
@@ -4226,10 +4228,8 @@ export class PostgresStorage implements IStorage {
       }
     }
 
-    const whereClause = combineConditions(conditions);
-    if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
-    }
+    const whereClause = whereAll(...conditions);
+    baseQuery = whereClause ? baseQuery.where(whereClause) : baseQuery;
 
     // Execute search with pagination
     const results = await baseQuery
@@ -4322,7 +4322,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(parts.providerId, filters.providerId));
     }
 
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -4682,7 +4682,7 @@ export class PostgresStorage implements IStorage {
 
     partsResults.forEach(part => suggestions.push(part.name));
 
-    return [...new Set(suggestions)]; // Remove duplicates
+    return Array.from(new Set(suggestions)); // Remove duplicates
   }
 
   async trackSearchQuery(userId: string | null | undefined, query: string, results: number, category?: string): Promise<void> {
@@ -4713,7 +4713,12 @@ export class PostgresStorage implements IStorage {
       .limit(limit);
 
     return searchSettings.map(setting => {
-      const data = setting.value as any;
+      const data = setting.value as {
+        query: string;
+        timestamp: string;
+        results: number;
+        userId?: string;
+      };
       return {
         query: data.query,
         timestamp: new Date(data.timestamp),
@@ -4737,7 +4742,10 @@ export class PostgresStorage implements IStorage {
     const queryCount: Record<string, { count: number; category?: string }> = {};
     
     searchSettings.forEach(setting => {
-      const data = setting.value as any;
+      const data = setting.value as {
+        query: string;
+        category?: string;
+      };
       if (data.query) {
         const query = data.query.toLowerCase();
         if (queryCount[query]) {
@@ -5451,7 +5459,7 @@ export class PostgresStorage implements IStorage {
     limit?: number;
     offset?: number;
   }): Promise<ServiceBooking[]> {
-    const conditions: SQL[] = [eq(serviceBookings.userId, userId)];
+    const conditions: SQL<unknown>[] = [eq(serviceBookings.userId, userId)];
     
     if (options?.status) {
       conditions.push(eq(serviceBookings.status, options.status));
@@ -5460,20 +5468,18 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(serviceBookings.bookingType, options.bookingType));
     }
 
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     let query = db.select().from(serviceBookings);
     
-    if (whereClause) {
-      query = query.where(whereClause);
-    }
+    query = whereClause ? query.where(whereClause) : query;
     
     query = query.orderBy(desc(serviceBookings.createdAt));
     
     if (options?.limit) {
-      query = query.limit(options.limit);
+      query = options.limit ? query.limit(options.limit) : query;
     }
     if (options?.offset) {
-      query = query.offset(options.offset);
+      query = options.offset ? query.offset(options.offset) : query;
     }
     
     return await query;
@@ -5587,26 +5593,24 @@ export class PostgresStorage implements IStorage {
     limit?: number;
     offset?: number;
   }): Promise<ProviderJobRequest[]> {
-    const conditions: SQL[] = [eq(providerJobRequests.providerId, providerId)];
+    const conditions: SQL<unknown>[] = [eq(providerJobRequests.providerId, providerId)];
     
     if (options?.status) {
       conditions.push(eq(providerJobRequests.status, options.status));
     }
 
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     let query = db.select().from(providerJobRequests);
     
-    if (whereClause) {
-      query = query.where(whereClause);
-    }
+    query = whereClause ? query.where(whereClause) : query;
     
     query = query.orderBy(desc(providerJobRequests.createdAt));
     
     if (options?.limit) {
-      query = query.limit(options.limit);
+      query = options.limit ? query.limit(options.limit) : query;
     }
     if (options?.offset) {
-      query = query.offset(options.offset);
+      query = options.offset ? query.offset(options.offset) : query;
     }
     
     return await query;
@@ -6230,7 +6234,7 @@ export class PostgresStorage implements IStorage {
 
   async getPartsProvidersByVerificationStatus(status: string): Promise<PartsProviderBusinessInfo[]> {
     return await db.select().from(partsProviderBusinessInfo)
-      .where(eq(partsProviderBusinessInfo.verificationStatus, status as any))
+      .where(eq(partsProviderBusinessInfo.verificationStatus, status))
       .orderBy(desc(partsProviderBusinessInfo.createdAt));
   }
 
@@ -6242,7 +6246,7 @@ export class PostgresStorage implements IStorage {
     const result = await db.update(partsProviderBusinessInfo)
       .set({
         isVerified: verificationData.isVerified,
-        verificationStatus: verificationData.verificationStatus as any,
+        verificationStatus: verificationData.verificationStatus,
         updatedAt: new Date(),
       })
       .where(eq(partsProviderBusinessInfo.userId, userId))
@@ -6267,10 +6271,10 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(partsInventoryMovements.providerId, filters.providerId));
     }
     if (filters?.movementType) {
-      conditions.push(eq(partsInventoryMovements.movementType, filters.movementType as any));
+      conditions.push(eq(partsInventoryMovements.movementType, filters.movementType));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -6347,7 +6351,7 @@ export class PostgresStorage implements IStorage {
         stock: newStock,
         lastStockUpdate: new Date(),
         updatedAt: new Date(),
-        availabilityStatus: availabilityStatus as any
+        availabilityStatus: availabilityStatus
       });
     }
 
@@ -6355,7 +6359,7 @@ export class PostgresStorage implements IStorage {
     const movement: InsertPartsInventoryMovement = {
       partId: params.partId,
       providerId: params.providerId,
-      movementType: params.movementType as any,
+      movementType: params.movementType,
       quantity: params.movementType === 'stock_out' || params.movementType === 'sold' || params.movementType === 'damaged' 
         ? -params.quantity 
         : params.quantity,
@@ -6407,7 +6411,7 @@ export class PostgresStorage implements IStorage {
     }
     
     return await db.select().from(parts)
-      .where(combineConditions(conditions)!)
+      .where(whereAll(...conditions)!)
       .orderBy(desc(parts.createdAt));
   }
 
@@ -6555,7 +6559,7 @@ export class PostgresStorage implements IStorage {
       (successCount > 0 ? 'partially_completed' : 'failed');
 
     await this.updatePartsBulkUpload(uploadId, {
-      status: finalStatus as any,
+      status: finalStatus,
       successCount,
       errorCount: errors.length,
       errors,
@@ -6620,7 +6624,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(supportTickets.priority, filters.priority));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -6720,7 +6724,7 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async markMessagesAsRead(ticketId: string, userId: string): Promise<void> {
+  async markSupportMessagesAsRead(ticketId: string, userId: string): Promise<void> {
     await db.update(supportTicketMessages)
       .set({ isRead: true })
       .where(and(
@@ -6743,7 +6747,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(faq.isPublished, published));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -6826,7 +6830,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(supportCallbackRequests.status, status));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -6871,7 +6875,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(supportAgents.isActive, isActive));
     }
     
-    const whereClause = combineConditions(conditions);
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       baseQuery = baseQuery.where(whereClause);
     }
@@ -7127,7 +7131,7 @@ export class PostgresStorage implements IStorage {
         conditions.push(eq(serviceProviderProfiles.verificationStatus, status));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
 
       const result = await db.select()
         .from(serviceProviderProfiles)
@@ -7221,7 +7225,7 @@ export class PostgresStorage implements IStorage {
       }
       
       const result = await db.select().from(referralRecords)
-        .where(combineConditions(conditions))
+        .where(whereAll(...conditions)!)
         .orderBy(desc(referralRecords.createdAt));
       
       return result;
@@ -7504,7 +7508,7 @@ export class PostgresStorage implements IStorage {
       }
       
       const result = await db.select().from(accountDeletionRequests)
-        .where(combineConditions(conditions))
+        .where(whereAll(...conditions)!)
         .orderBy(desc(accountDeletionRequests.createdAt));
       
       return result;
@@ -7618,7 +7622,7 @@ export class PostgresStorage implements IStorage {
         ));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select().from(taxCategories)
         .where(whereClause)
@@ -7712,7 +7716,7 @@ export class PostgresStorage implements IStorage {
         conditions.push(eq(taxCategories.isActive, true));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select().from(taxCategories)
         .where(whereClause)
@@ -7834,7 +7838,7 @@ export class PostgresStorage implements IStorage {
         ));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       // Get total count
       const totalResult = await db.select({ count: count() }).from(taxes).where(whereClause);
@@ -7984,7 +7988,7 @@ export class PostgresStorage implements IStorage {
         lte(sql`${context.orderValue}`, taxes.maxOrderValue)
       ));
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
 
       const result = await db.select().from(taxes)
         .where(whereClause)
@@ -8044,7 +8048,7 @@ export class PostgresStorage implements IStorage {
         conditions.push(eq(taxes.isActive, true));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select().from(taxes)
         .where(whereClause)
@@ -8086,7 +8090,7 @@ export class PostgresStorage implements IStorage {
       // Location-based taxes
       conditions.push(eq(taxes.locationBased, true));
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select().from(taxes)
         .where(whereClause)
@@ -8116,7 +8120,7 @@ export class PostgresStorage implements IStorage {
         conditions.push(eq(taxes.isActive, true));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select().from(taxes)
         .where(whereClause)
@@ -8717,7 +8721,7 @@ export class PostgresStorage implements IStorage {
 
       const newTaxData: InsertTax = {
         ...originalTax,
-        id: undefined as any,
+        // id will be auto-generated by DB
         code: newCode,
         name: `${originalTax.name} (Copy)`,
         isActive: false, // Start as inactive
@@ -8848,7 +8852,7 @@ export class PostgresStorage implements IStorage {
       let query = db.select().from(promotionalMedia);
       
       if (conditions.length > 0) {
-        query = query.where(combineConditions(conditions));
+        query = query.where(whereAll(...conditions)!);
       }
 
       // Apply sorting
@@ -8874,7 +8878,7 @@ export class PostgresStorage implements IStorage {
       // Get total count
       let countQuery = db.select({ count: count() }).from(promotionalMedia);
       if (conditions.length > 0) {
-        countQuery = countQuery.where(combineConditions(conditions));
+        countQuery = countQuery.where(whereAll(...conditions)!);
       }
       const [{ count: total }] = await countQuery;
 
@@ -9051,7 +9055,7 @@ export class PostgresStorage implements IStorage {
         updatedAt: promotionalMedia.updatedAt
       })
         .from(promotionalMedia)
-        .where(combineConditions(conditions))
+        .where(whereAll(...conditions)!)
         .orderBy(desc(promotionalMedia.priority), asc(promotionalMedia.displayOrder))
         .limit(filters?.limit || 10);
 
@@ -9134,7 +9138,7 @@ export class PostgresStorage implements IStorage {
         sessionId: context.sessionId,
         eventType: 'impression',
         placement: context.placement,
-        deviceType: context.deviceType as any,
+        deviceType: context.deviceType,
         userAgent: context.userAgent,
         ipAddress: context.ipAddress,
         viewportSize: context.viewportSize,
@@ -9171,7 +9175,7 @@ export class PostgresStorage implements IStorage {
         eventType: 'click',
         placement: context.placement,
         clickPosition: context.clickPosition,
-        deviceType: context.deviceType as any,
+        deviceType: context.deviceType,
         userAgent: context.userAgent,
         ipAddress: context.ipAddress,
         metadata: context.metadata || {}
@@ -9189,7 +9193,7 @@ export class PostgresStorage implements IStorage {
     try {
       await this.createPromotionalMediaAnalytics({
         mediaId,
-        eventType: eventType as any,
+        eventType: eventType,
         ...context
       });
     } catch (error) {
@@ -9641,7 +9645,7 @@ export class PostgresStorage implements IStorage {
 
       const media = await db.select()
         .from(promotionalMedia)
-        .where(combineConditions(conditions))
+        .where(whereAll(...conditions)!)
         .orderBy(asc(promotionalMedia.startDate));
       
       return media;
@@ -9779,7 +9783,7 @@ export class PostgresStorage implements IStorage {
 
       const media = await db.select()
         .from(promotionalMedia)
-        .where(combineConditions(conditions))
+        .where(whereAll(...conditions)!)
         .orderBy(asc(promotionalMedia.displayOrder));
       
       return media;
@@ -9858,7 +9862,11 @@ export class PostgresStorage implements IStorage {
       }
 
       // Check targeting rules
-      const targetAudience = media.targetAudience as any;
+      const targetAudience = media.targetAudience as {
+        userRoles?: string[];
+        minimumOrderCount?: number;
+        excludeUserIds?: string[];
+      } | null;
       
       if (targetAudience?.userRoles && userContext.userRole) {
         if (!targetAudience.userRoles.includes(userContext.userRole)) {
@@ -9879,7 +9887,11 @@ export class PostgresStorage implements IStorage {
       }
 
       // Check geographic targeting
-      const geoTargeting = media.geographicTargeting as any;
+      const geoTargeting = media.geographicTargeting as {
+        countries?: string[];
+        states?: string[];
+        cities?: string[];
+      } | null;
       
       if (geoTargeting?.countries && userContext.location?.country) {
         if (!geoTargeting.countries.includes(userContext.location.country)) {
@@ -9963,7 +9975,7 @@ export class PostgresStorage implements IStorage {
 
       const newMediaData: PromotionalMediaCreateData & { createdBy: string } = {
         ...originalMedia,
-        id: undefined as any,
+        // id will be auto-generated by DB
         title: `${originalMedia.title} (Copy)`,
         status: 'draft',
         moderationStatus: 'pending',
@@ -10191,13 +10203,13 @@ export class PostgresStorage implements IStorage {
     try {
       console.log(`📋 storage.listProviderJobRequests: Getting job requests for provider ${providerId}${status ? ` with status ${status}` : ''}`);
       
-      const conditions: SQL[] = [eq(providerJobRequests.providerId, providerId)];
+      const conditions: SQL<unknown>[] = [eq(providerJobRequests.providerId, providerId)];
       
       if (status) {
-        conditions.push(eq(providerJobRequests.status, status as any));
+        conditions.push(eq(providerJobRequests.status, status));
       }
 
-      const whereClause = combineConditions(conditions);
+      const whereClause = whereAll(...conditions);
       
       const result = await db.select()
         .from(providerJobRequests)
@@ -10342,9 +10354,9 @@ export class PostgresStorage implements IStorage {
     }
   }
 
-  async expireJobRequests(orderId: string): Promise<{ expired: number; promoted?: boolean }> {
+  async expireJobRequestsForOrder(orderId: string): Promise<{ expired: number; promoted?: boolean }> {
     try {
-      console.log(`⏰ storage.expireJobRequests: Expiring job requests for order ${orderId}`);
+      console.log(`⏰ storage.expireJobRequestsForOrder: Expiring job requests for order ${orderId}`);
       
       const result = await db.update(providerJobRequests)
         .set({
@@ -10357,7 +10369,7 @@ export class PostgresStorage implements IStorage {
         ))
         .returning();
 
-      console.log(`✅ storage.expireJobRequests: Expired ${result.length} job requests for order ${orderId}`);
+      console.log(`✅ storage.expireJobRequestsForOrder: Expired ${result.length} job requests for order ${orderId}`);
       
       // Check if we should promote backup providers
       const promotionResult = await this.promoteBackup(orderId);
@@ -10367,7 +10379,7 @@ export class PostgresStorage implements IStorage {
         promoted: promotionResult.success 
       };
     } catch (error) {
-      console.error(`❌ storage.expireJobRequests: Error expiring job requests:`, error);
+      console.error(`❌ storage.expireJobRequestsForOrder: Error expiring job requests:`, error);
       return { expired: 0, promoted: false };
     }
   }
