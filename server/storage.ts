@@ -1252,17 +1252,25 @@ export class PostgresStorage implements IStorage {
 
   // (IMPORTANT) these user operations are mandatory for Replit Auth.
   async upsertUser(userData: UpsertUser): Promise<User> {
+    console.log('🔧 Upserting user:', { id: userData.id, email: userData.email });
+    
     const [user] = await db
       .insert(users)
       .values(userData)
       .onConflictDoUpdate({
-        target: users.id,
+        target: users.email, // Fix: Use email as conflict target for Replit Auth
         set: {
-          ...userData,
+          id: userData.id, // Update ID in case Replit ID changed
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          profileImageUrl: userData.profileImageUrl,
+          lastLoginAt: new Date(),
           updatedAt: new Date(),
         },
       })
       .returning();
+    
+    console.log('✅ User upserted successfully:', { id: user.id, email: user.email });
     return user;
   }
 
