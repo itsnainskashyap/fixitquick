@@ -55,7 +55,9 @@ import {
   ArrowRight,
   TrendingUp,
   Users,
-  Briefcase
+  Briefcase,
+  Truck,
+  ShoppingCart
 } from 'lucide-react';
 
 // Email update validation schema
