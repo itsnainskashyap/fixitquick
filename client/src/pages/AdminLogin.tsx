@@ -34,7 +34,7 @@ const adminLoginSchema = z.object({
   password: z
     .string()
     .min(1, 'Password is required')
-    .min(6, 'Password must be at least 6 characters'),
+    .min(4, 'Password must be at least 4 characters'), // Relaxed for development
 });
 
 type AdminLoginForm = z.infer<typeof adminLoginSchema>;
@@ -50,8 +50,8 @@ export default function AdminLogin() {
   const form = useForm<AdminLoginForm>({
     resolver: zodResolver(adminLoginSchema),
     defaultValues: {
-      email: '',
-      password: '',
+      email: import.meta.env.DEV ? 'nainspagal@gmail.com' : '', // Pre-fill dev credentials
+      password: import.meta.env.DEV ? 'Sinha@1357' : '',
     },
   });
 
@@ -213,7 +213,7 @@ export default function AdminLogin() {
                             <Input
                               {...field}
                               type="text"
-                              placeholder="Enter admin email or username"
+                              placeholder={import.meta.env.DEV ? "Dev: nainspagal@gmail.com" : "Enter admin email"}
                               className="pl-10 h-12 bg-gray-50 dark:bg-slate-700 border-gray-200 dark:border-slate-600 focus:border-blue-500 focus:ring-blue-500"
                               disabled={loginMutation.isPending || isAuthRefreshing}
                               data-testid="input-admin-email"
@@ -240,7 +240,7 @@ export default function AdminLogin() {
                             <Input
                               {...field}
                               type={showPassword ? 'text' : 'password'}
-                              placeholder="Enter admin password"
+                              placeholder={import.meta.env.DEV ? "Dev: Sinha@1357" : "Enter admin password"}
                               className="pl-10 pr-12 h-12 bg-gray-50 dark:bg-slate-700 border-gray-200 dark:border-slate-600 focus:border-blue-500 focus:ring-blue-500"
                               disabled={loginMutation.isPending || isAuthRefreshing}
                               data-testid="input-admin-password"
@@ -286,6 +286,27 @@ export default function AdminLogin() {
                   </Button>
                 </form>
               </Form>
+
+              {/* Development Hints */}
+              {import.meta.env.DEV && (
+                <motion.div 
+                  className="pt-4 border-t border-gray-100 dark:border-slate-700"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.6, delay: 0.3 }}
+                >
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 mb-2">
+                      <AlertCircle className="w-3 h-3" />
+                      <span className="font-medium">Development Mode</span>
+                    </div>
+                    <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
+                      <p><strong>Email:</strong> nainspagal@gmail.com</p>
+                      <p><strong>Password:</strong> Sinha@1357</p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
 
               {/* Security Notice */}
               <motion.div 
