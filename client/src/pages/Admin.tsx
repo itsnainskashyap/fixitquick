@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, Reorder } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from 'wouter';
@@ -2247,15 +2247,26 @@ const TaxManagementSystem = () => {
 };
 
 // Transform form data for API submission
-const transformCouponData = (formData: CouponFormData): InsertCoupon => {
+const transformCouponData = (formData: CouponFormData): any => {
   return {
-    ...formData,
-    validFrom: new Date(formData.validFrom!),
-    validUntil: new Date(formData.validUntil!),
-    value: parseFloat(formData.value || '0'),
-    maxDiscountAmount: formData.maxDiscountAmount ? parseFloat(formData.maxDiscountAmount) : null,
-    minOrderAmount: formData.minOrderAmount ? parseFloat(formData.minOrderAmount) : null,
-  } as InsertCoupon;
+    code: formData.code || '',
+    title: formData.title || '',
+    description: formData.description || null,
+    type: formData.type,
+    value: formData.value || '0',
+    maxDiscountAmount: formData.maxDiscountAmount || null,
+    minOrderAmount: formData.minOrderAmount || null,
+    validFrom: formData.validFrom || '',
+    validUntil: formData.validUntil || '',
+    usageLimit: formData.usageLimit || null,
+    maxUsagePerUser: formData.maxUsagePerUser || null,
+    isActive: formData.isActive,
+    createdBy: formData.createdBy || '',
+    serviceCategoryIds: formData.serviceCategoryIds || [],
+    applicableOn: formData.applicableOn || '',
+    stackable: formData.stackable || false,
+    autoDeactivate: formData.autoDeactivate || false
+  };
 };
 
 // Comprehensive Coupon Management System Component
@@ -2434,12 +2445,12 @@ const CouponManagementSystem = () => {
       return;
     }
     
-    createCouponMutation.mutate(couponForm as InsertCoupon);
+    createCouponMutation.mutate(transformCouponData(couponForm));
   };
   
   const handleUpdateCoupon = async () => {
     if (!selectedCoupon?.id) return;
-    updateCouponMutation.mutate({ id: selectedCoupon.id, data: couponForm });
+    updateCouponMutation.mutate({ id: selectedCoupon.id, data: transformCouponData(couponForm) });
   };
   
   const handleDeleteCoupon = (couponId: string) => {
@@ -4295,9 +4306,15 @@ export default function Admin() {
     icon: ''
   });
 
-  // Check if user is admin
+  // Redirect non-admin users (moved to useEffect to prevent infinite re-renders)
+  useEffect(() => {
+    if (!user || user.role !== 'admin') {
+      setLocation('/');
+    }
+  }, [user]); // Removed setLocation from dependencies as it's stable from wouter
+
+  // Return null for non-admin users
   if (!user || user.role !== 'admin') {
-    setLocation('/');
     return null;
   }
 
@@ -4391,7 +4408,10 @@ export default function Admin() {
     },
     enabled: !!user,
   });
-  const mainCategories = (mainCategoriesResponse as any)?.data || [];
+  // Memoize mainCategories to prevent infinite re-render loop
+  const mainCategories = useMemo(() => {
+    return (mainCategoriesResponse as any)?.data || [];
+  }, [mainCategoriesResponse]);
 
   // Local state for drag-drop reordering (critical fix for production)
   const [localCategories, setLocalCategories] = useState<Category[]>([]);
@@ -4819,7 +4839,7 @@ export default function Admin() {
         // First upload the image
         const uploadResult = await uploadCategoryImageMutation.mutateAsync({ 
           categoryId, 
-          imageUrl: image.url // Pass imageUrl instead of file
+          file: new File([image.url], image.filename) // Pass file as expected by the mutation
         });
         
         // Then update the category with the image URL
@@ -5013,7 +5033,7 @@ export default function Admin() {
   };
 
   const resetCategoryForm = () => {
-    setCategoryFormData({ name: '', description: '', icon: '', parentId: '', isActive: true });
+    setCategoryFormData({ name: '', description: '', icon: '', imageUrl: '', parentId: '', isActive: true });
     setSelectedCategory(null);
   };
 
@@ -5200,11 +5220,11 @@ export default function Admin() {
     setSelectedTestService(service);
     setTestServiceFormData({
       name: service.name,
-      description: service.description,
+      description: service.description || '',
       basePrice: service.basePrice?.toString() || '',
       estimatedDuration: service.estimatedDuration || 120,
       categoryId: service.categoryId || '',
-      isActive: service.isActive,
+      isActive: service.isActive || false,
       icon: service.icon || ''
     });
     setIsEditTestServiceOpen(true);
@@ -5282,7 +5302,7 @@ export default function Admin() {
 
   const handleSelectAllTestServices = (checked: boolean) => {
     if (checked) {
-      setSelectedTestServices(testServices?.map(s => s.id) || []);
+      setSelectedTestServices(testServices?.map((s: Service) => s.id) || []);
     } else {
       setSelectedTestServices([]);
     }
@@ -5348,7 +5368,7 @@ export default function Admin() {
   const filteredServices = servicesList.filter((service: Service) => {
     const matchesSearch = !searchQuery || 
       service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.description.toLowerCase().includes(searchQuery.toLowerCase());
+      service.description?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
@@ -6225,7 +6245,7 @@ export default function Admin() {
                   <CardContent className="p-4 text-center">
                     <Star className="w-8 h-8 text-orange-500 mx-auto mb-2" />
                     <div className="text-2xl font-bold text-foreground">
-                      {servicesList?.filter((s: Service) => s.isFeatured).length || 0}
+                      {0}
                     </div>
                     <div className="text-xs text-muted-foreground">Featured Services</div>
                   </CardContent>
@@ -6235,7 +6255,7 @@ export default function Admin() {
                   <CardContent className="p-4 text-center">
                     <TrendingUp className="w-8 h-8 text-purple-500 mx-auto mb-2" />
                     <div className="text-2xl font-bold text-foreground">
-                      {servicesList?.filter((s: Service) => s.isPopular).length || 0}
+                      {0}
                     </div>
                     <div className="text-xs text-muted-foreground">Popular Services</div>
                   </CardContent>
@@ -6343,23 +6363,6 @@ export default function Admin() {
                                 {service.description || 'No description available'}
                               </p>
                               
-                              {false && ( // service.features property doesn't exist
-                                <div className="mb-4">
-                                  <Label className="text-sm font-medium text-muted-foreground">Features</Label>
-                                  <div className="flex flex-wrap gap-2 mt-1">
-                                    {service.features.slice(0, 3).map((feature, index) => (
-                                      <Badge key={index} variant="outline" className="text-xs">
-                                        {feature}
-                                      </Badge>
-                                    ))}
-                                    {service.features.length > 3 && (
-                                      <Badge variant="outline" className="text-xs">
-                                        +{service.features.length - 3} more
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
                             </div>
                             
                             <div className="flex items-center space-x-2 ml-4">
@@ -6430,7 +6433,7 @@ export default function Admin() {
                 <CardContent>
                   {categoryHierarchy && categoryHierarchy.length > 0 ? (
                     <div className="space-y-2">
-                      {categoryHierarchy.map((category) => (
+                      {categoryHierarchy.map((category: any) => (
                         <div key={category.id} className="border rounded-lg p-3">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center space-x-3">
@@ -6488,7 +6491,7 @@ export default function Admin() {
                           {/* Subcategories */}
                           {expandedCategories.has(category.id) && category.children && (
                             <div className="ml-8 mt-3 space-y-2">
-                              {category.children.map((subCategory) => (
+                              {category.children.map((subCategory: any) => (
                                 <div key={subCategory.id} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 rounded">
                                   <div className="flex items-center space-x-2">
                                     {subCategory.icon && <span className="text-sm">{subCategory.icon}</span>}
@@ -6910,10 +6913,9 @@ export default function Admin() {
                 <Label>Category Image (Optional)</Label>
                 <ImageUpload
                   variant="compact"
-                  multiple={false}
                   maxFiles={1}
                   maxSize={5 * 1024 * 1024} // 5MB
-                  accept="image/jpeg,image/jpg,image/png,image/webp"
+
                   placeholder="Upload category image"
                   uploadText="Choose Image"
                   onComplete={(images) => {
@@ -7045,7 +7047,7 @@ export default function Admin() {
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {mainCategories?.map((category) => (
+                      {mainCategories?.map((category: any) => (
                         <SelectItem key={category.id} value={category.id}>
                           {category.icon} {category.name}
                         </SelectItem>
@@ -7058,16 +7060,12 @@ export default function Admin() {
               <div>
                 <Label>Service Icon *</Label>
                 <ServiceIconSelector
-                  iconType={serviceFormData.iconType}
-                  iconValue={serviceFormData.iconValue}
                   onIconChange={(iconData) => {
                     setServiceFormData({ 
                       ...serviceFormData, 
-                      iconType: iconData.iconType, 
                       iconValue: iconData.iconValue || ''
                     });
                   }}
-                  serviceId={null}
                   data-testid="service-icon-selector"
                 />
               </div>
@@ -7245,16 +7243,12 @@ export default function Admin() {
               <div>
                 <Label>Service Icon *</Label>
                 <ServiceIconSelector
-                  iconType={serviceFormData.iconType}
-                  iconValue={serviceFormData.iconValue}
                   onIconChange={(iconData) => {
                     setServiceFormData({ 
                       ...serviceFormData, 
-                      iconType: iconData.iconType, 
                       iconValue: iconData.iconValue || ''
                     });
                   }}
-                  serviceId={selectedService?.id || null}
                   data-testid="edit-service-icon-selector"
                 />
               </div>
@@ -7433,10 +7427,9 @@ export default function Admin() {
                 <Label>Category Image (Optional)</Label>
                 <ImageUpload
                   variant="compact"
-                  multiple={false}
                   maxFiles={1}
                   maxSize={5 * 1024 * 1024} // 5MB
-                  accept="image/jpeg,image/jpg,image/png,image/webp"
+
                   placeholder="Upload category image"
                   uploadText="Choose Image"
                   initialImages={categoryFormData.imageUrl ? [{

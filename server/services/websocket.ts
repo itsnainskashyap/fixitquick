@@ -183,6 +183,12 @@ class WebSocketManager {
         case 'unsubscribe_order':
           await this.handleOrderUnsubscription(connectionId, message.data);
           break;
+        case 'subscribe_service':
+          await this.handleServiceSubscription(connectionId, message.data);
+          break;
+        case 'heartbeat':
+          await this.handleHeartbeat(connectionId, message.data);
+          break;
         case 'ping':
           this.sendToConnection(connectionId, { type: 'pong', data: { timestamp: Date.now() } });
           break;
@@ -841,6 +847,107 @@ class WebSocketManager {
       type: 'order_unsubscribed',
       data: { orderId, timestamp: Date.now() }
     });
+  }
+
+  private async handleServiceSubscription(connectionId: string, subscriptionData: any) {
+    const ws = this.connections.get(connectionId);
+    if (!ws || !ws.isAuthenticated) {
+      this.sendToConnection(connectionId, {
+        type: 'error',
+        data: { message: 'Authentication required' }
+      });
+      return;
+    }
+
+    try {
+      // Input validation
+      if (!subscriptionData || !subscriptionData.serviceId) {
+        this.sendToConnection(connectionId, {
+          type: 'error',
+          data: { message: 'Service ID required' }
+        });
+        return;
+      }
+
+      const { serviceId, location } = subscriptionData;
+      const userId = ws.userId!;
+
+      // Validate serviceId format
+      if (typeof serviceId !== 'string' || serviceId.length < 10) {
+        this.sendToConnection(connectionId, {
+          type: 'error',
+          data: { message: 'Invalid service ID format' }
+        });
+        return;
+      }
+
+      // Join service-specific room for notifications
+      const serviceRoom = `service:${serviceId}`;
+      await this.joinRoom(serviceRoom, connectionId);
+
+      // If location provided, also join location-based room
+      if (location && location.latitude && location.longitude) {
+        // Create location-based room ID (simplified grid system)
+        const gridLat = Math.floor(location.latitude * 100); // ~1km precision
+        const gridLng = Math.floor(location.longitude * 100);
+        const locationRoom = `location:${gridLat}:${gridLng}`;
+        await this.joinRoom(locationRoom, connectionId);
+      }
+
+      this.sendToConnection(connectionId, {
+        type: 'service_subscribed',
+        data: {
+          serviceId,
+          location,
+          timestamp: Date.now(),
+          message: 'Subscribed to service notifications'
+        }
+      });
+
+      console.log(`User ${userId} subscribed to service ${serviceId}`);
+    } catch (error) {
+      console.error('Service subscription error:', error);
+      this.sendToConnection(connectionId, {
+        type: 'error',
+        data: { message: 'Failed to subscribe to service' }
+      });
+    }
+  }
+
+  private async handleHeartbeat(connectionId: string, heartbeatData: any) {
+    const ws = this.connections.get(connectionId);
+    if (!ws) {
+      return; // Connection no longer exists
+    }
+
+    try {
+      // Update last activity timestamp
+      ws.lastPing = Date.now();
+
+      // Optional: Include client-provided data for monitoring
+      const clientTimestamp = heartbeatData?.timestamp || Date.now();
+      const serverTimestamp = Date.now();
+      const roundTripTime = serverTimestamp - clientTimestamp;
+
+      // Send heartbeat acknowledgment
+      this.sendToConnection(connectionId, {
+        type: 'heartbeat_ack',
+        data: {
+          serverTimestamp,
+          clientTimestamp,
+          roundTripTime: roundTripTime > 0 ? roundTripTime : 0,
+          connectionUptime: ws.connectionTime ? serverTimestamp - ws.connectionTime : 0
+        }
+      });
+
+      // Optional: Log heartbeat for connection monitoring
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`Heartbeat from connection ${connectionId}, RTT: ${roundTripTime}ms`);
+      }
+    } catch (error) {
+      console.error('Heartbeat handler error:', error);
+      // Don't send error response for heartbeats to avoid spam
+    }
   }
 
   private handleDisconnection(connectionId: string, clientIP?: string) {

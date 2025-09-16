@@ -2661,7 +2661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         role: user.role,
         email: user.email,
         timestamp: Date.now(),
-        exp: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+        exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours in seconds
       };
 
       const sessionSecret = process.env.SESSION_SECRET || 'fallback-secret-for-development';
