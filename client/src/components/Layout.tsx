@@ -133,7 +133,7 @@ export function Layout({
 
       {/* Floating Cart Widget - only show when authenticated and has items */}
       {isAuthenticated && getItemCount() > 0 && (
-        <FloatingCartWidget onCartClick={handleCartClick} />
+        <FloatingCartWidget onClose={() => setIsCartOpen(false)} />
       )}
 
       {/* Bottom Navigation */}

@@ -31,16 +31,16 @@ const getOidcConfig = memoize(
       );
       
       console.log('✅ OIDC configuration successfully created:', {
-        issuer: config.issuer,
-        authorization_endpoint: config.authorization_endpoint,
-        token_endpoint: config.token_endpoint,
-        userinfo_endpoint: config.userinfo_endpoint,
-        client_id: config.client_id
+        issuer: (config as any).issuer,
+        authorization_endpoint: (config as any).authorization_endpoint,
+        token_endpoint: (config as any).token_endpoint,
+        userinfo_endpoint: (config as any).userinfo_endpoint,
+        client_id: (config as any).client_id
       });
       
       return config;
     } catch (error) {
-      console.error('❌ OIDC configuration failed:', error.message);
+      console.error('❌ OIDC configuration failed:', (error as Error).message);
       throw error;
     }
   },
@@ -101,7 +101,7 @@ function findMatchingDomain(hostname: string): string | null {
   }
   
   // Check for partial matches (for cases where req.hostname might be different)
-  for (const [registered, original] of registeredDomains.entries()) {
+  for (const [registered, original] of Array.from(registeredDomains.entries())) {
     if (hostname === registered || registered.includes(hostname) || hostname.includes(registered)) {
       return original;
     }
@@ -131,10 +131,10 @@ export async function setupAuth(app: Express) {
   }
   
   console.log('✅ OIDC configuration ready for use:', {
-    issuer: config.issuer,
-    client_id: config.client_id,
-    hasAuthEndpoint: !!config.authorization_endpoint,
-    hasTokenEndpoint: !!config.token_endpoint
+    issuer: (config as any).issuer,
+    client_id: (config as any).client_id,
+    hasAuthEndpoint: !!(config as any).authorization_endpoint,
+    hasTokenEndpoint: !!(config as any).token_endpoint
   });
 
   const verify: VerifyFunction = async (
@@ -144,8 +144,8 @@ export async function setupAuth(app: Express) {
     try {
       const claims = tokens.claims();
       console.log('🔐 OAuth verify callback - claims:', { 
-        sub: claims.sub, 
-        email: claims.email,
+        sub: claims?.sub, 
+        email: claims?.email,
         hasAccessToken: !!tokens.access_token,
         hasRefreshToken: !!tokens.refresh_token,
         tokenType: tokens.token_type
@@ -155,14 +155,14 @@ export async function setupAuth(app: Express) {
       updateUserSession(user, tokens);
       await upsertUser(claims);
       
-      console.log('✅ OAuth verification successful for user:', claims.sub);
+      console.log('✅ OAuth verification successful for user:', claims?.sub);
       verified(null, user);
     } catch (error) {
       console.error('❌ OAuth verification failed:', error);
       console.error('OAuth verification error details:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+        name: (error as Error).name
       });
       verified(error, null);
     }
@@ -186,7 +186,7 @@ export async function setupAuth(app: Express) {
       name: strategyName,
       scope: "openid email profile offline_access",
       callbackURL,
-      issuer: config.issuer
+      issuer: (config as any).issuer
     });
     
     const strategy = new Strategy(
@@ -247,7 +247,7 @@ export async function setupAuth(app: Express) {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
       failureFlash: false
-    })(req, res, (err) => {
+    })(req, res, (err: any) => {
       if (err) {
         console.error(`❌ OAuth callback error for strategy ${matchingDomain}:`, err);
         console.error('Full error details:', {

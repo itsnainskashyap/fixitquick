@@ -177,7 +177,6 @@ export function ServiceIconSelector({
             ) : (
               <ImageUpload
                 variant="compact"
-                multiple={false}
                 maxFiles={1}
                 maxSize={5 * 1024 * 1024} // 5MB
                 accept="image/jpeg,image/jpg,image/png,image/webp"
@@ -296,7 +295,6 @@ export function ServiceIconSelector({
               ) : (
                 <ImageUpload
                   variant="compact"
-                  multiple={false}
                   maxFiles={1}
                   maxSize={5 * 1024 * 1024} // 5MB
                   accept="image/jpeg,image/jpg,image/png,image/webp"
