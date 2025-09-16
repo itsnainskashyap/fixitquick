@@ -19,6 +19,9 @@ console.log('ADMIN_EMAIL configured:', !!ADMIN_EMAIL);
 console.log('ADMIN_PASSWORD_HASH exists:', !!ADMIN_PASSWORD_HASH);
 console.log('ADMIN_PASSWORD_HASH length:', ADMIN_PASSWORD_HASH?.length || 0);
 console.log('ADMIN_PASSWORD_HASH format check:', ADMIN_PASSWORD_HASH?.startsWith('$2b$') ? 'Valid bcrypt' : 'Invalid format');
+console.log('DEV_ADMIN_ENABLED exists:', !!DEV_ADMIN_ENABLED);
+console.log('DEV_ADMIN_ENABLED value:', DEV_ADMIN_ENABLED);
+console.log('DEV_ADMIN_ENABLED should be:', 'true');
 
 // Test email comparison
 const testEmail = 'nainspagal@gmail.com';

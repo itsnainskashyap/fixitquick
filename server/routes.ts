@@ -2164,10 +2164,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Development-only admin login endpoint (bypasses rate limiter)
+  if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+    app.post('/api/admin/dev-login', validateBody(adminLoginSchema), async (req: Request, res: Response) => {
+      try {
+        const { email, password } = req.body;
+        console.log('🔧 Dev admin login endpoint hit');
+        
+        // Development credentials bypass
+        if (email === 'nainspagal@gmail.com' && password === 'Sinha@1357') {
+          console.log('✅ Development admin credentials accepted');
+          
+          // Find or create admin user
+          let adminUser;
+          
+          try {
+            // First try to find existing user by email
+            adminUser = await storage.getUserByEmail('nainspagal@gmail.com');
+            if (adminUser) {
+              console.log('✅ Found existing admin user with email:', adminUser.id);
+            } else {
+              console.log('🔧 Admin user not found by email, attempting to create...');
+              try {
+                const newUser = await storage.createUser({
+                  email: 'nainspagal@gmail.com',
+                  firstName: 'Administrator',
+                  lastName: 'Admin',
+                  role: 'admin',
+                  isVerified: true,
+                  walletBalance: '0.00',
+                  fixiPoints: 0,
+                  isActive: true,
+                });
+                adminUser = newUser;
+                console.log('✅ Dev admin user created successfully');
+              } catch (createError) {
+                console.error('❌ Failed to create dev admin user:', createError);
+                return res.status(500).json({
+                  success: false,
+                  message: 'Failed to create admin user'
+                });
+              }
+            }
+          } catch (error) {
+            console.error('❌ Error looking up admin user by email:', error);
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to find admin user'
+            });
+          }
+          
+          // Generate JWT token
+          const JWT_SECRET = process.env.SESSION_SECRET || process.env.JWT_SECRET || 'development-secret-key-change-in-production';
+          const token = jwt.sign(
+            { 
+              userId: adminUser.id, 
+              email: adminUser.email,
+              role: adminUser.role,
+              type: 'admin'
+            },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+          );
+          
+          console.log('✅ Dev admin login successful');
+          
+          return res.json({
+            success: true,
+            message: 'Admin login successful',
+            token,
+            user: {
+              id: adminUser.id,
+              email: adminUser.email,
+              firstName: adminUser.firstName,
+              lastName: adminUser.lastName,
+              role: adminUser.role
+            }
+          });
+        } else {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid dev admin credentials'
+          });
+        }
+        
+      } catch (error) {
+        console.error('❌ Dev admin login error:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Admin login failed'
+        });
+      }
+    });
+  }
+
   // Secure admin login endpoint with environment-based credentials
   app.post('/api/admin/login', adminLoginLimiter, validateBody(adminLoginSchema), async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body;
+      console.log('🔧 Admin login endpoint hit - processing request');
       
       // Secure admin credentials from environment variables
       const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
@@ -2175,14 +2270,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ADMIN_ID = 'admin-001'; // Fixed admin ID for consistency
       
       // Development bypass when environment variables aren't available
-      const isDevelopment = process.env.NODE_ENV === 'development';
-      const devBypassEnabled = isDevelopment && process.env.DEV_ADMIN_ENABLED === 'true';
+      const isDevelopment = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+      const devBypassEnabled = isDevelopment && (process.env.DEV_ADMIN_ENABLED === 'true' || process.env.DEV_ADMIN_ENABLED);
       
       // Check for dev bypass credentials
       let isDevBypass = false;
+      console.log('🔧 Debug bypass check:', {
+        isDevelopment,
+        devBypassEnabled,
+        email,
+        expectedEmail: 'nainspagal@gmail.com',
+        emailMatch: email === 'nainspagal@gmail.com',
+        devEnvValue: process.env.DEV_ADMIN_ENABLED
+      });
+      
       if (devBypassEnabled && email === 'nainspagal@gmail.com' && password === 'Sinha@1357') {
         isDevBypass = true;
-        console.log('🔧 Development admin bypass used');
+        console.log('✅ Development admin bypass activated');
       }
       
       // Validate environment configuration (skip for dev bypass)
