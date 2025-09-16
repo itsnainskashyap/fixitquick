@@ -60,6 +60,24 @@ import {
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
+
+// Helper function to transform service data for frontend compatibility
+function transformServiceForFrontend(service: any) {
+  return {
+    ...service,
+    price: parseFloat(service.basePrice || service.base_price || '0'),
+    rating: parseFloat(service.rating || '0'),
+    totalBookings: service.totalBookings || service.total_bookings || 0,
+    estimatedDuration: service.estimatedDuration || service.estimated_duration,
+    iconType: service.iconType || service.icon_type,
+    iconValue: service.iconValue || service.icon_value
+  };
+}
+
+// Helper function to transform array of services
+function transformServicesForFrontend(services: any[]) {
+  return services.map(transformServiceForFrontend);
+}
 import multer from "multer";
 import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
 import { objectStorageService } from "./services/objectStorage";
@@ -4061,7 +4079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      res.json(services);
+      res.json(transformServicesForFrontend(services));
     } catch (error) {
       console.error('Error fetching services:', error);
       res.status(500).json({ message: 'Failed to fetch services' });
@@ -4075,7 +4093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!userId) {
         // Return default suggested services when not authenticated
         const defaultServices = await storage.getServices({ isActive: true });
-        const suggested = defaultServices.slice(0, 6);
+        const suggested = transformServicesForFrontend(defaultServices.slice(0, 6));
         return res.json(suggested);
       }
       
@@ -4085,7 +4103,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (recentOrders.length === 0) {
         // If no history, return popular services
         const popularServices = await storage.getServices({ isActive: true });
-        return res.json(popularServices.slice(0, 6));
+        return res.json(transformServicesForFrontend(popularServices.slice(0, 6)));
       }
       
       // Extract categories from recent orders
@@ -4106,7 +4124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         suggested.push(...popularServices.slice(0, 6 - suggested.length));
       }
       
-      res.json(suggested.slice(0, 6));
+      res.json(transformServicesForFrontend(suggested.slice(0, 6)));
     } catch (error) {
       console.error('Error fetching suggestions:', error);
       res.status(500).json({ message: 'Failed to fetch suggestions' });
@@ -4123,7 +4141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Service not found' });
       }
       
-      res.json(service);
+      res.json(transformServiceForFrontend(service));
     } catch (error) {
       console.error('Error fetching service:', error);
       res.status(500).json({ message: 'Failed to fetch service' });
