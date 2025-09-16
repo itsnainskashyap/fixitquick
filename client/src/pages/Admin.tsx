@@ -954,7 +954,7 @@ const TaxManagementSystem = () => {
   const [selectedTax, setSelectedTax] = useState<Tax | null>(null);
   const [isCreateCategoryDialogOpen, setIsCreateCategoryDialogOpen] = useState(false);
   const [isEditCategoryDialogOpen, setIsEditCategoryDialogOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<TaxCategory | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<ServiceCategory | null>(null);
   const [previewOrderValue, setPreviewOrderValue] = useState(1000);
   const [taxForm, setTaxForm] = useState<Partial<InsertTax>>({
     type: 'percentage',
@@ -978,11 +978,9 @@ const TaxManagementSystem = () => {
     stateRestrictions: [],
     cityRestrictions: []
   });
-  const [categoryForm, setCategoryForm] = useState<Partial<InsertTaxCategory>>({
+  const [categoryForm, setCategoryForm] = useState<Partial<InsertServiceCategory>>({
     isActive: true,
-    priority: 1,
-    displayOrder: 0,
-    defaultRate: '0'
+    sortOrder: 0
   });
 
   const { toast } = useToast();
@@ -1011,27 +1009,27 @@ const TaxManagementSystem = () => {
     }
   });
 
-  // Fetch tax categories
+  // Fetch service categories
   const { data: categoriesData, isLoading: categoriesLoading } = useQuery({
-    queryKey: ['admin-tax-categories'],
+    queryKey: ['admin-service-categories'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/tax-categories');
+      return await apiRequest('GET', '/api/v1/admin/categories');
     }
   });
 
-  // Fetch tax statistics
+  // Fetch service statistics
   const { data: statsData, isLoading: statsLoading } = useQuery({
-    queryKey: ['admin-tax-statistics'],
+    queryKey: ['admin-service-statistics'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/taxes/statistics');
+      return await apiRequest('GET', '/api/v1/admin/services/statistics');
     }
   });
 
   // Fetch category statistics
   const { data: categoryStatsData, isLoading: categoryStatsLoading } = useQuery({
-    queryKey: ['admin-tax-category-statistics'],
+    queryKey: ['admin-service-category-statistics'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/tax-categories/statistics');
+      return await apiRequest('GET', '/api/v1/admin/services/statistics');
     }
   });
 
@@ -1040,7 +1038,7 @@ const TaxManagementSystem = () => {
     mutationFn: async (taxData: InsertTax) => await apiRequest('POST', '/api/v1/admin/taxes', taxData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       setIsCreateTaxDialogOpen(false);
       resetTaxForm();
       toast({ title: 'Tax created successfully', description: 'The new tax has been added.' });
@@ -1060,7 +1058,7 @@ const TaxManagementSystem = () => {
       await apiRequest('PUT', `/api/v1/admin/taxes/${id}`, taxData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       setIsEditTaxDialogOpen(false);
       setSelectedTax(null);
       resetTaxForm();
@@ -1080,7 +1078,7 @@ const TaxManagementSystem = () => {
     mutationFn: async (id: string) => await apiRequest('DELETE', `/api/v1/admin/taxes/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       toast({ title: 'Tax deleted successfully', description: 'The tax has been removed.' });
     },
     onError: (error: any) => {
@@ -1092,15 +1090,15 @@ const TaxManagementSystem = () => {
     }
   });
 
-  // Create tax category mutation
+  // Create service category mutation
   const createCategoryMutation = useMutation({
-    mutationFn: async (categoryData: InsertTaxCategory) => await apiRequest('POST', '/api/v1/admin/tax-categories', categoryData),
+    mutationFn: async (categoryData: InsertServiceCategory) => await apiRequest('POST', '/api/v1/admin/categories', categoryData),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-categories'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-category-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       setIsCreateCategoryDialogOpen(false);
       resetCategoryForm();
-      toast({ title: 'Tax category created successfully', description: 'The new category has been added.' });
+      toast({ title: 'Service category created successfully', description: 'The new category has been added.' });
     },
     onError: (error: any) => {
       toast({ 
@@ -1117,7 +1115,7 @@ const TaxManagementSystem = () => {
       await apiRequest('POST', `/api/v1/admin/taxes/bulk-${operation}`, { taxIds }),
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin-taxes'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-tax-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       setSelectedTaxes([]);
       toast({ 
         title: `Bulk ${variables.operation} completed`, 
@@ -1162,9 +1160,7 @@ const TaxManagementSystem = () => {
   const resetCategoryForm = () => {
     setCategoryForm({
       isActive: true,
-      priority: 1,
-      displayOrder: 0,
-      defaultRate: '0'
+      sortOrder: 0
     });
   };
 
@@ -1174,7 +1170,7 @@ const TaxManagementSystem = () => {
     setIsEditTaxDialogOpen(true);
   };
 
-  const handleEditCategory = (category: TaxCategory) => {
+  const handleEditCategory = (category: ServiceCategory) => {
     setSelectedCategory(category);
     setCategoryForm(category);
     setIsEditCategoryDialogOpen(true);
@@ -1347,7 +1343,7 @@ const TaxManagementSystem = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  {categories.map((category: TaxCategory) => (
+                  {categories.map((category: ServiceCategory) => (
                     <SelectItem key={category.id} value={category.id}>
                       {category.name}
                     </SelectItem>
@@ -1478,7 +1474,7 @@ const TaxManagementSystem = () => {
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">
-                            {categories.find((c: TaxCategory) => c.id === tax.categoryId)?.name || 'Uncategorized'}
+                            {categories.find((c: ServiceCategory) => c.id === tax.categoryId)?.name || 'Uncategorized'}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -1554,13 +1550,13 @@ const TaxManagementSystem = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {categories.map((category: TaxCategory) => (
+                    {categories.map((category: ServiceCategory) => (
                       <TableRow key={category.id}>
                         <TableCell>
                           <div>
                             <div className="font-medium text-foreground">{category.name}</div>
                             <div className="text-sm text-muted-foreground">
-                              {category.code}
+                              Level {category.level} • {category.serviceCount || 0} services
                             </div>
                             {category.description && (
                               <div className="text-xs text-muted-foreground mt-1">
@@ -1571,12 +1567,12 @@ const TaxManagementSystem = () => {
                         </TableCell>
                         <TableCell>
                           <div className="text-sm font-medium">
-                            {category.defaultRate}%
+                            {category.serviceCount || 0} services
                           </div>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">
-                            {category.priority}
+                            {category.sortOrder}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -1812,7 +1808,7 @@ const TaxManagementSystem = () => {
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  {categories.map((category: TaxCategory) => (
+                  {categories.map((category: ServiceCategory) => (
                     <SelectItem key={category.id} value={category.id}>
                       {category.name}
                     </SelectItem>
@@ -2064,8 +2060,8 @@ const TaxManagementSystem = () => {
               <Label htmlFor="category-code">Category Code *</Label>
               <Input
                 id="category-code"
-                value={categoryForm.code || ''}
-                onChange={(e) => setCategoryForm({ ...categoryForm, code: e.target.value })}
+                value={categoryForm.slug || ''}
+                onChange={(e) => setCategoryForm({ ...categoryForm, slug: e.target.value })}
                 placeholder="e.g., SVC, GOODS"
                 data-testid="category-code-input"
               />
@@ -2084,12 +2080,12 @@ const TaxManagementSystem = () => {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="default-rate">Default Rate (%)</Label>
+                <Label htmlFor="sort-order">Sort Order</Label>
                 <Input
                   id="default-rate"
                   type="number"
-                  value={categoryForm.defaultRate || '0'}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: e.target.value })}
+                  value={categoryForm.sortOrder || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, sortOrder: Number(e.target.value) })}
                   min="0"
                   max="100"
                   step="0.01"
@@ -2102,8 +2098,8 @@ const TaxManagementSystem = () => {
                 <Input
                   id="category-priority"
                   type="number"
-                  value={categoryForm.priority || 1}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, priority: Number(e.target.value) })}
+                  value={categoryForm.sortOrder || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, sortOrder: Number(e.target.value) })}
                   min="1"
                   data-testid="category-priority-input"
                 />
@@ -2133,8 +2129,8 @@ const TaxManagementSystem = () => {
               Cancel
             </Button>
             <Button
-              onClick={() => createCategoryMutation.mutate(categoryForm as InsertTaxCategory)}
-              disabled={!categoryForm.name || !categoryForm.code || createCategoryMutation.isPending}
+              onClick={() => createCategoryMutation.mutate(categoryForm as InsertServiceCategory)}
+              disabled={!categoryForm.name || !categoryForm.slug || createCategoryMutation.isPending}
               data-testid="save-create-category"
             >
               {createCategoryMutation.isPending ? 'Creating...' : 'Create Category'}
@@ -2179,8 +2175,8 @@ const TaxManagementSystem = () => {
                 <Input
                   id="edit-default-rate"
                   type="number"
-                  value={categoryForm.defaultRate || '0'}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, defaultRate: e.target.value })}
+                  value={categoryForm.sortOrder || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, sortOrder: Number(e.target.value) })}
                   min="0"
                   max="100"
                   step="0.01"
@@ -2193,8 +2189,8 @@ const TaxManagementSystem = () => {
                 <Input
                   id="edit-category-priority"
                   type="number"
-                  value={categoryForm.priority || 1}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, priority: Number(e.target.value) })}
+                  value={categoryForm.sortOrder || 0}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, sortOrder: Number(e.target.value) })}
                   min="1"
                   data-testid="edit-category-priority-input"
                 />
@@ -2234,7 +2230,7 @@ const TaxManagementSystem = () => {
                   resetCategoryForm();
                 }
               }}
-              disabled={!categoryForm.name || !categoryForm.code}
+              disabled={!categoryForm.name || !categoryForm.slug}
               data-testid="save-edit-category"
             >
               Update Category
