@@ -6175,6 +6175,533 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Parts provider registration schema
+  const partsProviderRegistrationSchema = z.object({
+    businessName: z.string().min(1, 'Business name is required').max(100),
+    businessType: z.enum(['individual', 'partnership', 'private_limited', 'public_limited', 'llp']),
+    businessAddress: z.object({
+      street: z.string().min(1, 'Street address is required'),
+      city: z.string().min(1, 'City is required'),
+      state: z.string().min(1, 'State is required'),
+      pincode: z.string().min(1, 'Pincode is required'),
+      country: z.string().default('India'),
+    }),
+    gstNumber: z.string().optional(),
+    panNumber: z.string().optional(),
+    bankAccountNumber: z.string().optional(),
+    bankName: z.string().optional(),
+    bankBranch: z.string().optional(),
+    ifscCode: z.string().optional(),
+    accountHolderName: z.string().optional(),
+    minOrderValue: z.number().min(0).default(0),
+    maxOrderValue: z.number().min(0).optional(),
+    processingTime: z.number().min(1).default(24),
+    shippingAreas: z.array(z.string()).default([]),
+    paymentTerms: z.enum(['immediate', '15_days', '30_days', '45_days']).default('immediate'),
+  });
+
+  // Complete parts provider registration
+  app.post('/api/v1/parts-provider/register', authMiddleware, validateBody(partsProviderRegistrationSchema), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const registrationData = req.body;
+
+      // Check if user is already a parts provider
+      const existingProvider = await storage.getPartsProviderBusinessInfo(userId);
+      if (existingProvider) {
+        return res.status(400).json({ message: 'You are already registered as a parts provider' });
+      }
+
+      // Create parts provider business info
+      const businessInfo = await storage.createPartsProviderBusinessInfo({
+        userId,
+        ...registrationData,
+        isVerified: false,
+        verificationStatus: 'pending',
+        isActive: true,
+        totalRevenue: '0.00',
+        totalOrders: 0,
+        averageRating: '0.00',
+        totalProducts: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Update user role
+      await storage.updateUserRole(userId, 'parts_provider');
+
+      res.json({
+        success: true,
+        message: 'Parts provider registration submitted for verification',
+        businessInfo: businessInfo
+      });
+    } catch (error) {
+      console.error('Error registering parts provider:', error);
+      res.status(500).json({ message: 'Failed to complete registration' });
+    }
+  });
+
+  // Get parts provider profile
+  app.get('/api/v1/parts-provider/profile', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      if (!businessInfo) {
+        return res.status(404).json({ message: 'Parts provider profile not found' });
+      }
+
+      res.json(businessInfo);
+    } catch (error) {
+      console.error('Error fetching parts provider profile:', error);
+      res.status(500).json({ message: 'Failed to fetch profile' });
+    }
+  });
+
+  // Update parts provider profile
+  app.put('/api/v1/parts-provider/profile', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const updateData = req.body;
+      const updatedProfile = await storage.updatePartsProviderBusinessInfo(userId, updateData);
+      
+      if (!updatedProfile) {
+        return res.status(404).json({ message: 'Parts provider profile not found' });
+      }
+
+      res.json(updatedProfile);
+    } catch (error) {
+      console.error('Error updating parts provider profile:', error);
+      res.status(500).json({ message: 'Failed to update profile' });
+    }
+  });
+
+  // Upload parts provider documents
+  app.post('/api/v1/parts-provider/documents', authMiddleware, requireRole(['parts_provider']), uploadLimiter, handleProviderDocumentUpload, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const { documentType } = req.body;
+      const files = (req as any).files;
+
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: 'No files uploaded' });
+      }
+
+      // Update business info with document URLs
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      if (!businessInfo) {
+        return res.status(404).json({ message: 'Parts provider profile not found' });
+      }
+
+      const documents = businessInfo.verificationDocuments || {};
+      const file = files[0];
+      
+      // Update documents based on type
+      switch (documentType) {
+        case 'businessLicense':
+          documents.businessLicense = { url: file.url, verified: false };
+          break;
+        case 'gstCertificate':
+          documents.gstCertificate = { url: file.url, verified: false };
+          break;
+        case 'panCard':
+          documents.panCard = { url: file.url, verified: false };
+          break;
+        case 'bankStatement':
+          documents.bankStatement = { url: file.url, verified: false };
+          break;
+        case 'tradeLicense':
+          documents.tradeLicense = { url: file.url, verified: false };
+          break;
+        case 'insuranceCertificate':
+          documents.insuranceCertificate = { url: file.url, verified: false };
+          break;
+        default:
+          return res.status(400).json({ message: 'Invalid document type' });
+      }
+
+      // Update verification status to documents_submitted
+      const updatedInfo = await storage.updatePartsProviderBusinessInfo(userId, {
+        verificationDocuments: documents,
+        verificationStatus: 'documents_submitted',
+      });
+
+      res.json({
+        success: true,
+        message: 'Document uploaded successfully',
+        businessInfo: updatedInfo
+      });
+    } catch (error) {
+      console.error('Error uploading parts provider document:', error);
+      res.status(500).json({ message: 'Failed to upload document' });
+    }
+  });
+
+  // Get parts provider documents status
+  app.get('/api/v1/parts-provider/documents', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      if (!businessInfo) {
+        return res.status(404).json({ message: 'Parts provider profile not found' });
+      }
+
+      res.json({
+        documents: businessInfo.verificationDocuments || {},
+        verificationStatus: businessInfo.verificationStatus,
+        isVerified: businessInfo.isVerified
+      });
+    } catch (error) {
+      console.error('Error fetching parts provider documents:', error);
+      res.status(500).json({ message: 'Failed to fetch documents' });
+    }
+  });
+
+  // ============================================================================
+  // ADMIN PARTS PROVIDER MANAGEMENT ENDPOINTS
+  // ============================================================================
+
+  // Get all parts providers
+  app.get('/api/v1/admin/parts-providers', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { status, page = 1, limit = 50 } = req.query;
+      const filters: any = {};
+      
+      if (status) {
+        filters.verificationStatus = status;
+      }
+
+      const partsProviders = await storage.getPartsProvidersByVerificationStatus(status as string || 'all');
+      
+      // Enrich with user data
+      const enrichedProviders = await Promise.all(
+        partsProviders.map(async (provider) => {
+          const user = await storage.getUser(provider.userId);
+          return {
+            ...provider,
+            user: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              phone: user.phone,
+              email: user.email,
+              createdAt: user.createdAt
+            } : null
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: enrichedProviders,
+        total: enrichedProviders.length,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string)
+      });
+    } catch (error) {
+      console.error('Error fetching parts providers:', error);
+      res.status(500).json({ message: 'Failed to fetch parts providers' });
+    }
+  });
+
+  // Get pending parts provider verifications
+  app.get('/api/v1/admin/parts-providers/pending', adminSessionMiddleware, async (req, res) => {
+    try {
+      const pendingStatuses = ['pending', 'documents_submitted', 'under_review'];
+      const allPendingProviders = [];
+
+      for (const status of pendingStatuses) {
+        const providers = await storage.getPartsProvidersByVerificationStatus(status);
+        allPendingProviders.push(...providers);
+      }
+
+      // Enrich with user data
+      const enrichedProviders = await Promise.all(
+        allPendingProviders.map(async (provider) => {
+          const user = await storage.getUser(provider.userId);
+          return {
+            ...provider,
+            user: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              phone: user.phone,
+              email: user.email,
+              createdAt: user.createdAt
+            } : null,
+            type: 'parts_provider'
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: enrichedProviders,
+        total: enrichedProviders.length
+      });
+    } catch (error) {
+      console.error('Error fetching pending parts providers:', error);
+      res.status(500).json({ message: 'Failed to fetch pending parts providers' });
+    }
+  });
+
+  // Approve/Reject parts provider
+  app.post('/api/v1/admin/parts-providers/:providerId/status', adminSessionMiddleware, validateBody(verificationActionSchema), async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const { action, notes, rejectionReason } = req.body;
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({ message: 'Admin not authenticated' });
+      }
+
+      const provider = await storage.getPartsProviderBusinessInfo(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Parts provider not found' });
+      }
+
+      let updateData: any = {};
+      let notificationMessage = '';
+
+      switch (action) {
+        case 'approve':
+          updateData = {
+            isVerified: true,
+            verificationStatus: 'approved',
+            verificationDate: new Date(),
+            verificationNotes: notes,
+          };
+          notificationMessage = 'Your parts provider application has been approved! Welcome to FixitQuick.';
+          break;
+
+        case 'reject':
+          if (!rejectionReason) {
+            return res.status(400).json({ message: 'Rejection reason is required' });
+          }
+          updateData = {
+            isVerified: false,
+            verificationStatus: 'rejected',
+            rejectionReason,
+            verificationNotes: notes,
+          };
+          notificationMessage = `Your parts provider application has been rejected. Reason: ${rejectionReason}`;
+          break;
+
+        case 'under_review':
+          updateData = {
+            verificationStatus: 'under_review',
+            verificationNotes: notes,
+          };
+          notificationMessage = 'Your parts provider application is under review. We will notify you once the review is complete.';
+          break;
+
+        case 'request_changes':
+          updateData = {
+            verificationStatus: 'pending',
+            resubmissionReason: rejectionReason,
+            verificationNotes: notes,
+          };
+          notificationMessage = `Please update your parts provider application. Required changes: ${rejectionReason}`;
+          break;
+
+        default:
+          return res.status(400).json({ message: 'Invalid action' });
+      }
+
+      const updatedProvider = await storage.updatePartsProviderBusinessInfo(providerId, updateData);
+
+      // Create notification
+      try {
+        await storage.createNotification({
+          userId: providerId,
+          title: 'Parts Provider Application Update',
+          message: notificationMessage,
+          type: 'verification',
+          isRead: false,
+          metadata: { action, adminId },
+          createdAt: new Date(),
+        });
+      } catch (notificationError) {
+        console.error('Error creating notification:', notificationError);
+        // Don't fail the main operation for notification errors
+      }
+
+      console.log(`✅ Admin ${adminId} ${action} parts provider ${providerId}`);
+
+      res.json({
+        success: true,
+        message: `Parts provider ${action} successfully`,
+        provider: updatedProvider
+      });
+    } catch (error) {
+      console.error('Error updating parts provider status:', error);
+      res.status(500).json({ message: 'Failed to update parts provider status' });
+    }
+  });
+
+  // Get specific parts provider details
+  app.get('/api/v1/admin/parts-providers/:providerId', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      
+      const provider = await storage.getPartsProviderBusinessInfo(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Parts provider not found' });
+      }
+
+      // Get user data
+      const user = await storage.getUser(provider.userId);
+      
+      // Get parts data
+      const parts = await storage.getPartsByProvider(providerId);
+      
+      // Get orders data
+      const orders = await storage.getOrdersByProvider(providerId);
+      
+      const enrichedProvider = {
+        ...provider,
+        user: user ? {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phone: user.phone,
+          email: user.email,
+          createdAt: user.createdAt
+        } : null,
+        stats: {
+          totalParts: parts.length,
+          totalOrders: orders.length,
+          completedOrders: orders.filter(order => order.status === 'completed').length,
+          avgRating: provider.averageRating || '0.00'
+        },
+        type: 'parts_provider'
+      };
+
+      res.json({
+        success: true,
+        data: enrichedProvider
+      });
+    } catch (error) {
+      console.error('Error fetching parts provider details:', error);
+      res.status(500).json({ message: 'Failed to fetch parts provider details' });
+    }
+  });
+
+  // Bulk approve/reject parts providers
+  app.post('/api/v1/admin/parts-providers/bulk-action', adminSessionMiddleware, async (req, res) => {
+    try {
+      const { providerIds, action, notes, rejectionReason } = req.body;
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({ message: 'Admin not authenticated' });
+      }
+
+      if (!Array.isArray(providerIds) || providerIds.length === 0) {
+        return res.status(400).json({ message: 'Provider IDs array is required' });
+      }
+
+      const results = [];
+      for (const providerId of providerIds) {
+        try {
+          let updateData: any = {};
+          let notificationMessage = '';
+
+          switch (action) {
+            case 'approve':
+              updateData = {
+                isVerified: true,
+                verificationStatus: 'approved',
+                verificationDate: new Date(),
+                verificationNotes: notes,
+              };
+              notificationMessage = 'Your parts provider application has been approved!';
+              break;
+
+            case 'reject':
+              if (!rejectionReason) {
+                results.push({ providerId, success: false, error: 'Rejection reason is required' });
+                continue;
+              }
+              updateData = {
+                isVerified: false,
+                verificationStatus: 'rejected',
+                rejectionReason,
+                verificationNotes: notes,
+              };
+              notificationMessage = `Your parts provider application has been rejected. Reason: ${rejectionReason}`;
+              break;
+
+            default:
+              results.push({ providerId, success: false, error: 'Invalid action' });
+              continue;
+          }
+
+          const updatedProvider = await storage.updatePartsProviderBusinessInfo(providerId, updateData);
+
+          // Create notification
+          try {
+            await storage.createNotification({
+              userId: providerId,
+              title: 'Parts Provider Application Update',
+              message: notificationMessage,
+              type: 'verification',
+              isRead: false,
+              metadata: { action, adminId, bulk: true },
+              createdAt: new Date(),
+            });
+          } catch (notificationError) {
+            console.error('Error creating notification for provider:', providerId, notificationError);
+          }
+
+          results.push({ providerId, success: true, provider: updatedProvider });
+        } catch (error) {
+          console.error('Error updating provider:', providerId, error);
+          results.push({ providerId, success: false, error: 'Failed to update provider' });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failureCount = results.length - successCount;
+
+      console.log(`✅ Admin ${adminId} bulk ${action} parts providers: ${successCount} success, ${failureCount} failures`);
+
+      res.json({
+        success: true,
+        message: `Bulk ${action}: ${successCount} successful, ${failureCount} failed`,
+        results,
+        summary: { successCount, failureCount, totalProcessed: results.length }
+      });
+    } catch (error) {
+      console.error('Error performing bulk action on parts providers:', error);
+      res.status(500).json({ message: 'Failed to perform bulk action' });
+    }
+  });
+
+  // ============================================================================
+  // END ADMIN PARTS PROVIDER MANAGEMENT ENDPOINTS
+  // ============================================================================
+
   // Admin routes
   app.get('/api/v1/admin/stats', authMiddleware, adminSessionMiddleware, async (req, res) => {
     try {

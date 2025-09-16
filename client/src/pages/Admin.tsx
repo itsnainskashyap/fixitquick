@@ -1199,6 +1199,26 @@ export default function Admin() {
     enabled: !!user,
   });
 
+  // Fetch parts provider verifications
+  const { data: partsProviders } = useQuery({
+    queryKey: ['/api/v1/admin/parts-providers'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/parts-providers');
+      return response.json();
+    },
+    enabled: !!user,
+  });
+
+  // Fetch pending parts provider verifications
+  const { data: pendingPartsProviders } = useQuery({
+    queryKey: ['/api/v1/admin/parts-providers/pending'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/admin/parts-providers/pending');
+      return response.json();
+    },
+    enabled: !!user,
+  });
+
   // Fetch category hierarchy
   const { data: categoryHierarchy } = useQuery<Category[]>({
     queryKey: ['/api/v1/admin/categories/hierarchy'],
@@ -1298,6 +1318,59 @@ export default function Admin() {
       toast({
         title: "Provider verification updated",
         description: "Provider verification status has been updated.",
+      });
+    },
+  });
+
+  // Parts provider verification mutation
+  const partsProviderVerificationMutation = useMutation({
+    mutationFn: async ({ providerId, action, notes, rejectionReason }: { 
+      providerId: string; 
+      action: 'approve' | 'reject' | 'under_review' | 'request_changes'; 
+      notes?: string;
+      rejectionReason?: string;
+    }) => {
+      const response = await apiRequest('POST', `/api/v1/admin/parts-providers/${providerId}/status`, {
+        action,
+        notes,
+        rejectionReason,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      toast({
+        title: "Parts provider verification updated",
+        description: "Parts provider verification status has been updated.",
+      });
+    },
+  });
+
+  // Parts provider bulk verification mutation
+  const partsProviderBulkMutation = useMutation({
+    mutationFn: async ({ providerIds, action, notes, rejectionReason }: { 
+      providerIds: string[]; 
+      action: 'approve' | 'reject'; 
+      notes?: string;
+      rejectionReason?: string;
+    }) => {
+      const response = await apiRequest('POST', `/api/v1/admin/parts-providers/bulk-action`, {
+        providerIds,
+        action,
+        notes,
+        rejectionReason,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      toast({
+        title: "Bulk operation completed",
+        description: `${data?.summary?.successCount || 0} providers processed successfully`,
       });
     },
   });
@@ -2072,7 +2145,7 @@ export default function Admin() {
 
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-10">
+          <TabsList className="grid w-full grid-cols-11">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -2091,6 +2164,9 @@ export default function Admin() {
             </TabsTrigger>
             <TabsTrigger value="verifications" data-testid="verifications-tab">
               Verifications ({verifications?.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="parts-providers" data-testid="parts-providers-tab">
+              Parts Providers ({pendingPartsProviders?.data?.length || 0})
             </TabsTrigger>
             <TabsTrigger value="media" data-testid="media-tab">
               Media
@@ -3253,6 +3329,240 @@ export default function Admin() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="parts-providers" className="mt-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold">Parts Provider Management</h2>
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => {
+                    queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
+                    queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers'] });
+                  }}
+                  data-testid="refresh-parts-providers"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            {/* Parts Provider Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <Package className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{pendingPartsProviders?.data?.length || 0}</div>
+                  <div className="text-xs text-muted-foreground">Pending Verification</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{partsProviders?.approved?.length || 0}</div>
+                  <div className="text-xs text-muted-foreground">Approved</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <XCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{partsProviders?.rejected?.length || 0}</div>
+                  <div className="text-xs text-muted-foreground">Rejected</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <Package className="w-8 h-8 text-purple-500 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{(partsProviders?.approved?.length || 0) + (partsProviders?.rejected?.length || 0) + (pendingPartsProviders?.data?.length || 0)}</div>
+                  <div className="text-xs text-muted-foreground">Total Applications</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Pending Verifications */}
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Clock className="w-5 h-5 mr-2" />
+                  Pending Verifications ({pendingPartsProviders?.data?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {pendingPartsProviders?.data && pendingPartsProviders.data.length > 0 ? (
+                  <div className="space-y-4">
+                    {pendingPartsProviders.data.map((provider: any) => (
+                      <Card key={provider.id} className="border-l-4 border-l-yellow-500">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                                <Package className="w-5 h-5 text-orange-600" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold">{provider.businessName || `${provider.firstName} ${provider.lastName}`}</h3>
+                                <p className="text-sm text-muted-foreground">{provider.email} • {provider.phone}</p>
+                              </div>
+                            </div>
+                            <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                              <Clock className="w-3 h-3 mr-1" />
+                              Pending Review
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <Label className="text-sm font-medium text-muted-foreground">Business Type</Label>
+                              <p className="font-medium">{provider.businessType || 'Not specified'}</p>
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium text-muted-foreground">Categories</Label>
+                              <p className="font-medium">{provider.inventoryCategories?.join(', ') || 'Not specified'}</p>
+                            </div>
+                          </div>
+
+                          {provider.warehouseAddress && (
+                            <div className="mb-4">
+                              <Label className="text-sm font-medium text-muted-foreground">Warehouse Location</Label>
+                              <p className="text-sm">{provider.warehouseAddress}</p>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm text-muted-foreground">
+                              Applied: {new Date(provider.createdAt).toLocaleDateString()}
+                            </div>
+                            <div className="flex space-x-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => partsProviderVerificationMutation.mutate({
+                                  providerId: provider.id,
+                                  action: 'under_review',
+                                  notes: 'Under review by admin'
+                                })}
+                                disabled={partsProviderVerificationMutation.isPending}
+                                data-testid={`review-parts-provider-${provider.id}`}
+                              >
+                                <Eye className="w-4 h-4 mr-1" />
+                                Review
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => partsProviderVerificationMutation.mutate({
+                                  providerId: provider.id,
+                                  action: 'approve',
+                                  notes: 'Approved by admin'
+                                })}
+                                disabled={partsProviderVerificationMutation.isPending}
+                                data-testid={`approve-parts-provider-${provider.id}`}
+                              >
+                                <CheckCircle className="w-4 h-4 mr-1" />
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => partsProviderVerificationMutation.mutate({
+                                  providerId: provider.id,
+                                  action: 'reject',
+                                  notes: 'Rejected by admin',
+                                  rejectionReason: 'Incomplete documentation'
+                                })}
+                                disabled={partsProviderVerificationMutation.isPending}
+                                data-testid={`reject-parts-provider-${provider.id}`}
+                              >
+                                <XCircle className="w-4 h-4 mr-1" />
+                                Reject
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                    <h3 className="font-medium text-foreground mb-2">No pending verifications</h3>
+                    <p className="text-sm text-muted-foreground">
+                      All parts provider applications have been processed
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* All Parts Providers */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Package className="w-5 h-5 mr-2" />
+                  All Parts Providers
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {partsProviders && (partsProviders.approved?.length > 0 || partsProviders.rejected?.length > 0) ? (
+                  <div className="space-y-4">
+                    {/* Approved Parts Providers */}
+                    {partsProviders.approved?.map((provider: any) => (
+                      <Card key={provider.id} className="border-l-4 border-l-green-500">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                                <Package className="w-5 h-5 text-green-600" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold">{provider.businessName || `${provider.firstName} ${provider.lastName}`}</h3>
+                                <p className="text-sm text-muted-foreground">{provider.email}</p>
+                              </div>
+                            </div>
+                            <Badge variant="default" className="bg-green-100 text-green-800">
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              Approved
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    
+                    {/* Rejected Parts Providers */}
+                    {partsProviders.rejected?.map((provider: any) => (
+                      <Card key={provider.id} className="border-l-4 border-l-red-500">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                                <Package className="w-5 h-5 text-red-600" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold">{provider.businessName || `${provider.firstName} ${provider.lastName}`}</h3>
+                                <p className="text-sm text-muted-foreground">{provider.email}</p>
+                              </div>
+                            </div>
+                            <Badge variant="destructive" className="bg-red-100 text-red-800">
+                              <XCircle className="w-3 h-3 mr-1" />
+                              Rejected
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                    <h3 className="font-medium text-foreground mb-2">No parts providers yet</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Parts providers will appear here once they register
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
 

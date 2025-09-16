@@ -44,6 +44,7 @@ import NotFound from "@/pages/not-found";
 import ProviderRegistration from "@/pages/ProviderRegistration";
 import PartProviderRegistration from "@/pages/PartProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
+import PartsProviderPending from "@/pages/PartsProviderPending";
 import ServiceProviderDashboard from "@/pages/ProviderDashboard";
 import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
 import LanguageRegion from "@/pages/LanguageRegion";
@@ -213,6 +214,10 @@ function Router() {
       <Route 
         path="/provider-pending" 
         component={() => <ProtectedRoute component={ProviderPending} />} 
+      />
+      <Route 
+        path="/parts-provider-pending" 
+        component={() => <ProtectedRoute component={PartsProviderPending} />} 
       />
       
       {/* Service Provider Routes */}
