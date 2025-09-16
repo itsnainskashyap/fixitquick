@@ -2333,50 +2333,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create or get admin user
       let adminUser;
-      try {
-        adminUser = await storage.getUser(ADMIN_ID);
-      } catch (error) {
-        // Admin user doesn't exist, create it
-        console.log('🔧 Creating admin user...');
-      }
       
-      if (!adminUser) {
-        // Create admin user in database
+      if (isDevBypass) {
+        // For dev bypass, find user by the provided email
         try {
-          // Create admin user without id (auto-generated)
-          const newUser = await storage.createUser({
-            email: isDevBypass ? email : ADMIN_EMAIL,
-            firstName: 'Administrator',
-            lastName: 'Admin',
-            role: 'admin',
-            isVerified: true,
-            walletBalance: '0.00',
-            fixiPoints: 0,
-            isActive: true,
-          });
-          
-          // Use the created user as admin (IDs are auto-generated)
-          adminUser = newUser;
-          console.log('✅ Admin user created successfully');
-        } catch (createError) {
-          console.error('❌ Failed to create admin user:', createError);
-          return res.status(500).json({
-            success: false,
-            message: 'Failed to initialize admin user'
-          });
+          adminUser = await storage.getUserByEmail(email);
+          console.log('✅ Found existing user for dev bypass:', adminUser?.id);
+        } catch (error) {
+          console.log('🔧 User not found for dev bypass, creating...');
+        }
+        
+        if (!adminUser) {
+          try {
+            // Create new user with the provided email for dev bypass
+            const newUser = await storage.createUser({
+              email: email,
+              firstName: 'Administrator',
+              lastName: 'Admin',
+              role: 'admin',
+              isVerified: true,
+              walletBalance: '0.00',
+              fixiPoints: 0,
+              isActive: true,
+            });
+            adminUser = newUser;
+            console.log('✅ Dev admin user created successfully');
+          } catch (createError) {
+            console.error('❌ Failed to create dev admin user:', createError);
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to initialize admin user'
+            });
+          }
         }
       } else {
-        // Ensure admin user has correct role
-        if (adminUser.role !== 'admin') {
-          adminUser = await storage.updateUser(ADMIN_ID, {
-            role: 'admin',
-            isVerified: true,
-          }) || adminUser;
+        // Normal admin login process
+        try {
+          adminUser = await storage.getUser(ADMIN_ID);
+        } catch (error) {
+          console.log('🔧 Creating admin user...');
         }
+        
+        if (!adminUser) {
+          try {
+            const newUser = await storage.createUser({
+              email: ADMIN_EMAIL,
+              firstName: 'Administrator',
+              lastName: 'Admin',
+              role: 'admin',
+              isVerified: true,
+              walletBalance: '0.00',
+              fixiPoints: 0,
+              isActive: true,
+            });
+            adminUser = newUser;
+            console.log('✅ Admin user created successfully');
+          } catch (createError) {
+            console.error('❌ Failed to create admin user:', createError);
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to initialize admin user'
+            });
+          }
+        }
+      }
+      
+      // Ensure admin user has correct role
+      if (adminUser && adminUser.role !== 'admin') {
+        adminUser = await storage.updateUser(adminUser.id, {
+          role: 'admin',
+          isVerified: true,
+        }) || adminUser;
       }
       
       // Generate admin JWT token with admin role
-      const adminToken = await jwtService.generateAccessToken(ADMIN_ID, 'admin');
+      const adminToken = await jwtService.generateAccessToken(adminUser.id, 'admin');
       
       // Set secure HttpOnly cookie for admin authentication
       const cookieOptions = {
@@ -2390,8 +2421,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.cookie('adminToken', adminToken, cookieOptions);
       
       console.log('✅ Admin login successful:', {
-        adminId: ADMIN_ID,
-        email: ADMIN_EMAIL,
+        adminId: adminUser.id,
+        email: adminUser.email,
         ip: req.ip,
         timestamp: new Date().toISOString(),
         tokenSet: 'HttpOnly cookie'
