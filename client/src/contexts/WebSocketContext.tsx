@@ -88,12 +88,20 @@ export function WebSocketProvider({
       // Construct WebSocket URL with proper port handling
       let wsUrl;
       
-      // Default: always use window.location.host which includes port if present
-      wsUrl = `${protocol}//${window.location.host}/ws`;
+      // Use window.location.host which includes port if present
+      const host = window.location.host;
       
-      // Only override for localhost without port (local development)
-      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !window.location.port) {
-        wsUrl = `${protocol}//localhost:5000/ws`;
+      // Check if we're on Replit domain or localhost
+      if (hostname.includes('replit.dev') || hostname.includes('repl.it')) {
+        // Replit environment - use current host (includes proper port/domain)
+        wsUrl = `${protocol}//${host}/ws`;
+      } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        // Local development - ensure port 5000
+        const port = window.location.port || '5000';
+        wsUrl = `${protocol}//localhost:${port}/ws`;
+      } else {
+        // Default fallback - use current host
+        wsUrl = `${protocol}//${host}/ws`;
       }
       
       console.log(`WebSocket: Connecting to ${wsUrl}`);
