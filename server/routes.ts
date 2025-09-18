@@ -68,7 +68,9 @@ import {
   insertPromotionalMediaSchema,
   insertPromotionalMediaAnalyticsSchema,
   promotionalMedia,
-  promotionalMediaAnalytics
+  promotionalMediaAnalytics,
+  // Service request schemas
+  insertServiceRequestSchema
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -3754,9 +3756,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/service-requests - Create service request (authenticated users)
   app.post('/api/v1/service-requests',
     authMiddleware,
+    validateBody(insertServiceRequestSchema),
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const serviceRequestData = req.body;
+
+        // Ensure user ID is present (required by auth middleware)
+        if (!req.user?.id) {
+          return res.status(401).json({
+            success: false,
+            message: 'User authentication required'
+          });
+        }
 
         // Validate that category exists if provided
         if (serviceRequestData.categoryId) {
@@ -3769,10 +3780,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // Add user ID to the request
+        // Add user ID to the request (now guaranteed to exist)
         const requestWithUserId = {
           ...serviceRequestData,
-          userId: req.user?.id || null
+          userId: req.user.id
         };
 
         // Create service request
