@@ -4422,15 +4422,25 @@ export default function Admin() {
     }
   }, [mainCategories, isDragging]);
 
-  // Fetch services
-  const { data: servicesResponse } = useQuery({
-    queryKey: ['/api/v1/services'],
+  // Fetch admin services
+  const { data: servicesResponse, isLoading: servicesLoading } = useQuery({
+    queryKey: ['/api/v1/admin/services'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/services');
+      return await apiRequest('GET', '/api/v1/admin/services');
     },
     enabled: !!user,
   });
   const services = (servicesResponse as any)?.data || [];
+
+  // Fetch all admin categories
+  const { data: adminCategoriesResponse, isLoading: adminCategoriesLoading } = useQuery({
+    queryKey: ['/api/v1/admin/categories'],
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/categories');
+    },
+    enabled: !!user,
+  });
+  const adminCategories = (adminCategoriesResponse as any)?.data || [];
 
   // Fetch test services
   const { data: testServicesResponse } = useQuery({
