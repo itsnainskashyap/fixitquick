@@ -5360,14 +5360,25 @@ export default function Admin() {
 
   // Service handler functions
   const handleCreateService = () => {
+    console.log('🔍 Create Service Debug:', {
+      serviceName: serviceFormData.name,
+      nameValid: !!serviceFormData.name.trim(),
+      selectedMainCategory: selectedServiceMainCategory,
+      mainCategoryValid: !!selectedServiceMainCategory,
+      formData: serviceFormData
+    });
+    
     if (!serviceFormData.name.trim() || !selectedServiceMainCategory) {
       toast({
         title: "Validation Error",
         description: "Service name and main category are required",
         variant: "destructive",
       });
+      console.log('❌ Service creation failed: Missing required fields');
       return;
     }
+    
+    console.log('✅ Service validation passed, creating service...');
 
     // Use subcategory if selected, otherwise use main category
     const finalCategoryId = serviceFormData.categoryId || selectedServiceMainCategory.id;

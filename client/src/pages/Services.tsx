@@ -14,7 +14,7 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbS
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useQuery } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
-import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine, ChevronLeft } from 'lucide-react';
+import { Filter, Grid, List, ChevronDown, ChevronRight, Home, ArrowLeft, TreePine, ChevronLeft, RefreshCw } from 'lucide-react';
 
 interface Service {
   id: string;
