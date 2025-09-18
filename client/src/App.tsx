@@ -21,6 +21,8 @@ const LocalizationProvider = I18N_ENABLED ? lazy(() =>
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import AdminLogin from "@/pages/AdminLogin";
+import ServiceProviderLogin from "@/pages/ServiceProviderLogin";
+import PartsProviderLogin from "@/pages/PartsProviderLogin";
 import Services from "@/pages/Services";
 import ServiceBooking from "@/pages/ServiceBooking";
 import Parts from "@/pages/Parts";
@@ -175,6 +177,8 @@ function Router() {
     <Switch>
       {/* Auth Routes - No layout wrapper */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
+      <Route path="/service-provider/login" component={() => <PublicRoute component={ServiceProviderLogin} />} />
+      <Route path="/parts-provider/login" component={() => <PublicRoute component={PartsProviderLogin} />} />
       <Route path="/admin/login" component={() => <AdminLogin />} />
       
       {/* All other routes wrapped with Layout */}
