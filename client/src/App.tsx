@@ -172,13 +172,30 @@ function PublicRoute({ component: Component }: { component: React.ComponentType 
   return <Component />;
 }
 
+// Special route for provider login pages - allows authenticated users to access the component
+// so they can be redirected based on their role
+function ProviderRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  // Always allow access to provider login components so they can handle role-based redirects
+  return <Component />;
+}
+
 function Router() {
   return (
     <Switch>
       {/* Auth Routes - No layout wrapper */}
       <Route path="/login" component={() => <PublicRoute component={Login} />} />
-      <Route path="/service-provider/login" component={() => <PublicRoute component={ServiceProviderLogin} />} />
-      <Route path="/parts-provider/login" component={() => <PublicRoute component={PartsProviderLogin} />} />
+      <Route path="/service-provider/login" component={() => <ProviderRoute component={ServiceProviderLogin} />} />
+      <Route path="/parts-provider/login" component={() => <ProviderRoute component={PartsProviderLogin} />} />
       <Route path="/admin/login" component={() => <AdminLogin />} />
       
       {/* All other routes wrapped with Layout */}
