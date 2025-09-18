@@ -1209,6 +1209,18 @@ export const serviceBookings = pgTable("service_bookings", {
   matchingExpiresAt: timestamp("matching_expires_at"), // 5-minute timer for matching
   candidateCount: integer("candidate_count").default(0), // Number of providers notified
   
+  // Radius escalation tracking for Urban Company-style expansion
+  currentSearchRadius: integer("current_search_radius").default(15), // Current search radius in km
+  searchWave: integer("search_wave").default(1), // 1=15km, 2=25km, 3=30km, 4=35km, 5=50km
+  maxSearchRadius: integer("max_search_radius").default(50), // Maximum radius to search
+  radiusExpansionHistory: jsonb("radius_expansion_history").$type<{
+    wave: number;
+    radius: number;
+    providersFound: number;
+    expandedAt: string;
+  }[]>().default(sql`'[]'::jsonb`), // Track expansion history
+  pendingOffers: integer("pending_offers").default(0), // Current number of pending provider offers
+  
   // Pricing and payment
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   paymentMethod: varchar("payment_method", { enum: ["online", "cod", "wallet"] }),
@@ -1231,9 +1243,22 @@ export const serviceBookings = pgTable("service_bookings", {
   typeIdx: index("sb_type_idx").on(table.bookingType),
   scheduledIdx: index("sb_scheduled_idx").on(table.scheduledAt),
   matchingExpiresIdx: index("sb_matching_expires_idx").on(table.matchingExpiresAt),
+  
+  // Radius escalation indexes for provider matching optimization
+  searchRadiusIdx: index("sb_search_radius_idx").on(table.currentSearchRadius),
+  searchWaveIdx: index("sb_search_wave_idx").on(table.searchWave),
+  pendingOffersIdx: index("sb_pending_offers_idx").on(table.pendingOffers),
+  
+  // Composite indexes for efficient matching queries
+  statusRadiusIdx: index("sb_status_radius_idx").on(table.status, table.currentSearchRadius),
+  statusWaveIdx: index("sb_status_wave_idx").on(table.status, table.searchWave),
+  statusMatchingExpiresIdx: index("sb_status_matching_expires_idx").on(table.status, table.matchingExpiresAt),
+  
+  // Performance index for orders needing matching (removed NOW() for immutability)
+  needsMatchingIdx: index("sb_needs_matching_idx").on(table.status, table.matchingExpiresAt).where(sql`status IN ('pending', 'provider_search')`),
 }));
 
-// Provider Job Requests - Race-to-accept system for order workflow
+// Provider Job Requests - Race-to-accept system for order workflow with TTL enforcement
 export const providerJobRequests = pgTable("provider_job_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").references(() => orders.id).notNull(),
@@ -1243,7 +1268,19 @@ export const providerJobRequests = pgTable("provider_job_requests", {
   }).default("pending"),
   sentAt: timestamp("sent_at"), // When request was sent to provider
   respondedAt: timestamp("responded_at"), // When provider responded (accepted/declined)
+  expiresAt: timestamp("expires_at").notNull(), // TTL: 5 minutes from sentAt
   priority: integer("priority").notNull(), // 1 = primary, 2 = first backup, etc.
+  
+  // Distance and travel time for provider context
+  distanceKm: decimal("distance_km", { precision: 5, scale: 2 }), // Distance from provider to service location
+  estimatedTravelTime: integer("estimated_travel_time"), // Minutes to reach service location
+  
+  // Provider acceptance details
+  quotedPrice: decimal("quoted_price", { precision: 10, scale: 2 }), // Provider's quoted price (if different from base)
+  estimatedArrival: timestamp("estimated_arrival"), // When provider expects to arrive
+  acceptanceNotes: text("acceptance_notes"), // Provider's notes on acceptance
+  declineReason: text("decline_reason"), // Reason for declining (if declined)
+  
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
@@ -1253,10 +1290,23 @@ export const providerJobRequests = pgTable("provider_job_requests", {
   priorityIdx: index("pjr_priority_idx").on(table.priority),
   orderProviderIdx: index("pjr_order_provider_idx").on(table.orderId, table.providerId),
   orderStatusPriorityIdx: index("pjr_order_status_priority_idx").on(table.orderId, table.status, table.priority),
+  
+  // TTL and expiry indexes for 5-minute timer enforcement
+  expiresAtIdx: index("pjr_expires_at_idx").on(table.expiresAt),
+  statusExpiresIdx: index("pjr_status_expires_idx").on(table.status, table.expiresAt),
+  
   // CRITICAL: Partial unique index to ensure only one accepted request per order
   orderAcceptedUniqueIdx: index("pjr_order_accepted_unique_idx").on(table.orderId).where(sql`status = 'accepted'`),
-  // Performance indexes for race-to-accept queries
+  
+  // Performance indexes for TTL queries and race-to-accept
   sentStatusPriorityIdx: index("pjr_sent_status_priority_idx").on(table.status, table.priority).where(sql`status = 'sent'`),
+  activeOffersIdx: index("pjr_active_offers_idx").on(table.status, table.expiresAt).where(sql`status = 'sent'`),
+  expiredOffersIdx: index("pjr_expired_offers_idx").on(table.expiresAt, table.status).where(sql`status IN ('sent', 'expired')`),
+  
+  // Distance and travel time indexes for provider context
+  distanceIdx: index("pjr_distance_idx").on(table.distanceKm),
+  travelTimeIdx: index("pjr_travel_time_idx").on(table.estimatedTravelTime),
+  
   // Unique constraint to prevent duplicate offers to same provider for same order
   unique: [table.orderId, table.providerId],
 }));
@@ -2870,3 +2920,140 @@ export type ServiceProviderStatusUpdateData = z.infer<typeof serviceProviderStat
 
 // Enum types for consistent usage
 export type ServiceProviderBusinessType = z.infer<typeof serviceProviderBusinessTypeEnum>;
+
+// Additional types for WebSocket communication and UI components
+
+// Order status types
+export type OrderStatus = "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled";
+export type ServiceBookingStatus = "pending" | "provider_search" | "provider_assigned" | "provider_on_way" | 
+  "work_in_progress" | "work_completed" | "payment_pending" | "completed" | "cancelled" | "refunded";
+export type JobRequestStatus = "pending" | "sent" | "accepted" | "declined" | "expired";
+
+// Provider information for real-time updates
+export const ProviderInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  profileImage: z.string().url().optional(),
+  profileImageUrl: z.string().url().optional(),
+  rating: z.number().min(0).max(5).default(0),
+  isOnline: z.boolean().default(false),
+  currentLocation: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+    address: z.string().optional(),
+    lastUpdated: z.string().optional(),
+  }).optional(),
+  phone: z.string().optional(),
+  totalReviews: z.number().optional(),
+  completedJobs: z.number().optional(),
+});
+export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
+
+// Order data with provider information
+export const OrderDataSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  serviceId: z.string(),
+  status: z.enum(["pending_assignment", "matching", "assigned", "in_progress", "completed", "cancelled"]),
+  assignedProviderId: z.string().optional(),
+  assignedAt: z.string().optional(),
+  provider: ProviderInfoSchema.optional(),
+  pendingOffers: z.number().optional().default(0),
+  totalAmount: z.number().optional(),
+  serviceLocation: z.object({
+    address: z.string(),
+    latitude: z.number(),
+    longitude: z.number(),
+    instructions: z.string().optional(),
+  }).optional(),
+  urgency: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type OrderData = z.infer<typeof OrderDataSchema>;
+
+// Service booking with enhanced details
+export const ServiceBookingDataSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  serviceId: z.string(),
+  status: z.enum(["pending", "provider_search", "provider_assigned", "provider_on_way", 
+    "work_in_progress", "work_completed", "payment_pending", "completed", "cancelled", "refunded"]),
+  assignedProviderId: z.string().optional(),
+  assignedAt: z.string().optional(),
+  serviceLocation: z.object({
+    type: z.enum(["current", "alternate"]),
+    address: z.string(),
+    latitude: z.number(),
+    longitude: z.number(),
+    instructions: z.string().optional(),
+    landmarkDetails: z.string().optional(),
+  }),
+  serviceDetails: z.object({
+    basePrice: z.number(),
+    estimatedDuration: z.number(),
+    workflowSteps: z.array(z.string()),
+    specialRequirements: z.array(z.string()).optional(),
+  }).optional(),
+  totalAmount: z.number(),
+  urgency: z.enum(["low", "normal", "high", "urgent"]),
+  customerName: z.string().optional(),
+  serviceType: z.string().optional(),
+  provider: ProviderInfoSchema.optional(),
+  pendingOffers: z.number().optional().default(0),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type ServiceBookingData = z.infer<typeof ServiceBookingDataSchema>;
+
+// Job request for providers
+export const JobRequestSchema = z.object({
+  id: z.string(),
+  orderId: z.string().optional(),
+  bookingId: z.string(),
+  providerId: z.string(),
+  status: z.enum(["pending", "sent", "accepted", "declined", "expired"]),
+  expiresAt: z.string(),
+  sentAt: z.string(),
+  respondedAt: z.string().optional(),
+  distanceKm: z.number().optional(),
+  priority: z.number().optional(),
+  booking: ServiceBookingDataSchema,
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type JobRequest = z.infer<typeof JobRequestSchema>;
+
+// Provider jobs data structure
+export const ProviderJobsDataSchema = z.object({
+  pendingOffers: z.array(JobRequestSchema),
+  activeJobs: z.array(JobRequestSchema),
+  recentJobs: z.array(JobRequestSchema),
+  totalOffers: z.number().optional(),
+  totalActive: z.number().optional(),
+  totalCompleted: z.number().optional(),
+});
+export type ProviderJobsData = z.infer<typeof ProviderJobsDataSchema>;
+
+// WebSocket event data types
+export const WebSocketErrorSchema = z.object({
+  message: z.string(),
+  code: z.string().optional(),
+  status: z.number().optional(),
+});
+export type WebSocketError = z.infer<typeof WebSocketErrorSchema>;
+
+// Order assignment status data
+export const OrderAssignmentStatusSchema = z.object({
+  orderId: z.string(),
+  status: z.string(),
+  assignedProviderId: z.string().optional(),
+  assignedAt: z.string().optional(),
+  provider: ProviderInfoSchema.optional(),
+  pendingOffers: z.number().optional().default(0),
+  lastUpdate: z.string().optional(),
+  estimatedArrival: z.string().optional(),
+});
+export type OrderAssignmentStatus = z.infer<typeof OrderAssignmentStatusSchema>;

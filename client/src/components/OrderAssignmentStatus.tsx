@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSocket } from '@/hooks/useSocket';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Separator } from '@/components/ui/separator';
 import { 
   Clock, 
   CheckCircle, 
@@ -17,43 +18,29 @@ import {
   AlertCircle,
   RefreshCw
 } from 'lucide-react';
-
-interface ProviderInfo {
-  id: string;
-  name: string;
-  profileImage?: string;
-  rating: number;
-  isOnline: boolean;
-  currentLocation?: {
-    latitude: number;
-    longitude: number;
-  };
-  phone: string;
-}
-
-interface OrderStatusData {
-  orderId: string;
-  status: string;
-  assignedProviderId?: string;
-  assignedAt?: string;
-  provider?: ProviderInfo;
-  pendingOffers?: number;
-}
+import { OrderData, ProviderInfo, OrderAssignmentStatus as OrderAssignmentStatusData, WebSocketError } from '@shared/schema';
+import MatchingProgressIndicator from '@/components/MatchingProgressIndicator';
 
 interface OrderAssignmentStatusProps {
   orderId: string;
   className?: string;
 }
 
+interface APIError {
+  status?: number;
+  message?: string;
+}
+
 export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentStatusProps) {
-  const { socket, isConnected } = useSocket();
+  const { subscribe, sendMessage, isConnected } = useWebSocket();
   const queryClient = useQueryClient();
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [retryCount, setRetryCount] = useState(0);
+  const [errorState, setErrorState] = useState<APIError | null>(null);
   const maxRetries = 3;
 
   // Enhanced fetch order status with retry logic
-  const { data: orderData, isLoading, error, refetch } = useQuery<any>({
+  const { data: orderData, isLoading, error, refetch } = useQuery<OrderData>({
     queryKey: ['/api/v1/orders', orderId],
     enabled: !!orderId,
     refetchInterval: 30000, // Refetch every 30 seconds
@@ -61,7 +48,8 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
     refetchOnReconnect: true,
     retry: (failureCount, error: any) => {
       // Retry up to 3 times for network errors, but not for 404s or 403s
-      if (error?.status === 404 || error?.status === 403) {
+      const apiError = error as APIError;
+      if (apiError?.status === 404 || apiError?.status === 403) {
         return false;
       }
       return failureCount < maxRetries;
@@ -70,28 +58,33 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
       // Exponential backoff: 1s, 2s, 4s
       return Math.min(1000 * Math.pow(2, attemptIndex), 10000);
     },
-    onError: (error: any) => {
-      console.error('OrderAssignmentStatus fetch error:', error);
-      setRetryCount(prev => prev + 1);
-    },
-    onSuccess: (data) => {
-      setRetryCount(0); // Reset retry count on successful fetch
-    },
   });
+
+  // Handle errors in useEffect instead of onError callback
+  useEffect(() => {
+    if (error) {
+      console.error('OrderAssignmentStatus fetch error:', error);
+      setErrorState(error as APIError);
+      setRetryCount(prev => prev + 1);
+    } else {
+      setErrorState(null);
+      setRetryCount(0); // Reset retry count on successful fetch
+    }
+  }, [error]);
 
   // Enhanced real-time updates with better error handling
   useEffect(() => {
-    if (!socket || !isConnected || !orderId) return;
+    if (!isConnected || !orderId) return;
 
     const handleAssignmentUpdate = (data: any) => {
       console.log('📢 Assignment update received:', data);
       setLastUpdate(new Date());
       // Optimistically update cache to avoid refetch delay
-      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: OrderData | undefined) => ({
         ...oldData,
         status: data.status || oldData?.status,
         pendingOffers: data.pendingOffers ?? oldData?.pendingOffers,
-      }));
+      } as OrderData));
       refetch();
     };
 
@@ -99,77 +92,92 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
       console.log('✅ Provider assigned:', data);
       setLastUpdate(new Date());
       // Optimistically update with provider info
-      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: OrderData | undefined) => ({
         ...oldData,
         status: 'provider_assigned',
         assignedProviderId: data.providerId,
         provider: data.provider,
         assignedAt: new Date().toISOString(),
-      }));
+      } as OrderData));
       refetch();
     };
 
     const handleProviderAccepted = (data: any) => {
       console.log('🎉 Provider accepted job:', data);
       setLastUpdate(new Date());
-      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: OrderData | undefined) => ({
         ...oldData,
         status: 'provider_on_way',
-      }));
+      } as OrderData));
       refetch();
     };
 
     const handleSearchingProviders = (data: any) => {
       console.log('🔍 Searching for providers:', data);
       setLastUpdate(new Date());
-      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: any) => ({
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: OrderData | undefined) => ({
         ...oldData,
         status: 'provider_search',
         pendingOffers: data.pendingOffers || 0,
-      }));
+        currentSearchRadius: data.currentSearchRadius || oldData?.currentSearchRadius,
+        searchWave: data.searchWave || oldData?.searchWave,
+      } as OrderData));
       refetch();
     };
 
-    const handleConnectionError = (error: any) => {
+    const handleRadiusExpansion = (data: any) => {
+      console.log('📍 Search radius expanded:', data);
+      setLastUpdate(new Date());
+      queryClient.setQueryData(['/api/v1/orders', orderId], (oldData: OrderData | undefined) => ({
+        ...oldData,
+        currentSearchRadius: data.newRadius,
+        searchWave: data.searchWave,
+        radiusExpansionHistory: data.radiusExpansionHistory || oldData?.radiusExpansionHistory,
+      } as OrderData));
+      refetch();
+    };
+
+    const handleConnectionError = (error: WebSocketError) => {
       console.error('WebSocket connection error:', error);
+      setErrorState({ message: error.message, status: error.status });
       // Try to refetch data as fallback
       setTimeout(() => {
-        if (!socket || !socket.connected) {
-          refetch();
-        }
+        refetch();
       }, 2000);
     };
 
     // Subscribe to order updates with error handling
     try {
-      socket.emit('subscribe_order', { orderId });
+      sendMessage('subscribe_order', { orderId });
     } catch (error) {
       console.error('Failed to subscribe to order updates:', error);
-      handleConnectionError(error);
+      handleConnectionError({ message: 'Failed to subscribe to order updates' });
     }
 
-    // Listen for assignment events
-    socket.on('order.assignment_started', handleAssignmentUpdate);
-    socket.on('order.provider_assigned', handleProviderAssigned);
-    socket.on('order.provider_accepted', handleProviderAccepted);
-    socket.on('order.searching_providers', handleSearchingProviders);
-    socket.on('error', handleConnectionError);
-    socket.on('disconnect', handleConnectionError);
+    // Subscribe to WebSocket events using the context
+    const unsubscribeAssignment = subscribe('order.assignment_started', handleAssignmentUpdate);
+    const unsubscribeProviderAssigned = subscribe('order.provider_assigned', handleProviderAssigned);
+    const unsubscribeProviderAccepted = subscribe('order.provider_accepted', handleProviderAccepted);
+    const unsubscribeSearching = subscribe('order.searching_providers', handleSearchingProviders);
+    const unsubscribeRadiusExpansion = subscribe('order.radius_expanded', handleRadiusExpansion);
+    const unsubscribeError = subscribe('error', handleConnectionError);
 
     return () => {
       try {
-        socket.emit('unsubscribe_order', { orderId });
+        sendMessage('unsubscribe_order', { orderId });
       } catch (error) {
         console.error('Failed to unsubscribe from order updates:', error);
       }
-      socket.off('order.assignment_started', handleAssignmentUpdate);
-      socket.off('order.provider_assigned', handleProviderAssigned);
-      socket.off('order.provider_accepted', handleProviderAccepted);
-      socket.off('order.searching_providers', handleSearchingProviders);
-      socket.off('error', handleConnectionError);
-      socket.off('disconnect', handleConnectionError);
+      
+      // Unsubscribe from all events
+      unsubscribeAssignment();
+      unsubscribeProviderAssigned();
+      unsubscribeProviderAccepted();
+      unsubscribeSearching();
+      unsubscribeRadiusExpansion();
+      unsubscribeError();
     };
-  }, [socket, isConnected, orderId, refetch, queryClient]);
+  }, [subscribe, sendMessage, isConnected, orderId, refetch, queryClient]);
 
   if (isLoading) {
     return (
@@ -188,8 +196,8 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
     );
   }
 
-  // Transform order data to status data format
-  const statusData: OrderStatusData | null = orderData ? {
+  // Use order data directly as it now has proper typing
+  const statusData: OrderAssignmentStatusData | null = orderData ? {
     orderId: orderData.id,
     status: orderData.status,
     assignedProviderId: orderData.assignedProviderId,
@@ -198,15 +206,26 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
     pendingOffers: orderData.pendingOffers
   } : null;
 
-  if (error || !statusData) {
+  // Extract matching progress data from order data
+  const matchingProgressData = orderData ? {
+    status: orderData.status,
+    currentSearchRadius: orderData.currentSearchRadius || 15,
+    searchWave: orderData.searchWave || 1,
+    pendingOffers: orderData.pendingOffers || 0,
+    matchingExpiresAt: orderData.matchingExpiresAt,
+    radiusExpansionHistory: orderData.radiusExpansionHistory || []
+  } : null;
+
+  if (errorState || error || !statusData) {
     const getErrorMessage = () => {
-      if (error?.status === 404) {
+      const apiError = errorState || (error as APIError);
+      if (apiError?.status === 404) {
         return "Order not found or has been cancelled";
       }
-      if (error?.status === 403) {
+      if (apiError?.status === 403) {
         return "You don't have permission to view this order";
       }
-      if (error?.status >= 500) {
+      if (apiError?.status && apiError.status >= 500) {
         return "Server error - please try again";
       }
       if (!isConnected) {
@@ -215,7 +234,8 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
       return "Unable to load assignment status";
     };
 
-    const canRetry = error?.status !== 404 && error?.status !== 403;
+    const apiError = errorState || (error as APIError);
+    const canRetry = apiError?.status !== 404 && apiError?.status !== 403;
 
     return (
       <Card className={className} data-testid="order-assignment-status-error">
@@ -339,6 +359,25 @@ export function OrderAssignmentStatus({ orderId, className }: OrderAssignmentSta
           {statusDisplay.badge}
         </div>
       </CardHeader>
+
+      {/* Matching Progress Indicator - Show during provider search */}
+      {statusData.status === 'provider_search' && matchingProgressData && (
+        <CardContent className="pt-0">
+          <MatchingProgressIndicator
+            status={matchingProgressData.status}
+            currentSearchRadius={matchingProgressData.currentSearchRadius}
+            searchWave={matchingProgressData.searchWave}
+            pendingOffers={matchingProgressData.pendingOffers}
+            matchingExpiresAt={matchingProgressData.matchingExpiresAt}
+            radiusExpansionHistory={matchingProgressData.radiusExpansionHistory}
+            onMatchingExpired={() => {
+              console.log('⏰ Matching process expired');
+              refetch();
+            }}
+            className="mb-4"
+          />
+        </CardContent>
+      )}
 
       {/* Provider Information */}
       {statusData.provider && (

@@ -1196,7 +1196,7 @@ class WebSocketManager {
   public async broadcastOrderAssigned(bookingId: string, userId: string, providerId: string, assignmentDetails: any) {
     // Notify user about final assignment
     await this.sendToUser(userId, {
-      type: 'order.assigned',
+      type: 'order.provider_assigned',
       data: {
         bookingId,
         providerId,
@@ -1211,7 +1211,7 @@ class WebSocketManager {
 
     // Notify provider about assignment confirmation
     await this.sendToUser(providerId, {
-      type: 'order.assigned',
+      type: 'order.provider_assigned',
       data: {
         bookingId,
         customerName: assignmentDetails.customerName,
@@ -1224,7 +1224,7 @@ class WebSocketManager {
 
     // Broadcast to order room
     this.broadcastToRoom(`order:${bookingId}`, {
-      type: 'order.assigned',
+      type: 'order.provider_assigned',
       data: {
         bookingId,
         userId,

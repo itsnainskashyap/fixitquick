@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import LocationSetup from '@/components/LocationSetup';
+import { OrderAssignmentStatus } from '@/components/OrderAssignmentStatus';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -53,7 +54,7 @@ const bookingSchema = z.object({
   urgency: z.enum(['low', 'normal', 'high', 'urgent'], {
     required_error: 'Please select urgency level',
   }).optional(),
-  providerId: z.string().optional(), // Optional for auto-assignment
+  // No providerId field needed - providers are auto-assigned
   scheduledDate: z.date().optional(),
   scheduledTime: z.string().optional(),
   serviceLocation: z.object({
@@ -172,7 +173,8 @@ export default function ServiceBooking() {
   
   // Enhanced state management
   const [step, setStep] = useState(0); // Start with step 0 for booking type selection
-  const [selectedProvider, setSelectedProvider] = useState<ServiceProvider | null>(null);
+  const [createdBookingId, setCreatedBookingId] = useState<string | null>(null);
+  // No manual provider selection needed - automatic assignment handles provider matching
   const [matchedProviders, setMatchedProviders] = useState<MatchedProvider[]>([]);
   const [serviceLocation, setServiceLocation] = useState<LocationData | null>(null);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
@@ -221,8 +223,10 @@ export default function ServiceBooking() {
       return await apiRequest('POST', '/api/v1/orders', bookingData);
     },
     onSuccess: (booking: ServiceBooking) => {
+      setCreatedBookingId(booking.id);
       setCurrentBooking(booking);
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
+      setStep(4); // Show assignment status
       
       if (booking.bookingType === 'instant') {
         toast({
@@ -243,6 +247,7 @@ export default function ServiceBooking() {
       }
     },
     onError: (error: any) => {
+      console.error('Failed to create booking:', error);
       toast({
         title: 'Booking Failed',
         description: error.message || 'Something went wrong. Please try again.',
@@ -283,22 +288,12 @@ export default function ServiceBooking() {
   const handleUrgencySelect = () => {
     const urgency = form.getValues().urgency;
     if (urgency && serviceLocation && service) {
-      // For instant bookings, skip provider selection and go directly to order creation
-      setStep(4); // Go directly to confirmation - provider matching is handled server-side
+      // Skip provider selection for all bookings - automatic matching handles provider assignment
+      setStep(3); // Go directly to review - provider matching is handled server-side
     }
   };
 
-  const handleProviderSelect = (provider: ServiceProvider | MatchedProvider) => {
-    setSelectedProvider(provider as ServiceProvider);
-    if ('userId' in provider) {
-      form.setValue('providerId', provider.userId);
-    } else if ('id' in provider) {
-      form.setValue('providerId', (provider as ServiceProvider).id);
-    }
-    
-    // Provider selection is no longer needed - orders are matched server-side
-    setStep(4); // Go directly to confirmation
-  };
+  // Removed handleProviderSelect - provider assignment is handled automatically
 
   const handleDateTimeSelect = () => {
     const formData = form.getValues();
@@ -343,7 +338,7 @@ export default function ServiceBooking() {
     }, 3000);
   };
 
-  const getAvailableTimeSlots = (date: Date, provider: ServiceProvider) => {
+  const getAvailableTimeSlots = (date: Date) => {
     const dayName = format(date, 'EEEE').toLowerCase();
     const availability = provider.availability[dayName];
     
@@ -432,12 +427,6 @@ export default function ServiceBooking() {
               }`}>
                 4
               </div>
-              <div className={`h-1 w-8 md:w-12 ${step >= 4 ? 'bg-primary' : 'bg-muted'}`} />
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm ${
-                step >= 4 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-              }`}>
-                5
-              </div>
             </div>
           </div>
           
@@ -446,9 +435,9 @@ export default function ServiceBooking() {
             <p className="text-muted-foreground">
               {step === 0 && 'Choose booking type and location'}
               {step === 1 && (bookingType === 'instant' ? 'Set urgency level' : 'Select date and time')}
-              {step === 2 && 'Choose your service provider'}
-              {step === 3 && 'Review booking details'}
-              {step === 4 && 'Confirm your booking'}
+              {step === 2 && 'Review booking details'}
+              {step === 3 && 'Confirm and wait for provider assignment'}
+              {step === 4 && 'Finding your service provider...'}
             </p>
           </div>
         </motion.div>
@@ -752,90 +741,11 @@ export default function ServiceBooking() {
           </motion.div>
         )}
 
-        {/* Step 2: Provider Selection */}
-        {step === 2 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <Card>
-              <CardHeader>
-                <CardTitle>Choose Service Provider</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loadingProviders ? (
-                  <div className="space-y-4">
-                    {[...Array(3)].map((_, i) => (
-                      <div key={i} className="animate-pulse">
-                        <div className="flex items-center space-x-4 p-4 border rounded-lg">
-                          <div className="w-12 h-12 bg-muted rounded-full" />
-                          <div className="flex-1 space-y-2">
-                            <div className="h-4 bg-muted rounded w-1/4" />
-                            <div className="h-3 bg-muted rounded w-1/2" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : providers && providers.length > 0 ? (
-                  <div className="space-y-4">
-                    {providers.map((provider: ServiceProvider) => (
-                      <div
-                        key={provider.id}
-                        onClick={() => handleProviderSelect(provider)}
-                        className="flex items-center space-x-4 p-4 border rounded-lg cursor-pointer hover:border-primary transition-colors"
-                        data-testid={`provider-${provider.id}`}
-                      >
-                        <Avatar>
-                          <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${provider.userId}`} />
-                          <AvatarFallback>
-                            {provider.firstName[0]}{provider.lastName[0]}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1">
-                          <h4 className="font-medium text-foreground">
-                            {provider.firstName} {provider.lastName}
-                          </h4>
-                          <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                            <div className="flex items-center space-x-1">
-                              <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                              <span>{provider.rating}</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <CheckCircle2 className="w-3 h-3 text-green-500" />
-                              <span>{provider.totalCompletedOrders} jobs</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <div className={`w-2 h-2 rounded-full ${
-                                provider.isOnline ? 'bg-green-500' : 'bg-gray-400'
-                              }`} />
-                              <span>{provider.isOnline ? 'Online' : 'Offline'}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <Button size="sm" data-testid={`select-provider-${provider.id}`}>
-                          Select
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <User className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="font-medium text-foreground mb-2">No providers available</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Please try again later or contact support.
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        )}
+        {/* Automatic Provider Assignment Status - No manual selection needed */}
+        {/* Provider matching is handled automatically on the server side */}
 
-        {/* Step 2: Date & Time Selection */}
-        {step === 2 && selectedProvider && (
+        {/* Step 2: Review booking details */}
+        {step === 2 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -907,8 +817,8 @@ export default function ServiceBooking() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              {form.watch('scheduledDate') && selectedProvider && 
-                                getAvailableTimeSlots(form.watch('scheduledDate')!, selectedProvider).map((time) => (
+                              {form.watch('scheduledDate') && 
+                                getAvailableTimeSlots(form.watch('scheduledDate')!).map((time) => (
                                   <SelectItem key={time} value={time}>
                                     {time}
                                   </SelectItem>
@@ -948,8 +858,8 @@ export default function ServiceBooking() {
           </motion.div>
         )}
 
-        {/* Step 3: Booking Details & Confirmation */}
-        {step === 3 && selectedProvider && (
+        {/* Step 3: Confirm and wait for provider assignment */}
+        {step === 3 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1117,7 +1027,7 @@ export default function ServiceBooking() {
                       </div>
                       <div className="flex justify-between text-sm">
                         <span>Provider</span>
-                        <span>{selectedProvider.firstName} {selectedProvider.lastName}</span>
+                        <span className="text-primary font-medium">Auto-assigned after booking confirmation</span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span>Date & Time</span>
@@ -1160,6 +1070,92 @@ export default function ServiceBooking() {
                 </div>
               </form>
             </Form>
+          </motion.div>
+        )}
+
+        {/* Step 4: Real-time Provider Assignment Status */}
+        {step === 4 && createdBookingId && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="space-y-6"
+          >
+            {/* Success Message */}
+            <Card className="bg-green-50 border-green-200">
+              <CardContent className="p-6 text-center">
+                <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-4" />
+                <h3 className="font-semibold text-green-800 mb-2">Booking Confirmed!</h3>
+                <p className="text-sm text-green-700">
+                  Your service request has been created successfully. We're now finding the best available provider in your area.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Real-time Assignment Status */}
+            <OrderAssignmentStatus 
+              orderId={createdBookingId}
+              data-testid="assignment-status"
+            />
+
+            {/* Service Details Summary */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Service Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span>Service</span>
+                  <span className="font-medium">{service?.name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Booking Type</span>
+                  <Badge variant={bookingType === 'instant' ? 'default' : 'secondary'}>
+                    {bookingType === 'instant' ? 'Instant' : 'Scheduled'}
+                  </Badge>
+                </div>
+                {bookingType === 'scheduled' && (
+                  <div className="flex justify-between text-sm">
+                    <span>Scheduled For</span>
+                    <span className="font-medium">
+                      {form.watch('scheduledDate') && format(form.watch('scheduledDate')!, 'PPP')} at {form.watch('scheduledTime')}
+                    </span>
+                  </div>
+                )}
+                {serviceLocation && (
+                  <div className="flex justify-between text-sm">
+                    <span>Location</span>
+                    <span className="font-medium text-right max-w-48">
+                      {serviceLocation.area}, {serviceLocation.city}
+                    </span>
+                  </div>
+                )}
+                <Separator />
+                <div className="flex justify-between font-semibold">
+                  <span>Total Amount</span>
+                  <span>₹{service?.basePrice}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Action Buttons */}
+            <div className="flex space-x-4">
+              <Button
+                variant="outline"
+                onClick={() => setLocation('/bookings')}
+                className="flex-1"
+                data-testid="view-bookings"
+              >
+                View My Bookings
+              </Button>
+              <Button
+                onClick={() => setLocation('/services')}
+                className="flex-1"
+                data-testid="book-another"
+              >
+                Book Another Service
+              </Button>
+            </div>
           </motion.div>
         )}
       </main>

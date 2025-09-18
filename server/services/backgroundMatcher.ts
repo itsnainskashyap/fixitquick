@@ -64,20 +64,31 @@ export class BackgroundMatcher {
   }
 
   /**
-   * Main processing method - handles all order matching logic
+   * Main processing method - handles all order matching logic with strict 5-minute timer enforcement
    */
   private async processOrderMatching() {
     try {
-      // Get all orders that need matching
+      // Step 1: Expire old job requests (critical for TTL enforcement)
+      await storage.expireOldJobRequests();
+
+      // Step 2: Get all orders that need matching
       const ordersNeedingMatching = await storage.listOrdersNeedingMatching();
 
-      if (ordersNeedingMatching.length === 0) {
+      // Step 3: Check for orders needing radius expansion
+      const ordersNeedingExpansion = await storage.getBookingsNeedingRadiusExpansion();
+
+      if (ordersNeedingMatching.length === 0 && ordersNeedingExpansion.length === 0) {
         return; // No orders to process
       }
 
-      console.log(`🔍 BackgroundMatcher: Processing ${ordersNeedingMatching.length} orders needing matching`);
+      console.log(`🔍 BackgroundMatcher: Processing ${ordersNeedingMatching.length} orders needing matching, ${ordersNeedingExpansion.length} needing expansion`);
 
-      // Process each order
+      // Step 4: Process radius expansions first (time-sensitive)
+      for (const booking of ordersNeedingExpansion) {
+        await this.handleRadiusExpansion(booking);
+      }
+
+      // Step 5: Process each order for matching
       for (const booking of ordersNeedingMatching) {
         await this.processIndividualOrder(booking);
       }
@@ -124,6 +135,191 @@ export class BackgroundMatcher {
   }
 
   /**
+   * Handle radius expansion for bookings that need broader search
+   */
+  private async handleRadiusExpansion(booking: any) {
+    try {
+      console.log(`📡 BackgroundMatcher: Expanding search radius for booking ${booking.id}`);
+      
+      const expansionResult = await storage.expandSearchRadius(booking.id);
+      
+      if (expansionResult.success) {
+        // Emit WebSocket event for radius expansion
+        if (this.webSocketManager) {
+          this.webSocketManager.emitToUser(booking.userId, 'order.radius_expanded', {
+            bookingId: booking.id,
+            newRadius: expansionResult.newRadius,
+            searchWave: expansionResult.newWave,
+            message: expansionResult.message,
+          });
+        }
+
+        // Continue matching with expanded radius
+        await this.continueProviderMatching(booking, expansionResult.newRadius);
+      } else {
+        console.log(`❌ BackgroundMatcher: Cannot expand radius for booking ${booking.id}: ${expansionResult.message}`);
+        
+        // If we can't expand radius anymore, handle as expired matching
+        if (expansionResult.message?.includes('Maximum search radius reached')) {
+          await this.handleExpiredMatching(booking);
+        }
+      }
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error expanding radius for booking ${booking.id}:`, error);
+    }
+  }
+
+  /**
+   * Enhanced provider matching with radius and TTL enforcement  
+   */
+  private async continueProviderMatching(booking: any, customRadius?: number) {
+    try {
+      const currentRadius = customRadius || booking.currentSearchRadius || 15;
+      
+      console.log(`🎯 BackgroundMatcher: Searching for providers within ${currentRadius}km for booking ${booking.id}`);
+
+      // Find eligible providers with current radius
+      const matchingProviders = await storage.findMatchingProviders({
+        serviceId: booking.serviceId,
+        location: {
+          latitude: booking.serviceLocation.latitude,
+          longitude: booking.serviceLocation.longitude
+        },
+        urgency: booking.urgency || 'normal',
+        bookingType: booking.bookingType,
+        scheduledAt: booking.scheduledAt,
+        maxDistance: currentRadius,
+        maxProviders: 5, // Limit to 5 providers per wave
+      });
+
+      if (matchingProviders.length === 0) {
+        console.log(`❌ BackgroundMatcher: No providers found within ${currentRadius}km for booking ${booking.id}`);
+        return;
+      }
+
+      console.log(`✅ BackgroundMatcher: Found ${matchingProviders.length} eligible providers for booking ${booking.id}`);
+
+      // Create job requests with strict 5-minute TTL
+      let offersCreated = 0;
+      for (const provider of matchingProviders) {
+        try {
+          const jobRequest = await storage.createProviderJobRequest({
+            orderId: booking.id,
+            providerId: provider.userId,
+            priority: this.calculatePriority(booking.urgency),
+            distanceKm: provider.distanceKm,
+            estimatedTravelTime: provider.estimatedTravelTime,
+            // 5-minute TTL enforcement
+            expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+          });
+
+          // Emit WebSocket event for job offer
+          if (this.webSocketManager) {
+            this.webSocketManager.emitToUser(provider.userId, 'job.offer_sent', {
+              jobRequest: {
+                ...jobRequest,
+                remainingSeconds: 300, // 5 minutes
+                bookingDetails: {
+                  id: booking.id,
+                  serviceTitle: booking.serviceTitle,
+                  serviceLocation: booking.serviceLocation,
+                  scheduledAt: booking.scheduledAt,
+                  urgency: booking.urgency,
+                  estimatedPrice: booking.totalAmount,
+                },
+                customerInfo: {
+                  name: booking.customerName,
+                  rating: booking.customerRating || 5.0,
+                },
+              }
+            });
+
+            // Also emit to customer about offers sent
+            this.webSocketManager.emitToUser(booking.userId, 'order.offers_sent', {
+              bookingId: booking.id,
+              providersCount: matchingProviders.length,
+              currentRadius,
+              searchWave: booking.searchWave || 1,
+            });
+          }
+
+          offersCreated++;
+        } catch (error) {
+          console.error(`❌ BackgroundMatcher: Error creating job request for provider ${provider.userId}:`, error);
+        }
+      }
+
+      // Update booking with pending offers count
+      await storage.updateBookingMatchingExpiry(
+        booking.id, 
+        new Date(Date.now() + 5 * 60 * 1000), // 5-minute window
+        offersCreated
+      );
+
+      console.log(`📤 BackgroundMatcher: Created ${offersCreated} job offers for booking ${booking.id}`);
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error in continueProviderMatching for booking ${booking.id}:`, error);
+    }
+  }
+
+  /**
+   * Calculate priority based on urgency and booking type
+   */
+  private calculatePriority(urgency: string): number {
+    const priorityMap = {
+      'urgent': 1,
+      'high': 2,
+      'normal': 3,
+      'low': 4,
+    };
+    return priorityMap[urgency as keyof typeof priorityMap] || 3;
+  }
+
+  /**
+   * Start initial matching for new orders
+   */
+  private async startInitialMatching(booking: any) {
+    try {
+      console.log(`🚀 BackgroundMatcher: Starting initial matching for booking ${booking.id}`);
+
+      // Set initial search parameters
+      const initialRadius = 15; // Start with 15km radius
+      const matchingExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5-minute timer
+
+      // Update booking status and search parameters
+      await storage.updateServiceBooking(booking.id, {
+        status: 'provider_search',
+        matchingExpiresAt,
+        currentSearchRadius: initialRadius,
+        searchWave: 1,
+        radiusExpansionHistory: [{
+          wave: 1,
+          radius: initialRadius,
+          providersFound: 0,
+          expandedAt: new Date().toISOString(),
+        }],
+      });
+
+      // Emit WebSocket event for matching started
+      if (this.webSocketManager) {
+        this.webSocketManager.emitToUser(booking.userId, 'order.matching_started', {
+          bookingId: booking.id,
+          searchRadius: initialRadius,
+          searchWave: 1,
+          timeLimit: 300, // 5 minutes in seconds
+        });
+      }
+
+      // Start provider matching
+      await this.continueProviderMatching(booking, initialRadius);
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error in startInitialMatching for booking ${booking.id}:`, error);
+    }
+  }
+
+  /**
    * Handle orders where the 5-minute matching timer has expired
    */
   private async handleExpiredMatching(booking: any) {
@@ -131,179 +327,51 @@ export class BackgroundMatcher {
       const bookingId = booking.id;
       const userId = booking.userId;
 
-      console.log(`💀 BackgroundMatcher: Handling expired matching for booking ${bookingId}`);
-
-      // Update booking status to timeout/cancelled
-      await storage.updateServiceBooking(bookingId, {
-        status: 'cancelled',
-        notes: 'No providers responded within the time limit'
-      });
+      console.log(`⏰ BackgroundMatcher: Handling expired matching for booking ${bookingId}`);
 
       // Cancel all pending job requests for this booking
       await storage.cancelAllJobRequests(bookingId);
 
-      // Send WebSocket timeout event
+      // Update booking status to no providers found
+      await storage.updateServiceBooking(bookingId, {
+        status: 'no_providers_found',
+        assignmentMethod: 'timeout',
+        matchingExpiresAt: null, // Clear expiry since matching is done
+        pendingOffers: 0,
+      });
+
+      // Emit WebSocket events for expiry
       if (this.webSocketManager) {
-        await this.webSocketManager.broadcastOrderTimeout(bookingId, userId);
+        // Notify customer that matching has expired
+        this.webSocketManager.emitToUser(userId, 'order.matching_expired', {
+          bookingId,
+          status: 'no_providers_found',
+          message: 'No providers were found within the time limit. Please try again or contact support.',
+          nextSteps: [
+            'Try again with a different time',
+            'Contact customer support',
+            'Consider scheduling for later'
+          ],
+        });
+
+        // Emit expired events to any providers with pending offers
+        const activeRequests = await storage.getActiveJobRequestsWithTTL();
+        const expiredRequests = activeRequests.filter(req => req.orderId === bookingId && req.isExpired);
         
-        console.log(`📡 BackgroundMatcher: Sent timeout notification for booking ${bookingId}`);
+        for (const request of expiredRequests) {
+          this.webSocketManager.emitToUser(request.providerId, 'job.expired', {
+            jobRequestId: request.id,
+            bookingId,
+            reason: 'timeout',
+            message: 'This job request has expired',
+          });
+        }
       }
 
-      console.log(`✅ BackgroundMatcher: Successfully handled expired matching for booking ${bookingId}`);
+      console.log(`❌ BackgroundMatcher: Booking ${bookingId} marked as no providers found due to timeout`);
 
     } catch (error) {
       console.error(`❌ BackgroundMatcher: Error handling expired matching for booking ${booking.id}:`, error);
-    }
-  }
-
-  /**
-   * Continue matching providers for orders already in provider_search status
-   */
-  private async continueProviderMatching(booking: any) {
-    try {
-      const bookingId = booking.id;
-      const existingCandidateCount = booking.candidateCount || 0;
-
-      console.log(`🔄 BackgroundMatcher: Continuing matching for booking ${bookingId}, existing candidates: ${existingCandidateCount}`);
-
-      // Check if we can find additional providers (expand search criteria)
-      const additionalProviders = await storage.findMatchingProviders({
-        serviceId: booking.serviceId,
-        location: {
-          latitude: booking.serviceLocation.latitude,
-          longitude: booking.serviceLocation.longitude,
-        },
-        urgency: booking.urgency,
-        bookingType: 'instant',
-        maxDistance: Math.min(50, 25 + (existingCandidateCount * 5)), // Expand radius gradually
-        maxProviders: Math.max(3, 5 - existingCandidateCount), // Find additional providers
-      });
-
-      if (additionalProviders.length > 0) {
-        console.log(`📋 BackgroundMatcher: Found ${additionalProviders.length} additional providers for booking ${bookingId}`);
-
-        // Create job requests for additional providers
-        for (const provider of additionalProviders) {
-          const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
-
-          await storage.createProviderJobRequest({
-            bookingId,
-            providerId: provider.userId,
-            expiresAt,
-            distanceKm: provider.distanceKm?.toString() || '0',
-            estimatedTravelTime: provider.estimatedTravelTime || 0,
-          });
-
-          // Send WebSocket notification to provider
-          if (this.webSocketManager) {
-            await this.webSocketManager.broadcastProviderRequested(bookingId, provider.userId, {
-              id: `${bookingId}_${provider.userId}`,
-              serviceId: booking.serviceId,
-              serviceLocation: booking.serviceLocation,
-              totalAmount: booking.totalAmount,
-              urgency: booking.urgency,
-              expiresAt,
-              distanceKm: provider.distanceKm,
-              estimatedTravelTime: provider.estimatedTravelTime
-            });
-          }
-
-          console.log(`📲 BackgroundMatcher: Sent job request to additional provider ${provider.userId}`);
-        }
-
-        // Update candidate count
-        const newCandidateCount = existingCandidateCount + additionalProviders.length;
-        await storage.updateServiceBooking(bookingId, {
-          candidateCount: newCandidateCount
-        });
-
-        console.log(`📊 BackgroundMatcher: Updated candidate count to ${newCandidateCount} for booking ${bookingId}`);
-      } else {
-        console.log(`🔍 BackgroundMatcher: No additional providers found for booking ${bookingId}`);
-      }
-
-    } catch (error) {
-      console.error(`❌ BackgroundMatcher: Error continuing provider matching for booking ${booking.id}:`, error);
-    }
-  }
-
-  /**
-   * Start initial matching for orders that just became eligible
-   */
-  private async startInitialMatching(booking: any) {
-    try {
-      const bookingId = booking.id;
-      const userId = booking.userId;
-
-      console.log(`🚀 BackgroundMatcher: Starting initial matching for booking ${bookingId}`);
-
-      // Find matching providers
-      const providers = await storage.findMatchingProviders({
-        serviceId: booking.serviceId,
-        location: {
-          latitude: booking.serviceLocation.latitude,
-          longitude: booking.serviceLocation.longitude,
-        },
-        urgency: booking.urgency,
-        bookingType: 'instant',
-        maxDistance: 25,
-        maxProviders: 5,
-      });
-
-      if (providers.length === 0) {
-        console.log(`❌ BackgroundMatcher: No providers found for booking ${bookingId}`);
-        await storage.updateServiceBooking(bookingId, {
-          status: 'cancelled',
-          notes: 'No providers available in your area',
-        });
-        return;
-      }
-
-      // Set up 5-minute matching timer
-      const matchingExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-      // Update booking with matching timer and candidate count
-      await storage.updateBookingMatchingExpiry(bookingId, matchingExpiresAt, providers.length);
-      await storage.updateServiceBooking(bookingId, {
-        status: 'provider_search',
-      });
-
-      // Create job requests for all providers
-      for (const provider of providers) {
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-        await storage.createProviderJobRequest({
-          bookingId,
-          providerId: provider.userId,
-          expiresAt,
-          distanceKm: provider.distanceKm?.toString() || '0',
-          estimatedTravelTime: provider.estimatedTravelTime || 0,
-        });
-
-        // Send WebSocket notification to provider
-        if (this.webSocketManager) {
-          await this.webSocketManager.broadcastProviderRequested(bookingId, provider.userId, {
-            id: `${bookingId}_${provider.userId}`,
-            serviceId: booking.serviceId,
-            serviceLocation: booking.serviceLocation,
-            totalAmount: booking.totalAmount,
-            urgency: booking.urgency,
-            expiresAt,
-            distanceKm: provider.distanceKm,
-            estimatedTravelTime: provider.estimatedTravelTime
-          });
-        }
-      }
-
-      // Notify user that matching has started
-      if (this.webSocketManager) {
-        await this.webSocketManager.broadcastMatchingStarted(bookingId, userId, providers.length, matchingExpiresAt);
-      }
-
-      console.log(`✅ BackgroundMatcher: Started initial matching for booking ${bookingId} with ${providers.length} providers`);
-
-    } catch (error) {
-      console.error(`❌ BackgroundMatcher: Error starting initial matching for booking ${booking.id}:`, error);
     }
   }
 

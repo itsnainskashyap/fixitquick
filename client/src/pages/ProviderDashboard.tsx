@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
-import { useSocket } from '@/hooks/useSocket';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,43 +24,16 @@ import {
   DollarSign,
   Star,
   Navigation,
-  RefreshCw
+  RefreshCw,
+  Timer,
+  Zap
 } from 'lucide-react';
-
-interface JobRequest {
-  id: string;
-  bookingId: string;
-  status: string;
-  expiresAt: string;
-  sentAt: string;
-  distanceKm?: number;
-  booking: {
-    id: string;
-    serviceId: string;
-    userId: string;
-    serviceLocation: {
-      address: string;
-      latitude: number;
-      longitude: number;
-      instructions?: string;
-    };
-    totalAmount: string;
-    urgency: string;
-    status: string;
-    customerName: string;
-    serviceType: string;
-  };
-}
-
-interface ProviderJobsData {
-  pendingOffers: JobRequest[];
-  activeJobs: any[];
-  recentJobs: JobRequest[];
-}
+import { JobRequest, ProviderJobsData } from '@shared/schema';
+import CountdownTimer, { useCountdownTimer } from '@/components/CountdownTimer';
 
 export default function ServiceProviderDashboard() {
   const { user } = useAuth();
-  const { socket, isConnected } = useSocket();
+  const { subscribe, sendMessage, isConnected } = useWebSocket();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isOnline, setIsOnline] = useState(false);
@@ -151,7 +124,7 @@ export default function ServiceProviderDashboard() {
 
   // Handle WebSocket events
   useEffect(() => {
-    if (!socket || !isConnected) return;
+    if (!isConnected) return;
 
     const handleJobOffer = (data: any) => {
       console.log('🔔 New job offer received:', data);
@@ -167,29 +140,41 @@ export default function ServiceProviderDashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
     };
 
-    socket.on('provider.job_offer', handleJobOffer);
-    socket.on('job.new_offer', handleJobUpdate);
-    socket.on('job.accepted_confirmed', handleJobUpdate);
-    socket.on('job.declined_confirmed', handleJobUpdate);
-    socket.on('job.expired', handleJobUpdate);
+    const handleJobExpired = (data: any) => {
+      console.log('⏰ Job offer expired:', data);
+      toast({
+        title: "Job Offer Expired",
+        description: `A job offer has expired and is no longer available.`,
+        variant: "default",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
+    };
+
+    // Subscribe to WebSocket events using the context
+    const unsubscribeJobOffer = subscribe('provider.job_offer', handleJobOffer);
+    const unsubscribeNewOffer = subscribe('job.new_offer', handleJobUpdate);
+    const unsubscribeAccepted = subscribe('job.accepted_confirmed', handleJobUpdate);
+    const unsubscribeDeclined = subscribe('job.declined_confirmed', handleJobUpdate);
+    const unsubscribeExpired = subscribe('job.expired', handleJobExpired);
 
     // Subscribe to provider job updates
-    socket.emit('subscribe_provider_jobs', { providerId: user?.id });
+    sendMessage('subscribe_provider_jobs', { providerId: user?.id });
 
     return () => {
-      socket.off('provider.job_offer', handleJobOffer);
-      socket.off('job.new_offer', handleJobUpdate);
-      socket.off('job.accepted_confirmed', handleJobUpdate);
-      socket.off('job.declined_confirmed', handleJobUpdate);
-      socket.off('job.expired', handleJobUpdate);
+      // Unsubscribe from all events
+      unsubscribeJobOffer();
+      unsubscribeNewOffer();
+      unsubscribeAccepted();
+      unsubscribeDeclined();
+      unsubscribeExpired();
     };
-  }, [socket, isConnected, user?.id, queryClient, toast]);
+  }, [subscribe, sendMessage, isConnected, user?.id, queryClient, toast]);
 
   // Toggle online status
   const handleOnlineToggle = (checked: boolean) => {
     setIsOnline(checked);
-    if (socket && isConnected) {
-      socket.emit('provider_online_status', { isOnline: checked });
+    if (isConnected) {
+      sendMessage('provider_online_status', { isOnline: checked });
     }
     toast({
       title: checked ? "You're Online!" : "You're Offline",
@@ -417,8 +402,22 @@ function JobOfferCard({
   isAccepting: boolean;
   isDeclining: boolean;
 }) {
-  const timeLeft = Math.max(0, new Date(job.expiresAt).getTime() - Date.now());
-  const minutesLeft = Math.floor(timeLeft / (1000 * 60));
+  const queryClient = useQueryClient();
+  const [isExpired, setIsExpired] = useState(false);
+  const timeRemaining = useCountdownTimer(job.expiresAt);
+  
+  // Handle expiration
+  useEffect(() => {
+    if (timeRemaining.isExpired && !isExpired) {
+      setIsExpired(true);
+      // Optional: Auto-refresh after expiration
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
+      }, 2000);
+    }
+  }, [timeRemaining.isExpired, isExpired, queryClient]);
+  
+  const isOfferExpired = isExpired || timeRemaining.isExpired;
 
   return (
     <motion.div
@@ -437,13 +436,24 @@ function JobOfferCard({
                 Order #{job.booking.id.slice(-8)} • {job.booking.customerName}
               </CardDescription>
             </div>
-            <div className="text-right">
+            <div className="text-right space-y-2">
               <Badge variant={job.booking.urgency === 'urgent' ? 'destructive' : 'secondary'}>
                 {job.booking.urgency}
               </Badge>
-              <p className="text-sm text-muted-foreground mt-1">
-                Expires in {minutesLeft}m
-              </p>
+              <div className="flex flex-col items-end">
+                <CountdownTimer 
+                  expiresAt={job.expiresAt}
+                  onExpired={() => setIsExpired(true)}
+                  size="sm"
+                  className="mb-1"
+                  data-testid={`countdown-timer-${job.id}`}
+                />
+                {isOfferExpired && (
+                  <Badge variant="destructive" className="text-xs">
+                    EXPIRED
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -478,11 +488,16 @@ function JobOfferCard({
           <div className="flex space-x-2">
             <Button
               onClick={onAccept}
-              disabled={isAccepting || isDeclining}
-              className="flex-1"
+              disabled={isAccepting || isDeclining || isOfferExpired}
+              className={`flex-1 ${isOfferExpired ? 'opacity-50 cursor-not-allowed' : ''}`}
               data-testid={`button-accept-${job.id}`}
             >
-              {isAccepting ? (
+              {isOfferExpired ? (
+                <>
+                  <AlertCircle className="h-4 w-4 mr-2" />
+                  Expired
+                </>
+              ) : isAccepting ? (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   Accepting...
@@ -497,11 +512,16 @@ function JobOfferCard({
             <Button
               variant="outline"
               onClick={onDecline}
-              disabled={isAccepting || isDeclining}
-              className="flex-1"
+              disabled={isAccepting || isDeclining || isOfferExpired}
+              className={`flex-1 ${isOfferExpired ? 'opacity-50 cursor-not-allowed' : ''}`}
               data-testid={`button-decline-${job.id}`}
             >
-              {isDeclining ? (
+              {isOfferExpired ? (
+                <>
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Expired
+                </>
+              ) : isDeclining ? (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   Declining...

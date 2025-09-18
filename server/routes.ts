@@ -5143,16 +5143,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Authentication required' });
       }
 
-      // Check if provider has a valid job request for this booking
+      // Enhanced provider authorization and TTL verification
       const jobRequest = await storage.getProviderJobRequest(bookingId, providerId);
       if (!jobRequest || jobRequest.status !== 'sent') {
-        return res.status(400).json({ message: 'No valid job request found' });
+        return res.status(400).json({ 
+          message: 'No valid job request found',
+          errorCode: 'INVALID_JOB_REQUEST'
+        });
       }
 
-      // Check if booking is still available
+      // Strict TTL verification at API level
+      if (jobRequest.expiresAt && jobRequest.expiresAt <= new Date()) {
+        return res.status(400).json({ 
+          message: 'Job request has expired',
+          errorCode: 'JOB_REQUEST_EXPIRED',
+          expiredAt: jobRequest.expiresAt.toISOString()
+        });
+      }
+
+      // Verify provider authorization for this specific job request
+      if (jobRequest.providerId !== providerId) {
+        return res.status(403).json({ 
+          message: 'Provider not authorized for this job request',
+          errorCode: 'PROVIDER_NOT_AUTHORIZED'
+        });
+      }
+
+      // Check if booking is still available for assignment
       const booking = await storage.getServiceBooking(bookingId);
       if (!booking || booking.status !== 'provider_search') {
-        return res.status(400).json({ message: 'Booking is no longer available' });
+        return res.status(400).json({ 
+          message: 'Booking is no longer available for assignment',
+          errorCode: 'BOOKING_NOT_AVAILABLE',
+          currentStatus: booking?.status
+        });
+      }
+
+      // Additional race condition check - ensure no provider already assigned
+      if (booking.assignedProviderId) {
+        return res.status(400).json({ 
+          message: 'Booking already assigned to another provider',
+          errorCode: 'BOOKING_ALREADY_ASSIGNED',
+          assignedProviderId: booking.assignedProviderId
+        });
       }
 
       // Accept the job (race condition handled in storage)
@@ -5217,7 +5250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get provider's job requests
+  // Get provider's job requests with TTL and schema enhancements
   app.get('/api/v1/provider/job-requests', authMiddleware, requireRole(['service_provider']), async (req, res) => {
     try {
       const providerId = req.user?.id;
@@ -5227,13 +5260,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Authentication required' });
       }
 
-      const jobRequests = await storage.getProviderJobRequests(providerId, {
-        status: status as string,
-        limit: parseInt(limit as string),
-        offset: parseInt(offset as string),
-      });
+      // Get job requests with TTL information
+      const activeRequests = await storage.getActiveJobRequestsWithTTL(providerId);
+      
+      // Apply filtering if status is specified
+      const filteredRequests = status ? 
+        activeRequests.filter(req => req.status === status) : 
+        activeRequests;
 
-      res.json(jobRequests);
+      // Apply pagination
+      const limitNum = parseInt(limit as string);
+      const offsetNum = parseInt(offset as string);
+      const paginatedRequests = filteredRequests.slice(offsetNum, offsetNum + limitNum);
+
+      // Enhance response with API schema requirements
+      const enhancedRequests = paginatedRequests.map(request => ({
+        ...request,
+        remainingSeconds: Math.max(0, request.remainingSeconds),
+        isExpired: request.isExpired,
+        bookingDetails: request.bookingDetails ? {
+          ...request.bookingDetails,
+          currentSearchRadius: request.bookingDetails.currentSearchRadius,
+          searchWave: request.bookingDetails.searchWave,
+          pendingOffers: request.bookingDetails.pendingOffers || 0,
+        } : undefined,
+      }));
+
+      res.json({
+        success: true,
+        data: enhancedRequests,
+        pagination: {
+          total: filteredRequests.length,
+          limit: limitNum,
+          offset: offsetNum,
+          hasMore: offsetNum + limitNum < filteredRequests.length,
+        },
+        metadata: {
+          activeOffersCount: activeRequests.filter(req => !req.isExpired && req.status === 'sent').length,
+          expiredOffersCount: activeRequests.filter(req => req.isExpired).length,
+        }
+      });
     } catch (error) {
       console.error('Error fetching job requests:', error);
       res.status(500).json({ message: 'Failed to fetch job requests' });
@@ -5327,7 +5393,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // TODO: Trigger background provider matching process
+      // Trigger automatic provider matching for instant orders
+      if (orderData.bookingType === 'instant') {
+        console.log(`🚀 Triggering automatic provider matching for order ${order.id}`);
+        
+        // Create service booking record for the automatic matching system
+        const serviceBooking = await storage.createServiceBooking({
+          userId,
+          serviceId: orderData.serviceId,
+          bookingType: 'instant',
+          urgency: orderData.urgency || 'normal',
+          serviceLocation: orderData.serviceLocation,
+          notes: orderData.notes,
+          totalAmount: orderData.totalAmount,
+          paymentMethod: orderData.paymentMethod || 'online',
+          status: 'pending',
+          // Link to original order
+          orderId: order.id,
+        });
+
+        // Trigger provider search
+        await initiateProviderSearch(serviceBooking);
+      }
+
       console.log(`✅ Order created: ${order.id} for user ${userId}`);
 
       res.status(201).json({

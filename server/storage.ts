@@ -5751,8 +5751,14 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async createProviderJobRequest(request: InsertProviderJobRequest): Promise<ProviderJobRequest> {
+    // Set TTL to 5 minutes from now if not provided
+    const expiresAt = request.expiresAt || new Date(Date.now() + 5 * 60 * 1000);
+    
     const result = await db.insert(providerJobRequests).values([{
       ...request,
+      expiresAt,
+      status: 'sent',
+      sentAt: new Date(),
       createdAt: new Date(),
     }]).returning();
     return result[0];
@@ -5801,53 +5807,104 @@ export class PostgresStorage implements IStorage {
     quotedPrice?: number;
     notes?: string;
   }): Promise<{ success: boolean; message?: string; booking?: ServiceBooking }> {
-    // Start transaction for race condition handling
-    const jobRequest = await this.getProviderJobRequest(bookingId, providerId);
-    if (!jobRequest || jobRequest.status !== 'sent') {
-      return { success: false, message: 'Job request not found or already processed' };
-    }
-
-    const booking = await this.getServiceBooking(bookingId);
-    if (!booking || booking.status !== 'provider_search') {
-      return { success: false, message: 'Booking no longer available' };
-    }
-
-    // Check if job request hasn't expired
-    if (jobRequest.expiresAt && jobRequest.expiresAt < new Date()) {
-      return { success: false, message: 'Job request has expired' };
-    }
-
-    try {
-      // Update job request to accepted
-      await db.update(providerJobRequests)
-        .set({ 
-          status: 'assigned',
-          responseTime: Math.floor((Date.now() - jobRequest.createdAt.getTime()) / 1000),
-          notes: details?.notes || null,
-        })
+    // Atomic transaction for race condition prevention
+    return await db.transaction(async (tx) => {
+      // Check if offer is still valid with TTL enforcement
+      const jobRequest = await tx.select()
+        .from(providerJobRequests)
         .where(and(
           eq(providerJobRequests.bookingId, bookingId),
-          eq(providerJobRequests.providerId, providerId)
-        ));
+          eq(providerJobRequests.providerId, providerId),
+          eq(providerJobRequests.status, 'sent'),
+          sql`${providerJobRequests.expiresAt} > NOW()` // TTL check at database level
+        ))
+        .limit(1)
+        .for('update'); // Row-level lock for atomic operations
 
-      // Update booking with provider assignment
-      const updatedBooking = await this.updateServiceBooking(bookingId, {
-        status: 'provider_assigned',
-        assignedProviderId: providerId,
-        assignedAt: new Date(),
-        assignmentMethod: 'auto',
-        totalAmount: details?.quotedPrice ? details.quotedPrice.toString() : booking.totalAmount,
-      });
+      if (!jobRequest.length) {
+        return { success: false, message: 'Job request not found, already processed, or expired' };
+      }
 
-      return { 
-        success: true, 
-        message: 'Job accepted successfully',
-        booking: updatedBooking 
-      };
-    } catch (error) {
-      console.error('Error accepting job request:', error);
-      return { success: false, message: 'Failed to accept job request' };
-    }
+      // Check if booking is still available for assignment (race condition check)
+      const booking = await tx.select()
+        .from(serviceBookings)
+        .where(and(
+          eq(serviceBookings.id, bookingId),
+          eq(serviceBookings.status, 'provider_search'),
+          sql`${serviceBookings.assignedProviderId} IS NULL` // Ensure no provider assigned yet
+        ))
+        .limit(1)
+        .for('update'); // Row-level lock
+
+      if (!booking.length) {
+        return { success: false, message: 'Booking no longer available for assignment' };
+      }
+
+      const currentBooking = booking[0];
+      const currentJobRequest = jobRequest[0];
+
+      try {
+        // 1. Mark this job request as accepted
+        await tx.update(providerJobRequests)
+          .set({ 
+            status: 'accepted',
+            respondedAt: new Date(),
+            quotedPrice: details?.quotedPrice?.toString(),
+            estimatedArrival: details?.estimatedArrival,
+            acceptanceNotes: details?.notes,
+          })
+          .where(and(
+            eq(providerJobRequests.bookingId, bookingId),
+            eq(providerJobRequests.providerId, providerId)
+          ));
+
+        // 2. Cancel all other pending job requests for this booking
+        await tx.update(providerJobRequests)
+          .set({ 
+            status: 'expired',
+            respondedAt: new Date(),
+          })
+          .where(and(
+            eq(providerJobRequests.bookingId, bookingId),
+            sql`${providerJobRequests.providerId} != ${providerId}`,
+            eq(providerJobRequests.status, 'sent')
+          ));
+
+        // 3. Assign provider to booking
+        const updatedBooking = await tx.update(serviceBookings)
+          .set({
+            status: 'provider_assigned',
+            assignedProviderId: providerId,
+            assignedAt: new Date(),
+            assignmentMethod: 'auto',
+            totalAmount: details?.quotedPrice ? details.quotedPrice.toString() : currentBooking.totalAmount,
+            pendingOffers: 0, // Reset pending offers count
+          })
+          .where(eq(serviceBookings.id, bookingId))
+          .returning();
+
+        // Emit WebSocket event for provider assignment (canonical event name)
+        if (this.webSocketManager) {
+          this.webSocketManager.emitToUser(currentBooking.userId, 'order.provider_assigned', {
+            bookingId,
+            providerId,
+            providerName: `Provider ${providerId}`, // Will be enhanced with actual provider data
+            estimatedArrival: details?.estimatedArrival,
+            assignedAt: new Date().toISOString(),
+            quotedPrice: details?.quotedPrice,
+          });
+        }
+
+        return { 
+          success: true, 
+          message: 'Job accepted successfully',
+          booking: updatedBooking[0] 
+        };
+      } catch (error) {
+        console.error('Error in atomic job acceptance:', error);
+        throw error; // Let transaction rollback
+      }
+    });
   }
 
   async declineProviderJobRequest(bookingId: string, providerId: string, reason?: string): Promise<{ success: boolean; message?: string }> {
@@ -5895,6 +5952,136 @@ export class PostgresStorage implements IStorage {
   }
 
   // ========================================
+  // TTL AND RADIUS ESCALATION OPERATIONS
+  // ========================================
+
+  async expireOldJobRequests(): Promise<number> {
+    // Mark expired job requests as 'expired'
+    const result = await db.update(providerJobRequests)
+      .set({ 
+        status: 'expired',
+        respondedAt: new Date(),
+      })
+      .where(and(
+        eq(providerJobRequests.status, 'sent'),
+        sql`${providerJobRequests.expiresAt} <= NOW()`
+      ))
+      .returning({ id: providerJobRequests.id });
+
+    console.log(`⏰ Expired ${result.length} job requests that exceeded TTL`);
+    return result.length;
+  }
+
+  async getActiveJobRequestsWithTTL(providerId?: string): Promise<Array<ProviderJobRequest & {
+    remainingSeconds: number;
+    isExpired: boolean;
+  }>> {
+    const conditions: SQL<unknown>[] = [
+      eq(providerJobRequests.status, 'sent'),
+    ];
+    
+    if (providerId) {
+      conditions.push(eq(providerJobRequests.providerId, providerId));
+    }
+
+    const activeRequests = await db.select({
+      ...providerJobRequests,
+      remainingSeconds: sql<number>`GREATEST(0, EXTRACT(EPOCH FROM (${providerJobRequests.expiresAt} - NOW())))`.as('remainingSeconds'),
+      isExpired: sql<boolean>`${providerJobRequests.expiresAt} <= NOW()`.as('isExpired'),
+    })
+    .from(providerJobRequests)
+    .where(and(...conditions))
+    .orderBy(asc(providerJobRequests.expiresAt));
+
+    return activeRequests;
+  }
+
+  async expandSearchRadius(bookingId: string): Promise<{ 
+    success: boolean; 
+    newRadius: number; 
+    newWave: number; 
+    message?: string 
+  }> {
+    const booking = await this.getServiceBooking(bookingId);
+    if (!booking) {
+      return { success: false, newRadius: 0, newWave: 0, message: 'Booking not found' };
+    }
+
+    // Define radius escalation waves: 15km -> 25km -> 30km -> 35km -> 50km
+    const radiusWaves = [15, 25, 30, 35, 50];
+    const currentWave = booking.searchWave || 1;
+    const nextWave = currentWave + 1;
+
+    if (nextWave > radiusWaves.length) {
+      return { 
+        success: false, 
+        newRadius: booking.currentSearchRadius || 50, 
+        newWave: currentWave,
+        message: 'Maximum search radius reached' 
+      };
+    }
+
+    const newRadius = radiusWaves[nextWave - 1];
+    const expansionRecord = {
+      wave: nextWave,
+      radius: newRadius,
+      providersFound: 0, // Will be updated when providers are found
+      expandedAt: new Date().toISOString(),
+    };
+
+    // Update booking with new radius and wave
+    const updatedBooking = await this.updateServiceBooking(bookingId, {
+      currentSearchRadius: newRadius,
+      searchWave: nextWave,
+      radiusExpansionHistory: [
+        ...(booking.radiusExpansionHistory || []),
+        expansionRecord,
+      ],
+    });
+
+    console.log(`📡 Expanded search radius for booking ${bookingId}: Wave ${nextWave} (${newRadius}km)`);
+
+    return {
+      success: true,
+      newRadius,
+      newWave: nextWave,
+      message: `Search radius expanded to ${newRadius}km (Wave ${nextWave})`
+    };
+  }
+
+  async updateBookingMatchingExpiry(bookingId: string, expiresAt: Date, candidateCount?: number): Promise<ServiceBooking | undefined> {
+    const updateData: Partial<InsertServiceBooking> = {
+      matchingExpiresAt: expiresAt,
+    };
+
+    if (candidateCount !== undefined) {
+      updateData.candidateCount = candidateCount;
+      updateData.pendingOffers = candidateCount; // Track pending offers for frontend
+    }
+
+    return await this.updateServiceBooking(bookingId, updateData);
+  }
+
+  async getBookingsNeedingRadiusExpansion(): Promise<ServiceBooking[]> {
+    // Find bookings in provider_search status where some time has passed without success
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    
+    return await db.select()
+      .from(serviceBookings)
+      .where(and(
+        eq(serviceBookings.status, 'provider_search'),
+        sql`${serviceBookings.matchingExpiresAt} > NOW()`, // Still within 5-minute window
+        sql`${serviceBookings.requestedAt} <= ${twoMinutesAgo}`, // At least 2 minutes old
+        sql`${serviceBookings.currentSearchRadius} < ${serviceBookings.maxSearchRadius}`, // Can still expand
+        or(
+          sql`${serviceBookings.pendingOffers} = 0`, // No offers yet
+          sql`${serviceBookings.requestedAt} <= ${new Date(Date.now() - 3 * 60 * 1000)}` // 3+ minutes old regardless of offers
+        )
+      ))
+      .orderBy(asc(serviceBookings.requestedAt));
+  }
+
+  // ========================================
   // PROVIDER MATCHING OPERATIONS
   // ========================================
 
@@ -5922,7 +6109,7 @@ export class PostgresStorage implements IStorage {
     responseRate: number;
     skills: string[];
   }>> {
-    const maxDistance = criteria.maxDistance || 25; // km
+    const maxDistance = criteria.maxDistance || 15; // km - default 15km radius
     const maxProviders = criteria.maxProviders || 5;
 
     // Get service details to find required skills
