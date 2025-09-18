@@ -1399,17 +1399,50 @@ export class PostgresStorage implements IStorage {
       .orderBy(desc(userSessions.createdAt));
   }
 
-  // Service Category methods
+  // Service Category methods with dynamic service count computation
   async getServiceCategories(activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: SQL[] = [];
+    const conditions: Array<SQL<boolean> | undefined> = [];
     if (activeOnly) {
-      conditions.push(eq(serviceCategories.isActive, true));
+      conditions.push(eq(serviceCategories.isActive, true) as SQL<boolean>);
     }
     
-    const whereClause = whereAll(...conditions);
-    const query = db.select().from(serviceCategories)
+    // Build the query with dynamic service count computation
+    const query = db
+      .select({
+        id: serviceCategories.id,
+        parentId: serviceCategories.parentId,
+        name: serviceCategories.name,
+        slug: serviceCategories.slug,
+        icon: serviceCategories.icon,
+        imageUrl: serviceCategories.imageUrl,
+        description: serviceCategories.description,
+        level: serviceCategories.level,
+        sortOrder: serviceCategories.sortOrder,
+        isActive: serviceCategories.isActive,
+        // Dynamic service count - only count active services
+        serviceCount: sql<number>`CAST(COUNT(CASE WHEN ${services.isActive} = true THEN ${services.id} END) AS INTEGER)`.as('serviceCount'),
+        createdAt: serviceCategories.createdAt,
+        updatedAt: serviceCategories.updatedAt,
+      })
+      .from(serviceCategories)
+      .leftJoin(services, eq(serviceCategories.id, services.categoryId))
+      .groupBy(
+        serviceCategories.id,
+        serviceCategories.parentId,
+        serviceCategories.name,
+        serviceCategories.slug,
+        serviceCategories.icon,
+        serviceCategories.imageUrl,
+        serviceCategories.description,
+        serviceCategories.level,
+        serviceCategories.sortOrder,
+        serviceCategories.isActive,
+        serviceCategories.createdAt,
+        serviceCategories.updatedAt
+      )
       .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     
+    const whereClause = whereAll(...conditions);
     if (whereClause) {
       return await query.where(whereClause);
     } else {
@@ -1418,13 +1451,14 @@ export class PostgresStorage implements IStorage {
   }
 
   async getServiceCategoriesByLevel(level: number, activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: SQL[] = [eq(serviceCategories.level, level)];
+    const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.level, level) as SQL<boolean>];
     if (activeOnly) {
-      conditions.push(eq(serviceCategories.isActive, true));
+      conditions.push(eq(serviceCategories.isActive, true) as SQL<boolean>);
     }
     
+    const whereClause = whereAll(...conditions);
     return await db.select().from(serviceCategories)
-      .where(whereAll(...conditions)!)
+      .where(whereClause!)
       .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
   }
 
@@ -1434,14 +1468,50 @@ export class PostgresStorage implements IStorage {
   }
 
   async getSubCategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: SQL[] = [eq(serviceCategories.parentId, parentId)];
+    const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.parentId, parentId) as SQL<boolean>];
     if (activeOnly) {
-      conditions.push(eq(serviceCategories.isActive, true));
+      conditions.push(eq(serviceCategories.isActive, true) as SQL<boolean>);
     }
     
-    return await db.select().from(serviceCategories)
-      .where(whereAll(...conditions)!)
+    // Build the query with dynamic service count computation
+    const whereClause = whereAll(...conditions);
+    const query = db
+      .select({
+        id: serviceCategories.id,
+        parentId: serviceCategories.parentId,
+        name: serviceCategories.name,
+        slug: serviceCategories.slug,
+        icon: serviceCategories.icon,
+        imageUrl: serviceCategories.imageUrl,
+        description: serviceCategories.description,
+        level: serviceCategories.level,
+        sortOrder: serviceCategories.sortOrder,
+        isActive: serviceCategories.isActive,
+        // Dynamic service count - only count active services
+        serviceCount: sql<number>`CAST(COUNT(CASE WHEN ${services.isActive} = true THEN ${services.id} END) AS INTEGER)`.as('serviceCount'),
+        createdAt: serviceCategories.createdAt,
+        updatedAt: serviceCategories.updatedAt,
+      })
+      .from(serviceCategories)
+      .leftJoin(services, eq(serviceCategories.id, services.categoryId))
+      .where(whereClause!)
+      .groupBy(
+        serviceCategories.id,
+        serviceCategories.parentId,
+        serviceCategories.name,
+        serviceCategories.slug,
+        serviceCategories.icon,
+        serviceCategories.imageUrl,
+        serviceCategories.description,
+        serviceCategories.level,
+        serviceCategories.sortOrder,
+        serviceCategories.isActive,
+        serviceCategories.createdAt,
+        serviceCategories.updatedAt
+      )
       .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    
+    return await query;
   }
 
   async getSubcategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
@@ -1452,9 +1522,10 @@ export class PostgresStorage implements IStorage {
   async getCategoryHierarchy(parentId?: string): Promise<ServiceCategory[]> {
     if (parentId) {
       // Get all descendants of a specific category
-      const conditions: SQL[] = [eq(serviceCategories.parentId, parentId)];
+      const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.parentId, parentId) as SQL<boolean>];
+      const whereClause = whereAll(...conditions);
       return await db.select().from(serviceCategories)
-        .where(whereAll(...conditions)!)
+        .where(whereClause!)
         .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     } else {
       // Get all categories ordered by hierarchy
@@ -1571,7 +1642,7 @@ export class PostgresStorage implements IStorage {
     return slug;
   }
 
-  // Enhanced hierarchical category methods
+  // Enhanced hierarchical category methods with dynamic service count computation
   async getCategoryTree(rootId?: string, maxDepth?: number, activeOnly = true): Promise<ServiceCategory[]> {
     const conditions: SQL[] = [];
     if (activeOnly) {
@@ -1596,15 +1667,48 @@ export class PostgresStorage implements IStorage {
       conditions.push(lte(serviceCategories.level, 1));
     }
     
+    // Build the query with dynamic service count computation
+    // Use LEFT JOIN with services table and COUNT active services
+    const query = db
+      .select({
+        id: serviceCategories.id,
+        parentId: serviceCategories.parentId,
+        name: serviceCategories.name,
+        slug: serviceCategories.slug,
+        icon: serviceCategories.icon,
+        imageUrl: serviceCategories.imageUrl,
+        description: serviceCategories.description,
+        level: serviceCategories.level,
+        sortOrder: serviceCategories.sortOrder,
+        isActive: serviceCategories.isActive,
+        // Dynamic service count - only count active services
+        serviceCount: sql<number>`CAST(COUNT(CASE WHEN ${services.isActive} = true THEN ${services.id} END) AS INTEGER)`.as('serviceCount'),
+        createdAt: serviceCategories.createdAt,
+        updatedAt: serviceCategories.updatedAt,
+      })
+      .from(serviceCategories)
+      .leftJoin(services, eq(serviceCategories.id, services.categoryId))
+      .groupBy(
+        serviceCategories.id,
+        serviceCategories.parentId,
+        serviceCategories.name,
+        serviceCategories.slug,
+        serviceCategories.icon,
+        serviceCategories.imageUrl,
+        serviceCategories.description,
+        serviceCategories.level,
+        serviceCategories.sortOrder,
+        serviceCategories.isActive,
+        serviceCategories.createdAt,
+        serviceCategories.updatedAt
+      )
+      .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    
     const whereClause = whereAll(...conditions);
     if (whereClause) {
-      return await db.select().from(serviceCategories)
-        .where(whereClause)
-        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+      return await query.where(whereClause);
     } else {
-      return await db.select().from(serviceCategories)
-        .where(lte(serviceCategories.level, 1))
-        .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+      return await query.where(lte(serviceCategories.level, 1));
     }
   }
 
@@ -2050,18 +2154,20 @@ export class PostgresStorage implements IStorage {
 
   // Order methods
   async getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]> {
-    const conditions: SQL<unknown>[] = [];
+    const conditions: Array<SQL<boolean> | undefined> = [];
     if (filters?.userId) {
-      conditions.push(eq(orders.userId, filters.userId));
+      conditions.push(eq(orders.userId, filters.userId) as SQL<boolean>);
     }
     if (filters?.status) {
-      conditions.push(eq(orders.status, filters.status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
+      conditions.push(eq(orders.status, filters.status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled") as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
     let baseQuery = db.select().from(orders);
     
-    baseQuery = whereClause ? baseQuery.where(whereClause) : baseQuery;
+    if (whereClause) {
+      baseQuery = baseQuery.where(whereClause);
+    }
     
     baseQuery = baseQuery.orderBy(desc(orders.createdAt));
     
@@ -2082,7 +2188,18 @@ export class PostgresStorage implements IStorage {
     const orderData = {
       ...order,
       meta: order.meta ? {
-        ...order.meta
+        basePrice: typeof order.meta.basePrice === 'number' ? order.meta.basePrice : Number(order.meta.basePrice) || 0,
+        totalAmount: typeof order.meta.totalAmount === 'number' ? order.meta.totalAmount : Number(order.meta.totalAmount) || 0,
+        serviceFee: typeof order.meta.serviceFee === 'number' ? order.meta.serviceFee : Number(order.meta.serviceFee) || 0,
+        taxes: typeof order.meta.taxes === 'number' ? order.meta.taxes : Number(order.meta.taxes) || 0,
+        notes: typeof order.meta.notes === 'string' ? order.meta.notes : String(order.meta.notes || ''),
+        customerNotes: typeof order.meta.customerNotes === 'string' ? order.meta.customerNotes : String(order.meta.customerNotes || ''),
+        specialRequirements: typeof order.meta.specialRequirements === 'string' ? order.meta.specialRequirements : String(order.meta.specialRequirements || ''),
+        urgencyLevel: typeof order.meta.urgencyLevel === 'string' ? order.meta.urgencyLevel : String(order.meta.urgencyLevel || ''),
+        paymentMethod: typeof order.meta.paymentMethod === 'string' ? order.meta.paymentMethod : String(order.meta.paymentMethod || ''),
+        paymentStatus: typeof order.meta.paymentStatus === 'string' ? order.meta.paymentStatus : String(order.meta.paymentStatus || ''),
+        estimatedDuration: typeof order.meta.estimatedDuration === 'number' ? order.meta.estimatedDuration : Number(order.meta.estimatedDuration) || 0,
+        location: order.meta.location || null
       } : order.meta
     };
     const result = await db.insert(orders).values([orderData]).returning();
@@ -2094,7 +2211,18 @@ export class PostgresStorage implements IStorage {
     const updateData = {
       ...data,
       meta: data.meta ? {
-        ...data.meta
+        basePrice: typeof data.meta.basePrice === 'number' ? data.meta.basePrice : Number(data.meta.basePrice) || 0,
+        totalAmount: typeof data.meta.totalAmount === 'number' ? data.meta.totalAmount : Number(data.meta.totalAmount) || 0,
+        serviceFee: typeof data.meta.serviceFee === 'number' ? data.meta.serviceFee : Number(data.meta.serviceFee) || 0,
+        taxes: typeof data.meta.taxes === 'number' ? data.meta.taxes : Number(data.meta.taxes) || 0,
+        notes: typeof data.meta.notes === 'string' ? data.meta.notes : String(data.meta.notes || ''),
+        customerNotes: typeof data.meta.customerNotes === 'string' ? data.meta.customerNotes : String(data.meta.customerNotes || ''),
+        specialRequirements: typeof data.meta.specialRequirements === 'string' ? data.meta.specialRequirements : String(data.meta.specialRequirements || ''),
+        urgencyLevel: typeof data.meta.urgencyLevel === 'string' ? data.meta.urgencyLevel : String(data.meta.urgencyLevel || ''),
+        paymentMethod: typeof data.meta.paymentMethod === 'string' ? data.meta.paymentMethod : String(data.meta.paymentMethod || ''),
+        paymentStatus: typeof data.meta.paymentStatus === 'string' ? data.meta.paymentStatus : String(data.meta.paymentStatus || ''),
+        estimatedDuration: typeof data.meta.estimatedDuration === 'number' ? data.meta.estimatedDuration : Number(data.meta.estimatedDuration) || 0,
+        location: data.meta.location || null
       } : data.meta
     };
     const result = await db.update(orders)
@@ -2105,10 +2233,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getOrdersByUser(userId: string, status?: string): Promise<Order[]> {
-    const conditions: SQL[] = [eq(orders.userId, userId)];
+    const conditions: Array<SQL<boolean> | undefined> = [eq(orders.userId, userId) as SQL<boolean>];
     
     if (status) {
-      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
+      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled") as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
@@ -2122,10 +2250,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getOrdersByProvider(providerId: string, status?: string): Promise<Order[]> {
-    const conditions: SQL[] = [eq(orders.providerId, providerId)];
+    const conditions: Array<SQL<boolean> | undefined> = [eq(orders.providerId, providerId) as SQL<boolean>];
     
     if (status) {
-      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
+      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled") as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
@@ -2367,15 +2495,15 @@ export class PostgresStorage implements IStorage {
   async getParts(filters?: { categoryId?: string; providerId?: string; isActive?: boolean; sortBy?: 'newest' | 'oldest' | 'price-asc' | 'price-desc' | 'rating' }): Promise<Part[]> {
     let baseQuery = db.select().from(parts);
     
-    const conditions: SQL<unknown>[] = [];
+    const conditions: Array<SQL<boolean> | undefined> = [];
     if (filters?.isActive !== undefined) {
-      conditions.push(eq(parts.isActive, filters.isActive));
+      conditions.push(eq(parts.isActive, filters.isActive) as SQL<boolean>);
     }
     if (filters?.categoryId) {
-      conditions.push(eq(parts.categoryId, filters.categoryId));
+      conditions.push(eq(parts.categoryId, filters.categoryId) as SQL<boolean>);
     }
     if (filters?.providerId) {
-      conditions.push(eq(parts.providerId, filters.providerId));
+      conditions.push(eq(parts.providerId, filters.providerId) as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
@@ -2711,7 +2839,7 @@ export class PostgresStorage implements IStorage {
   async getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean; verificationStatus?: string }): Promise<ServiceProvider[]> {
     let baseQuery = db.select().from(serviceProviders);
     
-    const conditions: SQL[] = [];
+    const conditions: Array<SQL<boolean> | undefined> = [];
     if (filters?.categoryId) {
       conditions.push(eq(serviceProviders.categoryId, filters.categoryId));
     }
@@ -2719,7 +2847,7 @@ export class PostgresStorage implements IStorage {
       conditions.push(eq(serviceProviders.isVerified, filters.isVerified));
     }
     if (filters?.verificationStatus) {
-      conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus));
+      conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus as ServiceProviderVerificationStatusType));
     }
     
     const whereClause = whereAll(...conditions);
