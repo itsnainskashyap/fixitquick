@@ -16,10 +16,6 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 36795
-externalPort = 3000
-
-[[ports]]
 localPort = 38391
 externalPort = 6800
 
@@ -75,5 +71,5 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "NODE_ENV=development ALLOW_DEV_AUTH=true JWT_SECRET_KEY=dev-jwt-key-12345 TWILIO_DEV_FALLBACK=true npm run dev"
+args = "NODE_ENV=development ALLOW_DEV_AUTH=true DEV_ADMIN_ENABLED=true JWT_SECRET_KEY=dev-jwt-key-12345 TWILIO_DEV_FALLBACK=true npm run dev"
 waitForPort = 5000
