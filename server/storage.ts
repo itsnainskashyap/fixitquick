@@ -1707,7 +1707,7 @@ export class PostgresStorage implements IStorage {
 
   // Enhanced hierarchical category methods with dynamic service count computation
   async getCategoryTree(rootId?: string, maxDepth?: number, activeOnly = true): Promise<ServiceCategory[]> {
-    // Simplify the method to use the same working pattern as getSubCategories
+    // Step 1: Get all categories first without complex subqueries
     const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [];
     
     if (activeOnly) {
@@ -1728,9 +1728,10 @@ export class PostgresStorage implements IStorage {
       }
     }
     
-    // Use the same working query pattern as getSubCategories
     const whereClause = whereAll(...conditions);
-    const query = db
+    
+    // Get categories without service count first
+    const categories = await db
       .select({
         id: serviceCategories.id,
         parentId: serviceCategories.parentId,
@@ -1742,31 +1743,52 @@ export class PostgresStorage implements IStorage {
         level: serviceCategories.level,
         sortOrder: serviceCategories.sortOrder,
         isActive: serviceCategories.isActive,
-        // Dynamic service count - only count active services
-        serviceCount: sql<number>`CAST(COUNT(CASE WHEN ${services.isActive} = true THEN ${services.id} END) AS INTEGER)`.as('serviceCount'),
         createdAt: serviceCategories.createdAt,
         updatedAt: serviceCategories.updatedAt,
       })
       .from(serviceCategories)
-      .leftJoin(services, eq(serviceCategories.id, services.categoryId))
       .where(whereClause!)
-      .groupBy(
-        serviceCategories.id,
-        serviceCategories.parentId,
-        serviceCategories.name,
-        serviceCategories.slug,
-        serviceCategories.icon,
-        serviceCategories.imageUrl,
-        serviceCategories.description,
-        serviceCategories.level,
-        serviceCategories.sortOrder,
-        serviceCategories.isActive,
-        serviceCategories.createdAt,
-        serviceCategories.updatedAt
-      )
       .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     
-    return await query;
+    // Step 2: Calculate service counts for each category separately
+    const categoriesWithCounts = await Promise.all(
+      categories.map(async (category) => {
+        let serviceCount = 0;
+        
+        // Count direct services for this category
+        const directCount = await db
+          .select({ count: count() })
+          .from(services)
+          .where(and(
+            eq(services.categoryId, category.id),
+            eq(services.isActive, true)
+          ));
+        
+        serviceCount += directCount[0]?.count || 0;
+        
+        // If this is a parent category (level 0), also count services from child categories
+        if (category.level === 0) {
+          const childCount = await db
+            .select({ count: count() })
+            .from(services)
+            .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+            .where(and(
+              eq(serviceCategories.parentId, category.id),
+              eq(services.isActive, true),
+              eq(serviceCategories.isActive, true)
+            ));
+            
+          serviceCount += childCount[0]?.count || 0;
+        }
+        
+        return {
+          ...category,
+          serviceCount
+        };
+      })
+    );
+    
+    return categoriesWithCounts;
   }
 
   async getCategoryPath(categoryId: string): Promise<ServiceCategory[]> {
