@@ -42,7 +42,7 @@
   --font-mono: 'Monaco', monospace;
   
   /* Dynamic Layout Variables - Mobile-first responsive */
-  --header-height: 240px; /* Default header height - increased for better spacing */
+  --header-height: 280px; /* Default header height - much higher to prevent overlap */
   --bottom-nav-height: 80px; /* Default bottom navigation height */
   
   /* Safe Area Variables for modern devices with notches/dynamic islands */
@@ -119,7 +119,7 @@
   }
   
   .main-content {
-    min-height: calc(100vh - var(--header-height, 240px) - var(--bottom-nav-height, 80px));
+    min-height: calc(100vh - var(--header-height, 280px) - var(--bottom-nav-height, 80px));
     transition: all 0.3s ease;
     position: relative;
   }
@@ -128,7 +128,7 @@
   @media (max-width: 640px) {
     .main-content {
       /* Ensure proper spacing on small screens */
-      min-height: calc(100vh - var(--header-height, 200px) - var(--bottom-nav-height, 72px));
+      min-height: calc(100vh - var(--header-height, 220px) - var(--bottom-nav-height, 72px));
     }
   }
   
