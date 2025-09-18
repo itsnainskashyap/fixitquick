@@ -14,54 +14,10 @@ console.log('🔧 Setting up Replit auth for domains:', replitDomains);
 
 const getOidcConfig = memoize(
   async () => {
-    const issuerUrl = process.env.ISSUER_URL ?? "https://replit.com/oidc";
-    const clientId = process.env.REPL_ID!;
-    const clientSecret = process.env.REPL_IDENTITY_KEY!;
-    
-    if (!clientId) {
-      throw new Error('REPL_ID environment variable is required for OAuth configuration');
-    }
-    if (!clientSecret) {
-      throw new Error('REPL_IDENTITY_KEY environment variable is required for OAuth configuration');
-    }
-    
-    console.log('🔧 Creating OIDC configuration for Replit Auth...', {
-      issuer: issuerUrl,
-      client_id: clientId,
-      has_identity_key: !!clientSecret,
-      client_secret_length: clientSecret?.length || 0
-    });
-    
-    try {
-      // Use openid-client discovery to get OIDC endpoints with client credentials
-      const config = await client.discovery(
-        new URL(issuerUrl),
-        clientId,
-        clientSecret // Pass client secret for proper authentication
-      );
-      
-      console.log('✅ OIDC configuration successfully created:', {
-        issuer: (config as any).issuer,
-        authorization_endpoint: (config as any).authorization_endpoint,
-        token_endpoint: (config as any).token_endpoint,
-        userinfo_endpoint: (config as any).userinfo_endpoint,
-        client_id: (config as any).client_id,
-        client_authentication_method: (config as any).client_authentication_method || 'client_secret_basic'
-      });
-      
-      return config;
-    } catch (error) {
-      console.error('❌ OIDC configuration failed:', {
-        error: (error as Error).message,
-        stack: (error as Error).stack,
-        issuer: issuerUrl,
-        hasClientId: !!clientId,
-        hasClientSecret: !!clientSecret,
-        clientIdLength: clientId?.length || 0,
-        clientSecretLength: clientSecret?.length || 0
-      });
-      throw error;
-    }
+    return await client.discovery(
+      new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
+      process.env.REPL_ID!
+    );
   },
   { maxAge: 3600 * 1000 }
 );
