@@ -722,7 +722,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('🔍 /api/auth/user: Checking authentication methods...');
       
-      // PRIORITY 1: Check if user is already authenticated via Replit session
+      // ABSOLUTE PRIORITY 1: Check for admin JWT token in cookies FIRST (overrides all other auth)
+      if (req.cookies?.adminToken) {
+        console.log('🍪 /api/auth/user: Found admin token in cookie, processing with ABSOLUTE HIGHEST PRIORITY');
+        try {
+          const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
+          if (jwtPayload) {
+            console.log(`🔑 /api/auth/user: Admin JWT token verified for userId: ${jwtPayload.userId}`);
+            user = await storage.getUser(jwtPayload.userId);
+            
+            if (user && user.isActive && user.role === 'admin') {
+              console.log(`✅ /api/auth/user: Admin user ${jwtPayload.userId} authenticated successfully`);
+              const userWithDisplayName = {
+                ...user,
+                displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Administrator Admin'
+              };
+              return res.json(userWithDisplayName);
+            }
+          }
+        } catch (adminJwtError) {
+          console.log('❌ /api/auth/user: Admin JWT token expired/invalid, clearing cookie...');
+          // Clear expired admin cookie
+          res.clearCookie('adminToken', { path: '/', httpOnly: true });
+        }
+      }
+      
+      // PRIORITY 2: Check if user is already authenticated via Replit session
       if (req.user) {
         // Extract user ID from Replit session
         userId = req.user.id || req.user.claims?.sub;
@@ -744,7 +769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // PRIORITY 2: Check for JWT token in Authorization header (fallback for SMS auth)
+      // PRIORITY 3: Check for JWT token in Authorization header (fallback for SMS auth)
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split('Bearer ')[1]?.trim();
@@ -769,31 +794,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log('❌ /api/auth/user: JWT token verification failed (expired/invalid):', jwtError);
             // Continue to return null instead of error - let frontend handle redirect
           }
-        }
-      }
-      
-      // PRIORITY 3: Check for admin JWT token in cookies (for admin users)  
-      if (req.cookies?.adminToken) {
-        console.log('🍪 /api/auth/user: Found admin token in cookie, attempting verification...');
-        try {
-          const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
-          if (jwtPayload) {
-            console.log(`🔑 /api/auth/user: Admin JWT token verified for userId: ${jwtPayload.userId}`);
-            user = await storage.getUser(jwtPayload.userId);
-            
-            if (user && user.isActive && user.role === 'admin') {
-              console.log(`✅ /api/auth/user: Admin user ${jwtPayload.userId} authenticated successfully`);
-              const userWithDisplayName = {
-                ...user,
-                displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Admin User'
-              };
-              return res.json(userWithDisplayName);
-            }
-          }
-        } catch (adminJwtError) {
-          console.log('❌ /api/auth/user: Admin JWT token expired/invalid, clearing cookie...');
-          // Clear expired admin cookie
-          res.clearCookie('adminToken', { path: '/', httpOnly: true });
         }
       }
       
