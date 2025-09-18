@@ -1011,9 +1011,10 @@ const TaxManagementSystem = () => {
 
   // Fetch service categories
   const { data: categoriesData, isLoading: categoriesLoading } = useQuery({
-    queryKey: ['admin-service-categories'],
+    queryKey: ['/api/v1/service-categories', 'admin'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories');
+      const response = await apiRequest('GET', '/api/v1/admin/categories');
+      return response.data || response; // Handle envelope format
     }
   });
 
@@ -1094,8 +1095,15 @@ const TaxManagementSystem = () => {
   const createCategoryMutation = useMutation({
     mutationFn: async (categoryData: InsertServiceCategory) => await apiRequest('POST', '/api/v1/admin/categories', categoryData),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-service-categories'] });
+      // Invalidate admin queries using prefix invalidation for TanStack Query v5
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
       queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
+      
+      // Invalidate user-facing queries for immediate data sync (using prefix invalidation)
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] }); // This covers tree, all, admin variations
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      
       setIsCreateCategoryDialogOpen(false);
       resetCategoryForm();
       toast({ title: 'Service category created successfully', description: 'The new category has been added.' });
@@ -4325,12 +4333,12 @@ export default function Admin() {
 
   // Fetch users
   const { data: usersResponse } = useQuery({
-    queryKey: ['/api/v1/admin/users', searchQuery, filterRole],
+    queryKey: ['/api/v1/users', searchQuery, filterRole],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
       if (filterRole && filterRole !== 'all') params.set('role', filterRole);
-      return await apiRequest('GET', `/api/v1/admin/users?${params.toString()}`);
+      return await apiRequest('GET', `/api/v1/users?${params.toString()}`);
     },
     enabled: !!user,
   });
@@ -4388,19 +4396,20 @@ export default function Admin() {
 
   // Fetch category hierarchy
   const { data: categoryHierarchyResponse } = useQuery({
-    queryKey: ['/api/v1/admin/categories/hierarchy'],
+    queryKey: ['/api/v1/service-categories', 'tree'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories/hierarchy');
+      const response = await apiRequest('GET', '/api/v1/categories/tree');
+      return response.data || response; // Handle envelope format
     },
     enabled: !!user,
   });
-  const categoryHierarchy = (categoryHierarchyResponse as any)?.data || [];
+  const categoryHierarchy = (categoryHierarchyResponse as any)?.data || categoryHierarchyResponse || [];
 
   // Fetch main categories
   const { data: mainCategoriesResponse, isLoading: mainCategoriesLoading } = useQuery({
-    queryKey: ['/api/v1/admin/categories/main'],
+    queryKey: ['/api/v1/service-categories', { level: 0 }],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories/main');
+      return await apiRequest('GET', '/api/v1/service-categories?level=0');
     },
     enabled: !!user,
   });
@@ -4424,9 +4433,9 @@ export default function Admin() {
 
   // Fetch admin services
   const { data: servicesResponse, isLoading: servicesLoading } = useQuery({
-    queryKey: ['/api/v1/admin/services'],
+    queryKey: ['/api/v1/services'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/services');
+      return await apiRequest('GET', '/api/v1/services');
     },
     enabled: !!user,
   });
@@ -4434,9 +4443,10 @@ export default function Admin() {
 
   // Fetch all admin categories
   const { data: adminCategoriesResponse, isLoading: adminCategoriesLoading } = useQuery({
-    queryKey: ['/api/v1/admin/categories'],
+    queryKey: ['/api/v1/service-categories', 'all'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/categories');
+      const response = await apiRequest('GET', '/api/v1/service-categories');
+      return response.data || response; // Handle envelope format
     },
     enabled: !!user,
   });
@@ -4588,11 +4598,16 @@ export default function Admin() {
   // Category mutations
   const createCategoryMutation = useMutation({
     mutationFn: async (categoryData: any) => {
-      return await apiRequest('POST', '/api/v1/admin/categories', categoryData);
+      return await apiRequest('POST', '/api/v1/service-categories', categoryData);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories/main'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
       setIsCreateCategoryOpen(false);
       setCategoryFormData({ name: '', description: '', icon: '', imageUrl: '', parentId: '', isActive: true });
       toast({
@@ -4604,11 +4619,16 @@ export default function Admin() {
 
   const updateCategoryMutation = useMutation({
     mutationFn: async ({ categoryId, data }: { categoryId: string; data: any }) => {
-      return await apiRequest('PUT', `/api/v1/admin/categories/${categoryId}`, data);
+      return await apiRequest('PATCH', `/api/v1/service-categories/${categoryId}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories/main'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
       setIsEditCategoryOpen(false);
       setSelectedCategory(null);
       toast({
@@ -4620,11 +4640,15 @@ export default function Admin() {
 
   const deleteCategoryMutation = useMutation({
     mutationFn: async (categoryId: string) => {
+      // Note: Delete operations may need admin-specific endpoint for security
       return await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
       toast({
         title: "Category deleted",
         description: "Category has been deleted successfully.",
@@ -4660,9 +4684,12 @@ export default function Admin() {
     },
     onSuccess: (data) => {
       // Invalidate both admin and public category queries for consistent UX
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
       toast({
         title: "Image uploaded",
         description: "Category image has been uploaded successfully.",
@@ -4684,9 +4711,12 @@ export default function Admin() {
     },
     onSuccess: () => {
       // Invalidate both admin and public category queries for consistent UX
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
       toast({
         title: "Image updated",
         description: "Category image has been updated successfully.",
@@ -4707,9 +4737,12 @@ export default function Admin() {
     },
     onSuccess: () => {
       // Invalidate both admin and public category queries for consistent UX
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] }); // May include categories
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
       toast({
         title: "Image removed",
         description: "Category image has been removed successfully.",
@@ -4730,13 +4763,13 @@ export default function Admin() {
     },
     onMutate: async ({ categoryIds }) => {
       // Cancel any outgoing refetches so they don't overwrite our optimistic update
-      await queryClient.cancelQueries({ queryKey: ['/api/v1/admin/categories/main'] });
+      await queryClient.cancelQueries({ queryKey: ['/api/v1/service-categories', { level: 0 }] });
       
       // Snapshot previous value for rollback
-      const previousCategories = queryClient.getQueryData(['/api/v1/admin/categories/main']);
+      const previousCategories = queryClient.getQueryData(['/api/v1/service-categories', { level: 0 }]);
       
       // Optimistically update categories in React Query cache
-      queryClient.setQueryData(['/api/v1/admin/categories/main'], (old: Category[] = []) => {
+      queryClient.setQueryData(['/api/v1/service-categories', { level: 0 }], (old: Category[] = []) => {
         const reorderedCategories = categoryIds.map(id => old.find(cat => cat.id === id)).filter(Boolean) as Category[];
         return reorderedCategories;
       });
@@ -4745,8 +4778,9 @@ export default function Admin() {
     },
     onSuccess: () => {
       // Re-fetch to ensure server state is accurate
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
       toast({
         title: "Categories reordered",
         description: "Category order has been updated successfully.",
@@ -4755,7 +4789,7 @@ export default function Admin() {
     onError: (error: any, variables, context) => {
       // Rollback to previous state on error
       if (context?.previousCategories) {
-        queryClient.setQueryData(['/api/v1/admin/categories/main'], context.previousCategories);
+        queryClient.setQueryData(['/api/v1/service-categories', { level: 0 }], context.previousCategories);
         setLocalCategories(context.previousCategories as Category[]);
       }
       toast({
@@ -4870,7 +4904,7 @@ export default function Admin() {
   // Service mutations
   const createServiceMutation = useMutation({
     mutationFn: async (serviceData: any) => {
-      return await apiRequest('POST', '/api/v1/admin/services', serviceData);
+      return await apiRequest('POST', '/api/v1/services', serviceData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
@@ -4885,7 +4919,7 @@ export default function Admin() {
 
   const updateServiceMutation = useMutation({
     mutationFn: async ({ serviceId, data }: { serviceId: string; data: any }) => {
-      return await apiRequest('PUT', `/api/v1/admin/services/${serviceId}`, data);
+      return await apiRequest('PATCH', `/api/v1/services/${serviceId}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
@@ -4900,6 +4934,7 @@ export default function Admin() {
 
   const deleteServiceMutation = useMutation({
     mutationFn: async (serviceId: string) => {
+      // Note: Delete operations may need admin-specific endpoint for security
       return await apiRequest('DELETE', `/api/v1/admin/services/${serviceId}`);
     },
     onSuccess: () => {

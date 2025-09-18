@@ -1642,7 +1642,26 @@ export const supportAgents = pgTable("support_agents", {
 }));
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
+// Original schema for internal use
 export const insertServiceCategorySchema = createInsertSchema(serviceCategories).omit({ id: true, createdAt: true });
+
+// API-specific schema for POST operations (omits server-computed fields)
+export const apiCreateServiceCategorySchema = createInsertSchema(serviceCategories).omit({ 
+  id: true, 
+  createdAt: true, 
+  slug: true,      // Server generates from name
+  level: true,     // Server computes from parentId
+  serviceCount: true // Server maintains this cache field
+});
+
+// API-specific schema for PATCH operations (only allows updating specific fields)
+export const apiUpdateServiceCategorySchema = createInsertSchema(serviceCategories).omit({ 
+  id: true, 
+  createdAt: true,
+  slug: true,      // Server generates from name
+  level: true,     // Server computes from parentId  
+  serviceCount: true // Server maintains this cache field
+}).partial(); // Make all fields optional for PATCH
 export const insertServiceSchema = createInsertSchema(services).omit({ id: true, createdAt: true });
 export const insertServiceBookingSchema = createInsertSchema(serviceBookings).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertProviderJobRequestSchema = createInsertSchema(providerJobRequests).omit({ id: true, createdAt: true, updatedAt: true });

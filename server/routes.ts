@@ -52,6 +52,11 @@ import {
   supportTicketRatingSchema,
   insertCouponSchema,
   insertCouponUsageSchema,
+  // Service category schemas
+  insertServiceCategorySchema,
+  apiCreateServiceCategorySchema,
+  apiUpdateServiceCategorySchema,
+  insertServiceSchema,
   // Tax management schemas
   insertTaxCategorySchema,
   insertTaxSchema,
@@ -955,10 +960,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // For now, return empty cart as cart is managed on frontend with localStorage
       // This can be extended to store cart in database for cross-device sync
-      res.json({ items: [], subtotal: 0, tax: 0, discount: 0, total: 0 });
+      res.json({
+        success: true,
+        data: { items: [], subtotal: 0, tax: 0, discount: 0, total: 0 }
+      });
     } catch (error) {
       console.error('Error fetching cart:', error);
-      res.status(500).json({ message: 'Failed to fetch cart' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch cart'
+      });
     }
   });
 
@@ -3474,6 +3485,342 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========================================
+  // STANDARDIZED API ENDPOINTS FOR ADMIN SYNC
+  // ========================================
+
+  // GET /api/v1/service-categories - Get all service categories with filtering
+  app.get('/api/v1/service-categories', async (req, res) => {
+    try {
+      const { activeOnly = 'true', level, parentId } = req.query;
+      
+      let categories;
+      if (level !== undefined) {
+        categories = await storage.getServiceCategoriesByLevel(parseInt(level as string), activeOnly === 'true');
+      } else if (parentId) {
+        categories = await storage.getSubCategories(parentId as string, activeOnly === 'true');
+      } else {
+        categories = await storage.getServiceCategories(activeOnly === 'true');
+      }
+      
+      res.json({
+        success: true,
+        data: categories
+      });
+    } catch (error) {
+      console.error('Error fetching service categories:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch service categories'
+      });
+    }
+  });
+
+  // POST /api/v1/service-categories - Create new service category (admin only)
+  app.post('/api/v1/service-categories', 
+    adminSessionMiddleware, 
+    validateBody(apiCreateServiceCategorySchema),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const categoryData = req.body;
+        
+        // Generate slug if not provided
+        if (!categoryData.slug) {
+          categoryData.slug = await storage.generateCategorySlug(categoryData.name, categoryData.parentId);
+        }
+        
+        // Set level based on parent
+        if (categoryData.parentId) {
+          const parent = await storage.getServiceCategory(categoryData.parentId);
+          if (!parent) {
+            return res.status(400).json({
+              success: false,
+              message: 'Parent category not found'
+            });
+          }
+          categoryData.level = parent.level + 1;
+        } else {
+          categoryData.level = 0;
+        }
+
+        const newCategory = await storage.createServiceCategory(categoryData);
+        
+        res.status(201).json({
+          success: true,
+          data: newCategory,
+          message: 'Service category created successfully'
+        });
+      } catch (error) {
+        console.error('Error creating service category:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to create service category'
+        });
+      }
+    });
+
+  // PATCH /api/v1/service-categories/:id - Update service category (admin only)
+  app.patch('/api/v1/service-categories/:id',
+    adminSessionMiddleware,
+    validateBody(apiUpdateServiceCategorySchema),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+
+        // Validate hierarchy if parentId is being changed
+        if (updateData.parentId !== undefined) {
+          const validation = await storage.validateCategoryHierarchy(id, updateData.parentId);
+          if (!validation.valid) {
+            return res.status(400).json({
+              success: false,
+              message: validation.reason || 'Invalid category hierarchy'
+            });
+          }
+        }
+
+        const updatedCategory = await storage.updateServiceCategory(id, updateData);
+        
+        if (!updatedCategory) {
+          return res.status(404).json({
+            success: false,
+            message: 'Service category not found'
+          });
+        }
+
+        res.json({
+          success: true,
+          data: updatedCategory,
+          message: 'Service category updated successfully'
+        });
+      } catch (error) {
+        console.error('Error updating service category:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to update service category'
+        });
+      }
+    });
+
+  // GET /api/v1/services - Get all services with filtering and pagination
+  app.get('/api/v1/services', async (req, res) => {
+    try {
+      const { 
+        categoryId, 
+        isActive = 'true', 
+        isTestService = 'false',
+        search,
+        sortBy = 'name',
+        limit = '50',
+        offset = '0'
+      } = req.query;
+
+      const filters: any = {
+        isActive: isActive === 'true',
+        isTestService: isTestService === 'true'
+      };
+
+      if (categoryId) {
+        filters.categoryId = categoryId as string;
+      }
+
+      let services = await storage.getServices(filters);
+
+      // Apply search filter if provided
+      if (search) {
+        const searchTerm = (search as string).toLowerCase();
+        services = services.filter(service => 
+          service.name.toLowerCase().includes(searchTerm) ||
+          service.description?.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      // Apply sorting
+      if (sortBy === 'name') {
+        services.sort((a, b) => a.name.localeCompare(b.name));
+      } else if (sortBy === 'price') {
+        services.sort((a, b) => parseFloat(a.basePrice || '0') - parseFloat(b.basePrice || '0'));
+      } else if (sortBy === 'rating') {
+        services.sort((a, b) => parseFloat(b.rating || '0') - parseFloat(a.rating || '0'));
+      }
+
+      // Apply pagination
+      const limitNum = Math.min(parseInt(limit as string) || 50, 100);
+      const offsetNum = parseInt(offset as string) || 0;
+      const paginatedServices = services.slice(offsetNum, offsetNum + limitNum);
+
+      // Transform services for frontend compatibility
+      const transformedServices = transformServicesForFrontend(paginatedServices);
+
+      res.json({
+        success: true,
+        data: transformedServices,
+        total: services.length,
+        limit: limitNum,
+        offset: offsetNum
+      });
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch services'
+      });
+    }
+  });
+
+  // POST /api/v1/services - Create new service (admin only)
+  app.post('/api/v1/services',
+    adminSessionMiddleware,
+    validateBody(insertServiceSchema),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const serviceData = req.body;
+
+        // Validate that category exists
+        if (serviceData.categoryId) {
+          const category = await storage.getServiceCategory(serviceData.categoryId);
+          if (!category) {
+            return res.status(400).json({
+              success: false,
+              message: 'Category not found'
+            });
+          }
+        }
+
+        // Create service with proper data structure
+        const newService = await storage.createService({
+          ...serviceData,
+          createdAt: undefined // Let the database handle this
+        });
+
+        res.status(201).json({
+          success: true,
+          data: transformServiceForFrontend(newService),
+          message: 'Service created successfully'
+        });
+      } catch (error) {
+        console.error('Error creating service:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to create service'
+        });
+      }
+    });
+
+  // PATCH /api/v1/services/:id - Update service (admin only)
+  app.patch('/api/v1/services/:id',
+    adminSessionMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+
+        // Validate category if being changed
+        if (updateData.categoryId) {
+          const category = await storage.getServiceCategory(updateData.categoryId);
+          if (!category) {
+            return res.status(400).json({
+              success: false,
+              message: 'Category not found'
+            });
+          }
+        }
+
+        const updatedService = await storage.updateService(id, updateData);
+        
+        if (!updatedService) {
+          return res.status(404).json({
+            success: false,
+            message: 'Service not found'
+          });
+        }
+
+        res.json({
+          success: true,
+          data: transformServiceForFrontend(updatedService),
+          message: 'Service updated successfully'
+        });
+      } catch (error) {
+        console.error('Error updating service:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to update service'
+        });
+      }
+    });
+
+  // GET /api/v1/users - Get all users with filtering (admin only)
+  app.get('/api/v1/users',
+    adminSessionMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const { 
+          role, 
+          search,
+          isActive,
+          limit = '50',
+          offset = '0'
+        } = req.query;
+
+        let users;
+        
+        if (search) {
+          // Search users by name, email, or phone
+          users = await storage.searchUsers(search as string, role as any);
+        } else if (role) {
+          // Get users by role
+          users = await storage.getUsersByRole(role as any);
+        } else {
+          // Get all users (implement this in storage if needed)
+          users = await storage.searchUsers('', undefined);
+        }
+
+        // Apply active filter if provided
+        if (isActive !== undefined) {
+          const activeFilter = isActive === 'true';
+          users = users.filter(user => user.isActive === activeFilter);
+        }
+
+        // Apply pagination
+        const limitNum = Math.min(parseInt(limit as string) || 50, 100);
+        const offsetNum = parseInt(offset as string) || 0;
+        const paginatedUsers = users.slice(offsetNum, offsetNum + limitNum);
+
+        // Remove sensitive data from response
+        const sanitizedUsers = paginatedUsers.map(user => ({
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          isActive: user.isActive,
+          walletBalance: user.walletBalance,
+          fixiPoints: user.fixiPoints,
+          profileImageUrl: user.profileImageUrl,
+          location: user.location,
+          lastLoginAt: user.lastLoginAt,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }));
+
+        res.json({
+          success: true,
+          data: sanitizedUsers,
+          total: users.length,
+          limit: limitNum,
+          offset: offsetNum
+        });
+      } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to fetch users'
+        });
+      }
+    });
+
   // Service routes
   app.get('/api/v1/services/categories', async (req, res) => {
     try {
@@ -3506,7 +3853,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Category not found' });
       }
       
-      res.json(category);
+      res.json({
+        success: true,
+        data: category
+      });
     } catch (error) {
       console.error('Error fetching category:', error);
       res.status(500).json({ message: 'Failed to fetch category' });
@@ -3518,7 +3868,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const categoryId = req.params.categoryId;
       const subcategories = await storage.getSubcategories(categoryId);
-      res.json(subcategories);
+      res.json({
+        success: true,
+        data: subcategories
+      });
     } catch (error) {
       console.error('Error fetching subcategories:', error);
       res.status(500).json({ message: 'Failed to fetch subcategories' });
@@ -3536,10 +3889,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxDepth ? parseInt(maxDepth as string) : undefined,
         activeOnly === 'true'
       );
-      res.json(tree);
+      res.json({
+        success: true,
+        data: tree
+      });
     } catch (error) {
       console.error('Error fetching category tree:', error);
-      res.status(500).json({ message: 'Failed to fetch category tree' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch category tree'
+      });
     }
   });
 
@@ -3548,10 +3907,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { categoryId } = req.params;
       const path = await storage.getCategoryBreadcrumbs(categoryId);
-      res.json(path);
+      res.json({
+        success: true,
+        data: path
+      });
     } catch (error) {
       console.error('Error fetching category path:', error);
-      res.status(500).json({ message: 'Failed to fetch category path' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch category path'
+      });
     }
   });
 
@@ -3561,10 +3926,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { categoryId } = req.params;
       const { activeOnly = 'true' } = req.query;
       const categoryWithChildren = await storage.getCategoryWithChildren(categoryId, activeOnly === 'true');
-      res.json(categoryWithChildren);
+      res.json({
+        success: true,
+        data: categoryWithChildren
+      });
     } catch (error) {
       console.error('Error fetching category with children:', error);
-      res.status(500).json({ message: 'Failed to fetch category with children' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch category with children'
+      });
     }
   });
 
@@ -3576,10 +3947,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'pathPrefix query parameter is required' });
       }
       const categories = await storage.getCategoriesByPath(pathPrefix as string, activeOnly === 'true');
-      res.json(categories);
+      res.json({
+        success: true,
+        data: categories
+      });
     } catch (error) {
       console.error('Error searching categories by path:', error);
-      res.status(500).json({ message: 'Failed to search categories by path' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to search categories by path'
+      });
     }
   });
 
@@ -3588,10 +3965,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { categoryId } = req.query;
       const stats = await storage.getCategoryStats(categoryId as string);
-      res.json(stats);
+      res.json({
+        success: true,
+        data: stats
+      });
     } catch (error) {
       console.error('Error fetching category stats:', error);
-      res.status(500).json({ message: 'Failed to fetch category stats' });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch category stats'
+      });
     }
   });
 
