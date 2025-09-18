@@ -1707,13 +1707,18 @@ export class PostgresStorage implements IStorage {
 
   // Enhanced hierarchical category methods with dynamic service count computation
   async getCategoryTree(rootId?: string, maxDepth?: number, activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: SQL[] = [];
+    // Simplify the method to use the same working pattern as getSubCategories
+    const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [];
+    
     if (activeOnly) {
       conditions.push(eq(serviceCategories.isActive, true));
     }
     
+    // Limit to levels 0 and 1 for our 2-level hierarchy
+    conditions.push(lte(serviceCategories.level, 1));
+    
     if (rootId) {
-      // For 2-level structure: get the root category and its direct children
+      // If rootId is specified, get the root category and its direct children
       const rootCondition = or(
         eq(serviceCategories.id, rootId),
         eq(serviceCategories.parentId, rootId)
@@ -1723,15 +1728,8 @@ export class PostgresStorage implements IStorage {
       }
     }
     
-    // For 2-level structure, limit to levels 0 and 1 only
-    if (maxDepth !== undefined) {
-      conditions.push(lte(serviceCategories.level, Math.min(maxDepth, 1)));
-    } else {
-      conditions.push(lte(serviceCategories.level, 1));
-    }
-    
-    // Build the query with dynamic service count computation
-    // Use LEFT JOIN with services table and COUNT active services
+    // Use the same working query pattern as getSubCategories
+    const whereClause = whereAll(...conditions);
     const query = db
       .select({
         id: serviceCategories.id,
@@ -1751,6 +1749,7 @@ export class PostgresStorage implements IStorage {
       })
       .from(serviceCategories)
       .leftJoin(services, eq(serviceCategories.id, services.categoryId))
+      .where(whereClause!)
       .groupBy(
         serviceCategories.id,
         serviceCategories.parentId,
@@ -1767,12 +1766,7 @@ export class PostgresStorage implements IStorage {
       )
       .orderBy(asc(serviceCategories.level), asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     
-    const whereClause = whereAll(...conditions);
-    if (whereClause) {
-      return await query.where(whereClause);
-    } else {
-      return await query.where(lte(serviceCategories.level, 1));
-    }
+    return await query;
   }
 
   async getCategoryPath(categoryId: string): Promise<ServiceCategory[]> {
@@ -2282,8 +2276,8 @@ export class PostgresStorage implements IStorage {
         notes: typeof order.meta.notes === 'string' ? order.meta.notes : String(order.meta.notes || ''),
         customerNotes: typeof order.meta.customerNotes === 'string' ? order.meta.customerNotes : String(order.meta.customerNotes || ''),
         specialRequirements: Array.isArray(order.meta.specialRequirements) ? order.meta.specialRequirements : typeof order.meta.specialRequirements === 'string' ? [order.meta.specialRequirements] : [],
-        urgencyLevel: (order.meta.urgencyLevel === 'normal' || order.meta.urgencyLevel === 'urgent') ? order.meta.urgencyLevel : 'normal',
-        paymentMethod: typeof order.meta.paymentMethod === 'string' ? order.meta.paymentMethod : String(order.meta.paymentMethod || ''),
+        urgencyLevel: (order.meta.urgencyLevel === 'normal' || order.meta.urgencyLevel === 'urgent') ? order.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
+        paymentMethod: (order.meta.paymentMethod === 'online' || order.meta.paymentMethod === 'cod' || order.meta.paymentMethod === 'wallet') ? order.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
         paymentStatus: typeof order.meta.paymentStatus === 'string' ? order.meta.paymentStatus : String(order.meta.paymentStatus || ''),
         estimatedDuration: typeof order.meta.estimatedDuration === 'number' ? order.meta.estimatedDuration : Number(order.meta.estimatedDuration) || 0,
         location: order.meta.location || null
@@ -2323,8 +2317,8 @@ export class PostgresStorage implements IStorage {
             notes: typeof orderData.meta.notes === 'string' ? orderData.meta.notes : String(orderData.meta.notes || ''),
             customerNotes: typeof orderData.meta.customerNotes === 'string' ? orderData.meta.customerNotes : String(orderData.meta.customerNotes || ''),
             specialRequirements: Array.isArray(orderData.meta.specialRequirements) ? orderData.meta.specialRequirements : typeof orderData.meta.specialRequirements === 'string' ? [orderData.meta.specialRequirements] : [],
-            urgencyLevel: (orderData.meta.urgencyLevel === 'normal' || orderData.meta.urgencyLevel === 'urgent') ? orderData.meta.urgencyLevel : 'normal',
-            paymentMethod: typeof orderData.meta.paymentMethod === 'string' ? orderData.meta.paymentMethod : String(orderData.meta.paymentMethod || ''),
+            urgencyLevel: (orderData.meta.urgencyLevel === 'normal' || orderData.meta.urgencyLevel === 'urgent') ? orderData.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
+            paymentMethod: (orderData.meta.paymentMethod === 'online' || orderData.meta.paymentMethod === 'cod' || orderData.meta.paymentMethod === 'wallet') ? orderData.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
             paymentStatus: typeof orderData.meta.paymentStatus === 'string' ? orderData.meta.paymentStatus : String(orderData.meta.paymentStatus || ''),
             estimatedDuration: typeof orderData.meta.estimatedDuration === 'number' ? orderData.meta.estimatedDuration : Number(orderData.meta.estimatedDuration) || 0,
             location: orderData.meta.location || null
@@ -2352,17 +2346,16 @@ export class PostgresStorage implements IStorage {
             userId: orderData.userId || '',
             orderId: createdOrder.id,
             discountAmount: couponDiscount.toString(),
-            usedAt: new Date()
+            orderValue: (orderData.totalAmount || 0).toString()
           };
 
-          const couponUsageResult = await trx.insert(couponUsages).values([couponUsageData]).returning();
+          const couponUsageResult = await trx.insert(couponUsage).values([couponUsageData]).returning();
           couponUsage = couponUsageResult[0];
 
           // Update coupon statistics
           await trx.update(coupons)
             .set({
               usageCount: sql`${coupons.usageCount} + 1`,
-              totalDiscountGiven: sql`${coupons.totalDiscountGiven} + ${couponDiscount}`,
               updatedAt: new Date()
             })
             .where(eq(coupons.id, coupon.id));
@@ -2436,8 +2429,8 @@ export class PostgresStorage implements IStorage {
         notes: typeof data.meta.notes === 'string' ? data.meta.notes : String(data.meta.notes || ''),
         customerNotes: typeof data.meta.customerNotes === 'string' ? data.meta.customerNotes : String(data.meta.customerNotes || ''),
         specialRequirements: Array.isArray(data.meta.specialRequirements) ? data.meta.specialRequirements : typeof data.meta.specialRequirements === 'string' ? [data.meta.specialRequirements] : [],
-        urgencyLevel: (data.meta.urgencyLevel === 'normal' || data.meta.urgencyLevel === 'urgent') ? data.meta.urgencyLevel : 'normal',
-        paymentMethod: typeof data.meta.paymentMethod === 'string' ? data.meta.paymentMethod : String(data.meta.paymentMethod || ''),
+        urgencyLevel: (data.meta.urgencyLevel === 'normal' || data.meta.urgencyLevel === 'urgent') ? data.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
+        paymentMethod: (data.meta.paymentMethod === 'online' || data.meta.paymentMethod === 'cod' || data.meta.paymentMethod === 'wallet') ? data.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
         paymentStatus: typeof data.meta.paymentStatus === 'string' ? data.meta.paymentStatus : String(data.meta.paymentStatus || ''),
         estimatedDuration: typeof data.meta.estimatedDuration === 'number' ? data.meta.estimatedDuration : Number(data.meta.estimatedDuration) || 0,
         location: data.meta.location || null
@@ -2771,8 +2764,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const partData = {
       ...part,
-      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags : [String(part.tags)]) : null,
-      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications : [String(part.specifications)]) : null
+      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags as string[] : [part.tags as string]) : null,
+      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications as string[] : [part.specifications as string]) : null
     };
     const result = await db.insert(parts).values([partData]).returning();
     return result[0];
@@ -2782,8 +2775,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const updateData = {
       ...data,
-      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags : [String(data.tags)]) : undefined,
-      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications : [String(data.specifications)]) : undefined
+      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags as string[] : [data.tags as string]) : undefined,
+      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications as string[] : [data.specifications as string]) : undefined
     };
     const result = await db.update(parts)
       .set(updateData)
@@ -3015,18 +3008,18 @@ export class PostgresStorage implements IStorage {
         // Step 2: Create wallet transaction record with proper metadata structure
         const transactionData: InsertWalletTransaction = {
           userId,
-          type: 'debit',
+          type: 'debit' as const,
           amount: amount.toString(),
           description,
-          category: 'payment',
+          category: 'payment' as const,
           orderId,
-          paymentMethod: 'wallet',
-          status: 'completed',
+          paymentMethod: 'wallet' as const,
+          status: 'completed' as const,
           reference: idempotencyKey,
           metadata: {
-            paymentGateway: 'wallet',
-            notes: `Wallet payment for order ${orderId}`
-          }
+            paymentGateway: 'wallet' as string,
+            notes: `Wallet payment for order ${orderId}` as string
+          } as Record<string, any>
         };
         
         const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
@@ -3114,9 +3107,9 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const providerData = {
       ...provider,
-      skills: provider.skills && provider.skills !== null ? (Array.isArray(provider.skills) ? provider.skills : [String(provider.skills)]) : null,
-      serviceIds: provider.serviceIds && provider.serviceIds !== null ? (Array.isArray(provider.serviceIds) ? provider.serviceIds : [String(provider.serviceIds)]) : null,
-      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas : [String(provider.serviceAreas)]) : null
+      skills: provider.skills && provider.skills !== null ? (Array.isArray(provider.skills) ? provider.skills as string[] : [provider.skills as string]) : null,
+      serviceIds: provider.serviceIds && provider.serviceIds !== null ? (Array.isArray(provider.serviceIds) ? provider.serviceIds as string[] : [provider.serviceIds as string]) : null,
+      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas as string[] : [provider.serviceAreas as string]) : null
     };
     const result = await db.insert(serviceProviders).values([providerData]).returning();
     return result[0];
@@ -3126,9 +3119,9 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const updateData = {
       ...data,
-      skills: data.skills !== undefined && data.skills !== null ? (Array.isArray(data.skills) ? data.skills : [String(data.skills)]) : undefined,
-      serviceIds: data.serviceIds !== undefined && data.serviceIds !== null ? (Array.isArray(data.serviceIds) ? data.serviceIds : [String(data.serviceIds)]) : undefined,
-      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas : [String(data.serviceAreas)]) : undefined
+      skills: data.skills !== undefined && data.skills !== null ? (Array.isArray(data.skills) ? data.skills as string[] : [data.skills as string]) : undefined,
+      serviceIds: data.serviceIds !== undefined && data.serviceIds !== null ? (Array.isArray(data.serviceIds) ? data.serviceIds as string[] : [data.serviceIds as string]) : undefined,
+      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas as string[] : [data.serviceAreas as string]) : undefined
     };
     const result = await db.update(serviceProviders)
       .set(updateData)
