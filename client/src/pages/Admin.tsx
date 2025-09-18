@@ -5410,7 +5410,7 @@ export default function Admin() {
       name: serviceFormData.name,
       description: serviceFormData.description || undefined,
       categoryId: finalCategoryId, // Use calculated final category ID
-      basePrice: Number(serviceFormData.basePrice), // Ensure number format for decimal field
+      basePrice: serviceFormData.basePrice.toString(), // Convert to string for decimal field
       iconType: serviceFormData.iconType || 'emoji',
       iconValue: serviceFormData.iconValue || '🔧',
       isActive: serviceFormData.isActive !== undefined ? serviceFormData.isActive : true,
