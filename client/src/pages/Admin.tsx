@@ -1222,6 +1222,8 @@ const TaxManagementSystem = () => {
     select: (response) => response.data || []
   });
 
+  // Query for subcategories in service creation - moved after state definition
+
   // Function to fetch subcategories for a selected main category
   const fetchSubCategories = async (categoryId: string) => {
     if (!mainCategories || mainCategoriesLoading) {
@@ -1744,7 +1746,7 @@ const TaxManagementSystem = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {subCategoriesLoading ? (
+                {subCategoriesQuery.isLoading ? (
                   <div className="space-y-3">
                     {[...Array(3)].map((_, i) => (
                       <div key={i} className="flex items-center space-x-4">
@@ -4479,6 +4481,18 @@ export default function Admin() {
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [isCreateServiceOpen, setIsCreateServiceOpen] = useState(false);
   const [isEditServiceOpen, setIsEditServiceOpen] = useState(false);
+  
+  // State for service creation hierarchical category selection
+  const [selectedServiceMainCategory, setSelectedServiceMainCategory] = useState<ServiceCategory | null>(null);
+  
+  // Query for subcategories in service creation
+  const serviceSubCategoriesQuery = useQuery({
+    queryKey: ['service-sub-categories', selectedServiceMainCategory?.id],
+    queryFn: () => apiRequest('GET', `/api/v1/admin/service-categories?parentId=${selectedServiceMainCategory?.id}&activeOnly=false`),
+    enabled: !!selectedServiceMainCategory?.id,
+    select: (response) => response.data || []
+  });
+
   const [serviceFormData, setServiceFormData] = useState({
     name: '',
     description: '',
@@ -5114,12 +5128,27 @@ export default function Admin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/service-categories'] }); // Refresh categories
       setIsCreateServiceOpen(false);
+      
+      // Show success message with category context
+      const serviceName = serviceFormData.name;
+      const hasSubcategory = serviceFormData.categoryId;
+      const mainCategoryName = selectedServiceMainCategory?.name;
+      
+      if (hasSubcategory) {
+        toast({
+          title: "Service Created Successfully",
+          description: `"${serviceName}" has been created in the selected subcategory.`,
+        });
+      } else {
+        toast({
+          title: "Service Created Successfully", 
+          description: `"${serviceName}" has been created under the main category "${mainCategoryName}".`,
+        });
+      }
+      
       resetServiceForm();
-      toast({
-        title: "Service created",
-        description: "New service has been created successfully.",
-      });
     },
   });
 
@@ -5326,17 +5355,21 @@ export default function Admin() {
 
   // Service handler functions
   const handleCreateService = () => {
-    if (!serviceFormData.name.trim() || !serviceFormData.categoryId) {
+    if (!serviceFormData.name.trim() || !selectedServiceMainCategory) {
       toast({
         title: "Validation Error",
-        description: "Service name and category are required",
+        description: "Service name and main category are required",
         variant: "destructive",
       });
       return;
     }
+
+    // Use subcategory if selected, otherwise use main category
+    const finalCategoryId = serviceFormData.categoryId || selectedServiceMainCategory.id;
     
     const data = {
       ...serviceFormData,
+      categoryId: finalCategoryId, // Use calculated final category ID
       iconType: serviceFormData.iconType,
       iconValue: serviceFormData.iconValue,
       pricing: {
@@ -5404,6 +5437,7 @@ export default function Admin() {
   };
 
   const resetServiceForm = () => {
+    setSelectedServiceMainCategory(null); // Reset hierarchical category selection
     setServiceFormData({
       name: '',
       description: '',
@@ -7300,13 +7334,17 @@ export default function Admin() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="serviceCategory">Category *</Label>
+                  <Label htmlFor="serviceMainCategory">Main Category *</Label>
                   <Select 
-                    value={serviceFormData.categoryId} 
-                    onValueChange={(value) => setServiceFormData({ ...serviceFormData, categoryId: value })}
+                    value={selectedServiceMainCategory?.id || ''} 
+                    onValueChange={(value) => {
+                      const category = mainCategories?.find((cat: ServiceCategory) => cat.id === value);
+                      setSelectedServiceMainCategory(category || null);
+                      setServiceFormData({ ...serviceFormData, categoryId: '' }); // Reset subcategory
+                    }}
                   >
-                    <SelectTrigger data-testid="service-category-select">
-                      <SelectValue placeholder="Select category" />
+                    <SelectTrigger data-testid="service-main-category-select">
+                      <SelectValue placeholder="Select main category first" />
                     </SelectTrigger>
                     <SelectContent>
                       {mainCategories?.map((category: any) => (
@@ -7318,6 +7356,38 @@ export default function Admin() {
                   </Select>
                 </div>
               </div>
+              
+              {selectedServiceMainCategory && serviceSubCategoriesQuery.data && serviceSubCategoriesQuery.data.length > 0 && (
+                <div>
+                  <Label htmlFor="serviceSubCategory">Subcategory (Optional)</Label>
+                  <Select 
+                    value={serviceFormData.categoryId} 
+                    onValueChange={(value) => setServiceFormData({ ...serviceFormData, categoryId: value })}
+                  >
+                    <SelectTrigger data-testid="service-subcategory-select">
+                      <SelectValue placeholder={serviceSubCategoriesQuery.isLoading ? "Loading subcategories..." : "Select subcategory (optional)"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {serviceSubCategoriesQuery.data?.map((category: ServiceCategory) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.icon} {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    If no subcategory is selected, the service will be created under the main category.
+                  </p>
+                </div>
+              )}
+              
+              {selectedServiceMainCategory && serviceSubCategoriesQuery.data && serviceSubCategoriesQuery.data.length === 0 && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    ℹ️ This main category has no subcategories. The service will be created under the main category.
+                  </p>
+                </div>
+              )}
               
               <div>
                 <Label>Service Icon *</Label>
