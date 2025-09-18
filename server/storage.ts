@@ -1451,9 +1451,9 @@ export class PostgresStorage implements IStorage {
   }
 
   async getServiceCategoriesByLevel(level: number, activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.level, level) as SQL<boolean>];
+    const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(serviceCategories.level, level)];
     if (activeOnly) {
-      conditions.push(eq(serviceCategories.isActive, true) as SQL<boolean>);
+      conditions.push(eq(serviceCategories.isActive, true));
     }
     
     const whereClause = whereAll(...conditions);
@@ -1468,9 +1468,9 @@ export class PostgresStorage implements IStorage {
   }
 
   async getSubCategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
-    const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.parentId, parentId) as SQL<boolean>];
+    const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(serviceCategories.parentId, parentId)];
     if (activeOnly) {
-      conditions.push(eq(serviceCategories.isActive, true) as SQL<boolean>);
+      conditions.push(eq(serviceCategories.isActive, true));
     }
     
     // Build the query with dynamic service count computation
@@ -1522,7 +1522,7 @@ export class PostgresStorage implements IStorage {
   async getCategoryHierarchy(parentId?: string): Promise<ServiceCategory[]> {
     if (parentId) {
       // Get all descendants of a specific category
-      const conditions: Array<SQL<boolean> | undefined> = [eq(serviceCategories.parentId, parentId) as SQL<boolean>];
+      const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(serviceCategories.parentId, parentId)];
       const whereClause = whereAll(...conditions);
       return await db.select().from(serviceCategories)
         .where(whereClause!)
@@ -2163,19 +2163,28 @@ export class PostgresStorage implements IStorage {
     }
     
     const whereClause = whereAll(...conditions);
-    let baseQuery = db.select().from(orders);
-    
-    if (whereClause) {
-      baseQuery = baseQuery.where(whereClause);
-    }
-    
-    baseQuery = baseQuery.orderBy(desc(orders.createdAt));
     
     if (filters?.limit) {
-      return await baseQuery.limit(filters.limit);
+      if (whereClause) {
+        return await db.select().from(orders)
+          .where(whereClause)
+          .orderBy(desc(orders.createdAt))
+          .limit(filters.limit);
+      } else {
+        return await db.select().from(orders)
+          .orderBy(desc(orders.createdAt))
+          .limit(filters.limit);
+      }
     }
     
-    return await baseQuery;
+    if (whereClause) {
+      return await db.select().from(orders)
+        .where(whereClause)
+        .orderBy(desc(orders.createdAt));
+    } else {
+      return await db.select().from(orders)
+        .orderBy(desc(orders.createdAt));
+    }
   }
 
   async getOrder(id: string): Promise<Order | undefined> {
@@ -2195,7 +2204,7 @@ export class PostgresStorage implements IStorage {
         notes: typeof order.meta.notes === 'string' ? order.meta.notes : String(order.meta.notes || ''),
         customerNotes: typeof order.meta.customerNotes === 'string' ? order.meta.customerNotes : String(order.meta.customerNotes || ''),
         specialRequirements: Array.isArray(order.meta.specialRequirements) ? order.meta.specialRequirements : typeof order.meta.specialRequirements === 'string' ? [order.meta.specialRequirements] : [],
-        urgencyLevel: typeof order.meta.urgencyLevel === 'string' ? order.meta.urgencyLevel : String(order.meta.urgencyLevel || ''),
+        urgencyLevel: (order.meta.urgencyLevel === 'normal' || order.meta.urgencyLevel === 'urgent') ? order.meta.urgencyLevel : 'normal',
         paymentMethod: typeof order.meta.paymentMethod === 'string' ? order.meta.paymentMethod : String(order.meta.paymentMethod || ''),
         paymentStatus: typeof order.meta.paymentStatus === 'string' ? order.meta.paymentStatus : String(order.meta.paymentStatus || ''),
         estimatedDuration: typeof order.meta.estimatedDuration === 'number' ? order.meta.estimatedDuration : Number(order.meta.estimatedDuration) || 0,
@@ -2218,7 +2227,7 @@ export class PostgresStorage implements IStorage {
         notes: typeof data.meta.notes === 'string' ? data.meta.notes : String(data.meta.notes || ''),
         customerNotes: typeof data.meta.customerNotes === 'string' ? data.meta.customerNotes : String(data.meta.customerNotes || ''),
         specialRequirements: Array.isArray(data.meta.specialRequirements) ? data.meta.specialRequirements : typeof data.meta.specialRequirements === 'string' ? [data.meta.specialRequirements] : [],
-        urgencyLevel: typeof data.meta.urgencyLevel === 'string' ? data.meta.urgencyLevel : String(data.meta.urgencyLevel || ''),
+        urgencyLevel: (data.meta.urgencyLevel === 'normal' || data.meta.urgencyLevel === 'urgent') ? data.meta.urgencyLevel : 'normal',
         paymentMethod: typeof data.meta.paymentMethod === 'string' ? data.meta.paymentMethod : String(data.meta.paymentMethod || ''),
         paymentStatus: typeof data.meta.paymentStatus === 'string' ? data.meta.paymentStatus : String(data.meta.paymentStatus || ''),
         estimatedDuration: typeof data.meta.estimatedDuration === 'number' ? data.meta.estimatedDuration : Number(data.meta.estimatedDuration) || 0,
@@ -2233,10 +2242,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getOrdersByUser(userId: string, status?: string): Promise<Order[]> {
-    const conditions: Array<SQL<boolean> | undefined> = [eq(orders.userId, userId) as SQL<boolean>];
+    const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(orders.userId, userId)];
     
     if (status) {
-      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled") as SQL<boolean>);
+      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
     }
     
     const whereClause = whereAll(...conditions);
@@ -2250,10 +2259,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getOrdersByProvider(providerId: string, status?: string): Promise<Order[]> {
-    const conditions: Array<SQL<boolean> | undefined> = [eq(orders.providerId, providerId) as SQL<boolean>];
+    const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(orders.providerId, providerId)];
     
     if (status) {
-      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled") as SQL<boolean>);
+      conditions.push(eq(orders.status, status as "pending_assignment" | "matching" | "assigned" | "in_progress" | "completed" | "cancelled"));
     }
     
     const whereClause = whereAll(...conditions);
@@ -2508,25 +2517,39 @@ export class PostgresStorage implements IStorage {
     
     const whereClause = whereAll(...conditions);
     
-    // FIXED: Reliable sorting with proper fallbacks
-    let sortedQuery = baseQuery;
-    sortedQuery = whereClause ? sortedQuery.where(whereClause) : sortedQuery;
-    
     // Apply sorting (default to newest first)
     const sortBy = filters?.sortBy || 'newest';
-    switch (sortBy) {
-      case 'newest':
-        return await sortedQuery.orderBy(desc(parts.createdAt));
-      case 'oldest':
-        return await sortedQuery.orderBy(asc(parts.createdAt));
-      case 'price-asc':
-        return await sortedQuery.orderBy(asc(parts.price));
-      case 'price-desc':
-        return await sortedQuery.orderBy(desc(parts.price));
-      case 'rating':
-        return await sortedQuery.orderBy(desc(parts.rating), desc(parts.createdAt));
-      default:
-        return await sortedQuery.orderBy(desc(parts.createdAt));
+    
+    if (whereClause) {
+      switch (sortBy) {
+        case 'newest':
+          return await db.select().from(parts).where(whereClause).orderBy(desc(parts.createdAt));
+        case 'oldest':
+          return await db.select().from(parts).where(whereClause).orderBy(asc(parts.createdAt));
+        case 'price-asc':
+          return await db.select().from(parts).where(whereClause).orderBy(asc(parts.price));
+        case 'price-desc':
+          return await db.select().from(parts).where(whereClause).orderBy(desc(parts.price));
+        case 'rating':
+          return await db.select().from(parts).where(whereClause).orderBy(desc(parts.rating), desc(parts.createdAt));
+        default:
+          return await db.select().from(parts).where(whereClause).orderBy(desc(parts.createdAt));
+      }
+    } else {
+      switch (sortBy) {
+        case 'newest':
+          return await db.select().from(parts).orderBy(desc(parts.createdAt));
+        case 'oldest':
+          return await db.select().from(parts).orderBy(asc(parts.createdAt));
+        case 'price-asc':
+          return await db.select().from(parts).orderBy(asc(parts.price));
+        case 'price-desc':
+          return await db.select().from(parts).orderBy(desc(parts.price));
+        case 'rating':
+          return await db.select().from(parts).orderBy(desc(parts.rating), desc(parts.createdAt));
+        default:
+          return await db.select().from(parts).orderBy(desc(parts.createdAt));
+      }
     }
   }
 
@@ -2536,13 +2559,25 @@ export class PostgresStorage implements IStorage {
   }
 
   async createPart(part: InsertPart): Promise<Part> {
-    const result = await db.insert(parts).values([part]).returning();
+    // Ensure array fields are properly typed
+    const partData = {
+      ...part,
+      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags : [String(part.tags)]) : null,
+      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications : [String(part.specifications)]) : null
+    };
+    const result = await db.insert(parts).values([partData]).returning();
     return result[0];
   }
 
   async updatePart(id: string, data: Partial<InsertPart>): Promise<Part | undefined> {
+    // Ensure array fields are properly typed
+    const updateData = {
+      ...data,
+      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags : [String(data.tags)]) : undefined,
+      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications : [String(data.specifications)]) : undefined
+    };
     const result = await db.update(parts)
-      .set(data)
+      .set(updateData)
       .where(eq(parts.id, id))
       .returning();
     return result[0];
@@ -2768,7 +2803,7 @@ export class PostgresStorage implements IStorage {
           throw new Error(`Insufficient wallet balance. Current: ₹${currentBalance}, Required: ₹${amount}`);
         }
         
-        // Step 2: Create wallet transaction record
+        // Step 2: Create wallet transaction record with proper metadata structure
         const transactionData: InsertWalletTransaction = {
           userId,
           type: 'debit',
@@ -2778,7 +2813,11 @@ export class PostgresStorage implements IStorage {
           orderId,
           paymentMethod: 'wallet',
           status: 'completed',
-          reference: idempotencyKey
+          reference: idempotencyKey,
+          metadata: {
+            paymentGateway: 'wallet',
+            notes: `Wallet payment for order ${orderId}`
+          }
         };
         
         const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
@@ -2813,10 +2852,9 @@ export class PostgresStorage implements IStorage {
           }
         }
         
-        // Step 5: Update order payment status
+        // Step 5: Update order status (remove invalid paymentStatus field)
         await trx.update(orders)
           .set({ 
-            paymentStatus: 'paid',
             status: sql`CASE WHEN status = 'pending' THEN 'accepted' ELSE status END`
           })
           .where(eq(orders.id, orderId));
@@ -2864,13 +2902,27 @@ export class PostgresStorage implements IStorage {
   }
 
   async createServiceProvider(provider: InsertServiceProvider): Promise<ServiceProvider> {
-    const result = await db.insert(serviceProviders).values([provider]).returning();
+    // Ensure array fields are properly typed
+    const providerData = {
+      ...provider,
+      skills: provider.skills && provider.skills !== null ? (Array.isArray(provider.skills) ? provider.skills : [String(provider.skills)]) : null,
+      serviceIds: provider.serviceIds && provider.serviceIds !== null ? (Array.isArray(provider.serviceIds) ? provider.serviceIds : [String(provider.serviceIds)]) : null,
+      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas : [String(provider.serviceAreas)]) : null
+    };
+    const result = await db.insert(serviceProviders).values([providerData]).returning();
     return result[0];
   }
 
   async updateServiceProvider(userId: string, data: Partial<InsertServiceProvider>): Promise<ServiceProvider | undefined> {
+    // Ensure array fields are properly typed
+    const updateData = {
+      ...data,
+      skills: data.skills !== undefined && data.skills !== null ? (Array.isArray(data.skills) ? data.skills : [String(data.skills)]) : undefined,
+      serviceIds: data.serviceIds !== undefined && data.serviceIds !== null ? (Array.isArray(data.serviceIds) ? data.serviceIds : [String(data.serviceIds)]) : undefined,
+      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas : [String(data.serviceAreas)]) : undefined
+    };
     const result = await db.update(serviceProviders)
-      .set(data)
+      .set(updateData)
       .where(eq(serviceProviders.userId, userId))
       .returning();
     return result[0];

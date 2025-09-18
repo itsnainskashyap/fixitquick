@@ -21,7 +21,7 @@ interface ServiceCategory {
   level: number;
   parentId?: string;
   subCategoriesCount?: number;
-  servicesCount?: number;
+  serviceCount?: number;
 }
 
 export default function Subcategories() {
@@ -151,7 +151,7 @@ export default function Subcategories() {
                       </p>
                       <div className="flex flex-wrap items-center justify-center gap-1.5">
                         <Badge variant="outline" className="text-[10px] sm:text-xs px-2 py-0.5 whitespace-nowrap">
-                          {subcategory.servicesCount || 0} services
+                          {subcategory.serviceCount || 0} services
                         </Badge>
                         {subcategory.isActive && (
                           <Badge variant="default" className="text-[10px] sm:text-xs px-2 py-0.5 whitespace-nowrap">
