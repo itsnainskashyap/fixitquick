@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
+import { nanoid } from 'nanoid';
 import { Layout } from '@/components/Layout';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
@@ -35,6 +36,9 @@ export default function Checkout() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // SECURITY FIX: Generate unique idempotency key for this checkout session
+  const idempotencyKey = useMemo(() => nanoid(), []);
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('wallet');
@@ -162,7 +166,10 @@ export default function Checkout() {
           name: item.name,
           price: item.price,
           quantity: item.quantity,
-          type: item.type
+          type: item.type,
+          categoryId: item.categoryId,
+          serviceId: item.serviceId,
+          partId: item.partId
         })),
         totalAmount: total.toString(),
         location: {
@@ -174,7 +181,11 @@ export default function Checkout() {
         scheduledAt: serviceItems.length > 0 && serviceSchedule.date ? 
           new Date(`${serviceSchedule.date} ${serviceSchedule.timeSlot}`).toISOString() : null,
         paymentMethod,
-        notes: serviceSchedule.notes || `Delivery to: ${deliveryAddress.fullName}, ${deliveryAddress.phone}`
+        couponCode: cart.appliedCoupon?.code || null,
+        couponDiscount: cart.couponDiscount || 0,
+        notes: serviceSchedule.notes || `Delivery to: ${deliveryAddress.fullName}, ${deliveryAddress.phone}`,
+        // SECURITY FIX: Add idempotency key to prevent duplicate orders
+        idempotencyKey
       };
 
       // Step 1: Create order in database (server generates secure orderId)

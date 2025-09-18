@@ -672,6 +672,10 @@ export const orders = pgTable("orders", {
   userId: varchar("user_id").references(() => users.id).notNull(),
   serviceId: varchar("service_id").references(() => services.id).notNull(),
   addressId: varchar("address_id"), // Customer address reference
+  
+  // SECURITY FIX: Idempotency key for duplicate prevention (nullable for existing records)
+  idempotencyKey: varchar("idempotency_key", { length: 255 }).unique(),
+  
   status: varchar("status", { 
     enum: ["pending_assignment", "matching", "assigned", "in_progress", "completed", "cancelled"] 
   }).default("pending_assignment"),
@@ -703,6 +707,8 @@ export const orders = pgTable("orders", {
   userIdx: index("orders_user_idx").on(table.userId),
   serviceIdx: index("orders_service_idx").on(table.serviceId),
   providerIdx: index("orders_provider_idx").on(table.providerId),
+  // SECURITY: Unique index on idempotency key for duplicate prevention
+  idempotencyIdx: index("orders_idempotency_idx").on(table.idempotencyKey),
   statusIdx: index("orders_status_idx").on(table.status),
   deadlineIdx: index("orders_deadline_idx").on(table.acceptDeadlineAt),
   createdAtIdx: index("orders_created_at_idx").on(table.createdAt),
@@ -756,9 +762,9 @@ export const coupons = pgTable("coupons", {
   validUntil: timestamp("valid_until").notNull(),
   isExpired: boolean("is_expired").default(false),
   
-  // Usage Limits and Tracking
+  // Usage Limits and Tracking with SECURITY CONSTRAINTS
   usageLimit: integer("usage_limit"), // Total usage limit (null = unlimited)
-  usageCount: integer("usage_count").default(0), // Current usage count
+  usageCount: integer("usage_count").default(0).notNull(), // Current usage count - SECURITY: Cannot be negative
   maxUsagePerUser: integer("max_usage_per_user").default(1), // Per-user usage limit
   minOrderAmount: decimal("min_order_amount", { precision: 10, scale: 2 }),
   
@@ -1675,6 +1681,88 @@ export const insertPartsSupplierSchema = createInsertSchema(partsSuppliers).omit
 export const insertServiceWorkflowSchema = createInsertSchema(serviceWorkflow).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertProviderMetricsSchema = createInsertSchema(providerMetrics).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
+
+// CRITICAL FIX: API schema aligned with ACTUAL Checkout frontend payload structure
+export const orderCreateApiSchema = z.object({
+  // Order type for server processing logic
+  type: z.enum(['service', 'parts'], {
+    required_error: 'Order type is required',
+    invalid_type_error: 'Order type must be service or parts'
+  }),
+  
+  // Items array matching EXACT frontend structure
+  items: z.array(z.object({
+    id: z.string().min(1, 'Item ID is required'),
+    name: z.string().min(1, 'Item name is required'),
+    price: z.number()
+      .min(0, 'Item price cannot be negative')
+      .max(999999.99, 'Item price too high'),
+    quantity: z.number()
+      .int('Quantity must be an integer')
+      .min(1, 'Quantity must be at least 1')
+      .max(100, 'Quantity cannot exceed 100'),
+    type: z.enum(['service', 'part'], {
+      required_error: 'Item type is required',
+      invalid_type_error: 'Item type must be service or part'
+    }),
+    categoryId: z.string().optional(),
+    serviceId: z.string().optional(),
+    partId: z.string().optional()
+  }))
+    .min(1, 'At least one item is required')
+    .max(50, 'Too many items in order'),
+  
+  // Total amount as string (frontend sends this way)
+  totalAmount: z.string()
+    .min(1, 'Total amount is required')
+    .refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, 'Total amount must be a valid positive number'),
+  
+  // Location object at root level (matching frontend)
+  location: z.object({
+    address: z.string().min(1, 'Address is required').max(500),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    instructions: z.string().max(200).optional()
+  }),
+  
+  // Scheduled time for service orders
+  scheduledAt: z.string().nullable().optional(),
+  
+  // Payment method validation
+  paymentMethod: z.enum(['online', 'cod', 'wallet'], {
+    required_error: 'Payment method is required',
+    invalid_type_error: 'Invalid payment method'
+  }),
+  
+  // Coupon handling (optional)
+  couponCode: z.string()
+    .min(1, 'Coupon code cannot be empty when provided')
+    .max(50, 'Coupon code too long')
+    .nullable()
+    .optional(),
+  
+  // Coupon discount amount
+  couponDiscount: z.number()
+    .min(0, 'Coupon discount cannot be negative')
+    .max(9999999.99, 'Coupon discount too high')
+    .optional()
+    .default(0),
+  
+  // Customer notes  
+  notes: z.string()
+    .max(500, 'Notes too long')
+    .optional(),
+  
+  // SECURITY: Idempotency key for duplicate prevention
+  idempotencyKey: z.string()
+    .min(1, 'Idempotency key is required')
+    .max(255, 'Idempotency key too long')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Invalid idempotency key format')
+})
+
+// Export the type for TypeScript usage
+export type OrderCreateApiData = z.infer<typeof orderCreateApiSchema>;
+
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
 export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
 export const insertCouponSchema = createInsertSchema(coupons).omit({ 

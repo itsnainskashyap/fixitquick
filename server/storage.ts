@@ -273,6 +273,7 @@ export interface IStorage {
   // Order methods
   getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]>;
   getOrder(id: string): Promise<Order | undefined>;
+  getOrderByIdempotencyKey(idempotencyKey: string): Promise<Order | undefined>; // SECURITY: Idempotency support
   getOrderWithDetails(id: string): Promise<any>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
@@ -366,6 +367,21 @@ export interface IStorage {
     partItems?: { partId: string; quantity: number }[];
     idempotencyKey?: string;
   }): Promise<{ success: boolean; transaction?: WalletTransaction; errors?: string[]; }>;
+
+  // Atomic order creation with coupon application and inventory management
+  createOrderWithTransaction(params: {
+    orderData: InsertOrder;
+    couponCode?: string;
+    couponDiscount?: number;
+    paymentMethod?: string;
+    partItems?: { partId: string; quantity: number }[];
+  }): Promise<{
+    success: boolean;
+    order?: Order;
+    couponUsage?: CouponUsage;
+    error?: string;
+    details?: string[];
+  }>;
 
   // Provider methods
   getServiceProviders(filters?: { categoryId?: string; isVerified?: boolean; verificationStatus?: string }): Promise<ServiceProvider[]>;
@@ -2239,6 +2255,21 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  // SECURITY FIX: Get order by idempotency key for duplicate prevention
+  async getOrderByIdempotencyKey(idempotencyKey: string): Promise<Order | undefined> {
+    try {
+      const result = await db.select()
+        .from(orders)
+        .where(eq(orders.idempotencyKey, idempotencyKey))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      // Handle case where idempotencyKey column doesn't exist yet (during migration)
+      console.warn('getOrderByIdempotencyKey failed, idempotencyKey column may not exist yet:', error);
+      return undefined;
+    }
+  }
+
   async createOrder(order: InsertOrder): Promise<Order> {
     // Handle meta field type properly
     const orderData = {
@@ -2260,6 +2291,137 @@ export class PostgresStorage implements IStorage {
     };
     const result = await db.insert(orders).values([orderData]).returning();
     return result[0];
+  }
+
+  async createOrderWithTransaction(params: {
+    orderData: InsertOrder;
+    couponCode?: string;
+    couponDiscount?: number;
+    paymentMethod?: string;
+    partItems?: { partId: string; quantity: number }[];
+  }): Promise<{
+    success: boolean;
+    order?: Order;
+    couponUsage?: CouponUsage;
+    error?: string;
+    details?: string[];
+  }> {
+    try {
+      // Use database transaction for atomicity
+      const result = await db.transaction(async (trx) => {
+        const { orderData, couponCode, couponDiscount = 0, paymentMethod, partItems = [] } = params;
+        const details: string[] = [];
+
+        // Step 1: Handle meta field type properly and create the order
+        const processedOrderData = {
+          ...orderData,
+          meta: orderData.meta ? {
+            basePrice: typeof orderData.meta.basePrice === 'number' ? orderData.meta.basePrice : Number(orderData.meta.basePrice) || 0,
+            totalAmount: typeof orderData.meta.totalAmount === 'number' ? orderData.meta.totalAmount : Number(orderData.meta.totalAmount) || 0,
+            serviceFee: typeof orderData.meta.serviceFee === 'number' ? orderData.meta.serviceFee : Number(orderData.meta.serviceFee) || 0,
+            taxes: typeof orderData.meta.taxes === 'number' ? orderData.meta.taxes : Number(orderData.meta.taxes) || 0,
+            notes: typeof orderData.meta.notes === 'string' ? orderData.meta.notes : String(orderData.meta.notes || ''),
+            customerNotes: typeof orderData.meta.customerNotes === 'string' ? orderData.meta.customerNotes : String(orderData.meta.customerNotes || ''),
+            specialRequirements: Array.isArray(orderData.meta.specialRequirements) ? orderData.meta.specialRequirements : typeof orderData.meta.specialRequirements === 'string' ? [orderData.meta.specialRequirements] : [],
+            urgencyLevel: (orderData.meta.urgencyLevel === 'normal' || orderData.meta.urgencyLevel === 'urgent') ? orderData.meta.urgencyLevel : 'normal',
+            paymentMethod: typeof orderData.meta.paymentMethod === 'string' ? orderData.meta.paymentMethod : String(orderData.meta.paymentMethod || ''),
+            paymentStatus: typeof orderData.meta.paymentStatus === 'string' ? orderData.meta.paymentStatus : String(orderData.meta.paymentStatus || ''),
+            estimatedDuration: typeof orderData.meta.estimatedDuration === 'number' ? orderData.meta.estimatedDuration : Number(orderData.meta.estimatedDuration) || 0,
+            location: orderData.meta.location || null
+          } : orderData.meta
+        };
+
+        const orderResult = await trx.insert(orders).values([processedOrderData]).returning();
+        const createdOrder = orderResult[0];
+        details.push(`Order created with ID: ${createdOrder.id}`);
+
+        let couponUsage: CouponUsage | null = null;
+
+        // Step 2: Apply coupon if provided
+        if (couponCode && couponDiscount > 0) {
+          const couponResults = await trx.select().from(coupons).where(eq(coupons.code, couponCode)).limit(1);
+          if (couponResults.length === 0) {
+            throw new Error(`Coupon ${couponCode} not found`);
+          }
+
+          const coupon = couponResults[0];
+
+          // Create coupon usage record
+          const couponUsageData: InsertCouponUsage = {
+            couponId: coupon.id,
+            userId: orderData.userId || '',
+            orderId: createdOrder.id,
+            discountAmount: couponDiscount.toString(),
+            usedAt: new Date()
+          };
+
+          const couponUsageResult = await trx.insert(couponUsages).values([couponUsageData]).returning();
+          couponUsage = couponUsageResult[0];
+
+          // Update coupon statistics
+          await trx.update(coupons)
+            .set({
+              usageCount: sql`${coupons.usageCount} + 1`,
+              totalDiscountGiven: sql`${coupons.totalDiscountGiven} + ${couponDiscount}`,
+              updatedAt: new Date()
+            })
+            .where(eq(coupons.id, coupon.id));
+
+          details.push(`Coupon ${couponCode} applied with ₹${couponDiscount} discount`);
+        }
+
+        // Step 3: Handle inventory for part items
+        if (partItems && partItems.length > 0) {
+          for (const item of partItems) {
+            const partResults = await trx.select().from(parts).where(eq(parts.id, item.partId)).limit(1);
+            
+            if (!partResults[0]) {
+              throw new Error(`Part ${item.partId} not found`);
+            }
+            
+            const part = partResults[0];
+            const currentStock = part.stock || 0;
+            
+            if (currentStock < item.quantity) {
+              throw new Error(`Insufficient stock for ${part.name}. Available: ${currentStock}, Required: ${item.quantity}`);
+            }
+            
+            // Decrement inventory
+            await trx.update(parts)
+              .set({ 
+                stock: currentStock - item.quantity,
+                updatedAt: new Date()
+              })
+              .where(eq(parts.id, item.partId));
+
+            details.push(`Reserved ${item.quantity} units of ${part.name}`);
+          }
+        }
+
+        // Step 4: Handle payment if method is provided
+        if (paymentMethod === 'wallet' && orderData.userId) {
+          // For wallet payments, we'd typically process the payment immediately
+          // This would integrate with the existing processWalletPayment method
+          details.push('Wallet payment method noted - payment processing required separately');
+        }
+
+        return {
+          success: true,
+          order: createdOrder,
+          couponUsage,
+          details
+        };
+      });
+
+      return result;
+    } catch (error: any) {
+      console.error('Error in createOrderWithTransaction:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to create order with transaction',
+        details: [`Transaction failed: ${error.message}`]
+      };
+    }
   }
 
   async updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined> {
@@ -3728,119 +3890,140 @@ export class PostgresStorage implements IStorage {
     discountAmount?: number;
     errors: string[];
   }> {
-    const errors: string[] = [];
-    
-    // Get coupon
-    const coupon = await this.getCoupon(code);
-    if (!coupon) {
-      return { valid: false, errors: ['Coupon not found or inactive'] };
-    }
-    
-    // Check if expired
-    const now = new Date();
-    if (new Date(coupon.validFrom) > now) {
-      errors.push('Coupon is not yet valid');
-    }
-    if (new Date(coupon.validUntil) < now) {
-      errors.push('Coupon has expired');
-    }
-    
-    // Check usage limits
-    if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
-      errors.push('Coupon usage limit exceeded');
-    }
-    
-    // Check per-user usage limit
-    if (coupon.maxUsagePerUser) {
-      const userUsage = await db.select({ count: count(couponUsage.id) })
-        .from(couponUsage)
+    // SECURITY FIX: Use transaction with row-level locking for concurrency safety
+    return await db.transaction(async (tx) => {
+      const errors: string[] = [];
+      
+      // Get coupon with row-level lock to prevent concurrent modifications
+      const couponResult = await tx.select()
+        .from(coupons)
         .where(and(
-          eq(couponUsage.couponId, coupon.id),
-          eq(couponUsage.userId, context.userId)
-        ));
+          eq(coupons.code, code),
+          eq(coupons.isActive, true)
+        ))
+        .for('update'); // SECURITY: Row-level lock on coupon
       
-      const userUsageCount = userUsage[0]?.count || 0;
-      if (userUsageCount >= coupon.maxUsagePerUser) {
-        errors.push('Personal usage limit exceeded for this coupon');
+      const coupon = couponResult[0];
+      if (!coupon) {
+        return { valid: false, errors: ['Coupon not found or inactive'] };
       }
-    }
-    
-    // Check minimum order amount
-    if (coupon.minOrderAmount && context.orderValue < Number(coupon.minOrderAmount)) {
-      errors.push(`Minimum order amount of ₹${coupon.minOrderAmount} required`);
-    }
-    
-    // Check service applicability
-    if (coupon.applicableServices && coupon.applicableServices.length > 0 && context.serviceIds) {
-      const hasApplicableService = context.serviceIds.some(serviceId =>
-        coupon.applicableServices?.includes(serviceId)
-      );
-      if (!hasApplicableService) {
-        errors.push('Coupon not applicable to selected services');
-      }
-    }
-    
-    // Check category applicability
-    if (coupon.serviceCategories && coupon.serviceCategories.length > 0 && context.categoryIds) {
-      const hasApplicableCategory = context.categoryIds.some(categoryId =>
-        coupon.serviceCategories?.includes(categoryId)
-      );
-      if (!hasApplicableCategory) {
-        errors.push('Coupon not applicable to selected service categories');
-      }
-    }
-    
-    // Check user restrictions
-    if (coupon.userRestrictions) {
-      const restrictions = coupon.userRestrictions as { 
-        firstTimeOnly?: boolean;
-        specificUsers?: string[];
-        excludeUsers?: string[];
-      };
       
-      if (restrictions.firstTimeOnly) {
-        const userOrderCount = await db.select({ count: count(orders.id) })
-          .from(orders)
-          .where(and(
-            eq(orders.userId, context.userId),
-            eq(orders.status, 'completed')
-          ));
+      // Check if expired
+      const now = new Date();
+      if (new Date(coupon.validFrom) > now) {
+        errors.push('Coupon is not yet valid');
+      }
+      if (new Date(coupon.validUntil) < now) {
+        errors.push('Coupon has expired');
+      }
+      
+      // SECURITY FIX: Check usage limits with row-level locking for real-time accuracy
+      if (coupon.usageLimit) {
+        // Get real-time usage count with row-level lock
+        const currentUsageResult = await tx.select({ count: count(couponUsage.id) })
+          .from(couponUsage)
+          .where(eq(couponUsage.couponId, coupon.id))
+          .for('update'); // SECURITY: Lock usage records to prevent race conditions
         
-        if ((userOrderCount[0]?.count || 0) > 0) {
-          errors.push('This coupon is only for first-time users');
+        const currentUsageCount = currentUsageResult[0]?.count || 0;
+        if (currentUsageCount >= coupon.usageLimit) {
+          errors.push('Coupon usage limit exceeded');
         }
       }
       
-      if (restrictions.specificUsers && !restrictions.specificUsers.includes(context.userId)) {
-        errors.push('This coupon is not available for your account');
+      // SECURITY FIX: Check per-user usage limit with row-level locking
+      if (coupon.maxUsagePerUser) {
+        const userUsage = await tx.select({ count: count(couponUsage.id) })
+          .from(couponUsage)
+          .where(and(
+            eq(couponUsage.couponId, coupon.id),
+            eq(couponUsage.userId, context.userId)
+          ))
+          .for('update'); // SECURITY: Lock user-specific usage records
+        
+        const userUsageCount = userUsage[0]?.count || 0;
+        if (userUsageCount >= coupon.maxUsagePerUser) {
+          errors.push('Personal usage limit exceeded for this coupon');
+        }
       }
       
-      if (restrictions.excludeUsers && restrictions.excludeUsers.includes(context.userId)) {
-        errors.push('This coupon is not available for your account');
+      // Check minimum order amount
+      if (coupon.minOrderAmount && context.orderValue < Number(coupon.minOrderAmount)) {
+        errors.push(`Minimum order amount of ₹${coupon.minOrderAmount} required`);
       }
-    }
-    
-    if (errors.length > 0) {
-      return { valid: false, coupon, errors };
-    }
-    
-    // Calculate discount amount
-    let discountAmount = 0;
-    if (coupon.type === 'percentage') {
-      discountAmount = (context.orderValue * Number(coupon.value)) / 100;
-      if (coupon.maxDiscountAmount) {
-        discountAmount = Math.min(discountAmount, Number(coupon.maxDiscountAmount));
+      
+      // Check service applicability
+      if (coupon.applicableServices && coupon.applicableServices.length > 0 && context.serviceIds) {
+        const hasApplicableService = context.serviceIds.some(serviceId =>
+          coupon.applicableServices?.includes(serviceId)
+        );
+        if (!hasApplicableService) {
+          errors.push('Coupon not applicable to selected services');
+        }
       }
-    } else if (coupon.type === 'fixed_amount') {
-      discountAmount = Math.min(Number(coupon.value), context.orderValue);
-    }
-    
-    return {
-      valid: true,
-      coupon,
-      discountAmount,
-      errors: []
-    };
+      
+      // Check category applicability
+      if (coupon.serviceCategories && coupon.serviceCategories.length > 0 && context.categoryIds) {
+        const hasApplicableCategory = context.categoryIds.some(categoryId =>
+          coupon.serviceCategories?.includes(categoryId)
+        );
+        if (!hasApplicableCategory) {
+          errors.push('Coupon not applicable to selected service categories');
+        }
+      }
+      
+      // Check user restrictions
+      if (coupon.userRestrictions) {
+        const restrictions = coupon.userRestrictions as { 
+          firstTimeOnly?: boolean;
+          specificUsers?: string[];
+          excludeUsers?: string[];
+        };
+        
+        if (restrictions.firstTimeOnly) {
+          const userOrderCount = await tx.select({ count: count(orders.id) })
+            .from(orders)
+            .where(and(
+              eq(orders.userId, context.userId),
+              eq(orders.status, 'completed')
+            ));
+          
+          if ((userOrderCount[0]?.count || 0) > 0) {
+            errors.push('This coupon is only for first-time users');
+          }
+        }
+        
+        if (restrictions.specificUsers && !restrictions.specificUsers.includes(context.userId)) {
+          errors.push('This coupon is not available for your account');
+        }
+        
+        if (restrictions.excludeUsers && restrictions.excludeUsers.includes(context.userId)) {
+          errors.push('This coupon is not available for your account');
+        }
+      }
+      
+      if (errors.length > 0) {
+        return { valid: false, coupon, errors };
+      }
+      
+      // Calculate discount amount
+      let discountAmount = 0;
+      if (coupon.type === 'percentage') {
+        discountAmount = (context.orderValue * Number(coupon.value)) / 100;
+        if (coupon.maxDiscountAmount) {
+          discountAmount = Math.min(discountAmount, Number(coupon.maxDiscountAmount));
+        }
+      } else if (coupon.type === 'fixed_amount') {
+        discountAmount = Math.min(Number(coupon.value), context.orderValue);
+      }
+      
+      return {
+        valid: true,
+        coupon,
+        discountAmount,
+        errors: []
+      };
+    }); // Close the transaction
   }
 
   async applyCoupon(code: string, userId: string, orderId: string, orderValue: number): Promise<{

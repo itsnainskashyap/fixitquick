@@ -34,6 +34,8 @@ export function getWebSocketManager(): WebSocketManager | null {
 import {
   insertUserSchema,
   insertOrderSchema,
+  orderCreateApiSchema,
+  type OrderCreateApiData,
   insertPartSchema,
   insertUserAddressSchema,
   insertUserNotificationPreferencesSchema,
@@ -431,9 +433,9 @@ const couponValidationContextSchema = z.object({
 
 const couponApplicationSchema = z.object({
   code: z.string().min(1, 'Coupon code is required'),
-  userId: z.string(),
-  orderId: z.string(),
   orderValue: z.number().min(0),
+  serviceIds: z.array(z.string()).optional(),
+  categoryIds: z.array(z.string()).optional(),
 });
 
 const bulkCouponUpdateSchema = z.object({
@@ -4911,67 +4913,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req, res) => {
-    try {
-      const userId = req.user?.id;
-      const { items, totalAmount, ...otherOrderData } = req.body;
-      
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ message: 'Order must contain at least one item' });
-      }
-
-      // SECURITY: Validate inventory availability before creating order
-      const inventoryValidation = await storage.validateInventoryAvailability(items);
-      if (!inventoryValidation.valid) {
-        return res.status(400).json({
-          message: 'Inventory validation failed',
-          errors: inventoryValidation.errors,
-          unavailableItems: inventoryValidation.unavailableItems
-        });
-      }
-
-      // SECURITY: Validate pricing to prevent fraud
-      const pricingValidation = await storage.validateOrderPricing(items);
-      if (!pricingValidation.valid) {
-        return res.status(400).json({
-          message: 'Price validation failed - prices may have changed',
-          errors: pricingValidation.errors
-        });
-      }
-
-      // SECURITY: Use server-calculated total, not client-provided total
-      const serverCalculatedTotal = pricingValidation.calculatedTotal;
-      const clientProvidedTotal = parseFloat(totalAmount);
-      
-      // Allow small floating-point differences (within 1 cent)
-      if (Math.abs(serverCalculatedTotal - clientProvidedTotal) > 0.01) {
-        return res.status(400).json({
-          message: 'Total amount mismatch. Please refresh and try again.',
-          serverTotal: serverCalculatedTotal.toFixed(2),
-          clientTotal: clientProvidedTotal.toFixed(2)
-        });
-      }
-
-      const orderData = {
-        ...otherOrderData,
-        items,
-        totalAmount: serverCalculatedTotal.toFixed(2), // Use server-calculated amount
-        userId,
-        status: 'pending' as const,
-        paymentStatus: 'pending' as const,
-      };
-      
-      const order = await storage.createOrder(orderData);
-      
-      // Send notification to service providers
-      await notificationService.notifyProviders(order);
-      
-      res.json(order);
-    } catch (error) {
-      console.error('Error creating order:', error);
-      res.status(500).json({ message: 'Failed to create order' });
-    }
-  });
+  // OLD route removed - using properly validated route at line 5798
 
   // Get specific order details with enhanced data
   app.get('/api/v1/orders/:orderId', authMiddleware, async (req, res) => {
@@ -5743,7 +5685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========================
 
   // Create a new order
-  app.post('/api/v1/orders', authMiddleware, validateBody(insertOrderSchema), async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/v1/orders', authMiddleware, validateBody(orderCreateApiSchema), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -5752,21 +5694,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const orderData = req.body;
       
-      // Validate service exists and is active
-      const service = await storage.getService(orderData.serviceId);
-      if (!service || !service.isActive) {
-        return res.status(404).json({ success: false, message: 'Service not found or not available' });
+      // SECURITY FIX: Check for idempotency - prevent duplicate orders
+      if (orderData.idempotencyKey) {
+        const existingOrder = await storage.getOrderByIdempotencyKey(orderData.idempotencyKey);
+        if (existingOrder) {
+          console.log(`🔄 Idempotent request detected: returning existing order ${existingOrder.id} for key ${orderData.idempotencyKey}`);
+          return res.status(200).json({
+            success: true,
+            data: existingOrder,
+            message: 'Order already exists (idempotent request)',
+            idempotent: true
+          });
+        }
+      }
+      
+      // CRITICAL FIX: Extract serviceIds from items array for validation
+      const serviceItems = orderData.items.filter(item => item.type === 'service');
+      const serviceIds = [...new Set(serviceItems.map(item => item.serviceId).filter(Boolean))];
+      
+      // Validate services exist and are active (for service orders)
+      if (serviceIds.length > 0) {
+        for (const serviceId of serviceIds) {
+          const service = await storage.getService(serviceId);
+          if (!service || !service.isActive) {
+            return res.status(404).json({ 
+              success: false, 
+              message: `Service ${serviceId} not found or not available`,
+              field: 'items.serviceId'
+            });
+          }
+        }
       }
 
-      // Create order with 5-minute accept deadline
+      // CRITICAL FIX: Server-side coupon validation with correct totalAmount parsing
+      if (orderData.couponCode) {
+        const totalAmountNumber = parseFloat(orderData.totalAmount);
+        if (isNaN(totalAmountNumber) || totalAmountNumber <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid total amount for coupon validation',
+            field: 'totalAmount'
+          });
+        }
+        
+        const couponValidation = await storage.validateCoupon(orderData.couponCode, {
+          userId,
+          orderValue: totalAmountNumber,
+          serviceIds: serviceIds,
+        });
+        
+        if (!couponValidation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: 'Coupon validation failed',
+            errors: couponValidation.errors,
+            field: 'couponCode'
+          });
+        }
+        
+        // SECURITY: Server-side discount calculation (authoritative)
+        const serverCalculatedDiscount = couponValidation.discountAmount || 0;
+        if (Math.abs((orderData.couponDiscount || 0) - serverCalculatedDiscount) > 0.01) {
+          console.warn(`⚠️  Coupon discount mismatch: client=${orderData.couponDiscount}, server=${serverCalculatedDiscount}`);
+          // Use server-calculated discount as authoritative
+          orderData.couponDiscount = serverCalculatedDiscount;
+        }
+      }
+
+      // CRITICAL FIX: Use atomic transaction for order creation
+      console.log(`🏗️  TRANSACTION START: Creating order with idempotency key: ${orderData.idempotencyKey || 'none'}`);
       const acceptDeadline = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
       
-      const order = await storage.createOrder({
-        ...orderData,
-        userId,
-        acceptDeadlineAt: acceptDeadline,
-        status: 'pending_assignment'
+      const transactionResult = await storage.createOrderWithTransaction({
+        orderData: {
+          ...orderData,
+          userId,
+          acceptDeadlineAt: acceptDeadline,
+          status: 'pending_assignment'
+        },
+        couponCode: orderData.couponCode,
+        couponDiscount: orderData.couponDiscount,
+        paymentMethod: orderData.paymentMethod,
+        partItems: orderData.items?.filter(item => item.type === 'part') || []
       });
+
+      if (!transactionResult.success) {
+        console.error(`❌ TRANSACTION FAILED: ${transactionResult.error}`, transactionResult.details);
+        return res.status(400).json({
+          success: false,
+          message: transactionResult.error || 'Failed to create order',
+          details: transactionResult.details
+        });
+      }
+
+      const order = transactionResult.order;
+      console.log(`✅ TRANSACTION SUCCESS: Order ${order.id} created with coupon discount: ₹${orderData.couponDiscount || 0}`);
 
       // Broadcast order created event via WebSocket
       if (webSocketManager) {
@@ -12989,22 +13011,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const { code, orderId, orderValue } = req.body;
-      const result = await storage.applyCoupon(code, userId, orderId, orderValue);
-
-      if (!result.success) {
+      const { code, orderValue, serviceIds, categoryIds } = req.body;
+      
+      // For cart-based coupon validation, use validateCoupon instead of applyCoupon
+      const validationResult = await storage.validateCoupon(code, {
+        userId,
+        orderValue,
+        serviceIds,
+        categoryIds
+      });
+      
+      if (!validationResult.valid || !validationResult.coupon) {
         return res.status(400).json({
           success: false,
-          message: result.error || 'Failed to apply coupon',
-          error: 'COUPON_APPLICATION_FAILED'
+          message: validationResult.errors?.join(', ') || 'Invalid coupon',
+          error: 'COUPON_VALIDATION_FAILED'
         });
       }
+      
+      const { coupon, discountAmount = 0 } = validationResult;
 
+      // CRITICAL FIX: Return consistent format for frontend compatibility
       res.json({
         success: true,
-        message: 'Coupon applied successfully',
-        discountAmount: result.discountAmount,
-        couponUsage: result.couponUsage
+        message: 'Coupon validated successfully',
+        discountAmount,
+        coupon: {
+          code: coupon.code,
+          type: coupon.type,
+          value: coupon.value,
+          minOrderAmount: coupon.minOrderAmount
+        }
       });
     } catch (error) {
       console.error('Error applying coupon:', error);
@@ -13115,6 +13152,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // USER COUPON VALIDATION AND APPLICATION ENDPOINTS
+  // ===============================================
+
+  // POST /api/v1/coupons/validate/:code - Validate coupon code
+  app.post('/api/v1/coupons/validate/:code', couponValidationLimiter, authMiddleware, validateBody(couponValidationContextSchema), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { code } = req.params;
+      const context = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required',
+          error: 'UNAUTHORIZED'
+        });
+      }
+
+      // Add userId to context
+      const validationContext = { ...context, userId };
+
+      console.log('🎫 Validating coupon:', { code, context: validationContext });
+
+      const result = await storage.validateCoupon(code, validationContext);
+
+      if (!result.valid) {
+        return res.status(400).json({
+          success: false,
+          message: result.errors.join(', '),
+          errors: result.errors,
+          error: 'COUPON_INVALID'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Coupon is valid',
+        coupon: {
+          id: result.coupon?.id,
+          code: result.coupon?.code,
+          title: result.coupon?.title,
+          description: result.coupon?.description,
+          type: result.coupon?.type,
+          value: result.coupon?.value,
+          maxDiscountAmount: result.coupon?.maxDiscountAmount,
+          minOrderAmount: result.coupon?.minOrderAmount,
+          validUntil: result.coupon?.validUntil
+        },
+        discountAmount: result.discountAmount
+      });
+    } catch (error) {
+      console.error('Error validating coupon:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to validate coupon',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  // Duplicate route removed - using properly validated route above
 
   // ============================
   // TAX MANAGEMENT SYSTEM

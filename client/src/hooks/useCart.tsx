@@ -14,6 +14,7 @@ export interface CartItem {
   providerId?: string;
   scheduledAt?: Date;
   category: string;
+  categoryId: string;
   icon?: string;
   estimatedDuration?: number;
 }
@@ -88,7 +89,13 @@ function cartReducer(state: CartState, action: CartAction): CartState {
     case 'ADD_ITEM': {
       // Create composite key for item identity to prevent collisions
       const itemKey = `${action.payload.type}:${action.payload.serviceId || action.payload.partId || action.payload.id}`;
-      const newItem = { ...action.payload, id: itemKey, quantity: action.payload.quantity || 1 };
+      const newItem = { 
+        ...action.payload, 
+        id: itemKey, 
+        quantity: action.payload.quantity || 1,
+        // CRITICAL FIX: Only use proper database IDs for categoryId, never category names
+        categoryId: action.payload.categoryId || ''
+      };
       
       const existingItemIndex = state.items.findIndex(item => item.id === itemKey);
       let newItems: CartItem[];
@@ -271,35 +278,51 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const applyCoupon = async (code: string): Promise<{ success: boolean; discount?: number; message?: string }> => {
     try {
-      // Mock coupon validation - replace with actual API call
-      const validCoupons: Record<string, CouponInfo> = {
-        'SAVE10': { code: 'SAVE10', type: 'fixed', value: 100, minAmount: 500 },
-        'WELCOME': { code: 'WELCOME', type: 'fixed', value: 50, minAmount: 200 },
-        'FIXIT20': { code: 'FIXIT20', type: 'percentage', value: 20, minAmount: 300 },
-      };
-
-      const coupon = validCoupons[code.toUpperCase()];
+      // Prepare context for server validation
+      const serviceIds = cart.items
+        .filter(item => item.type === 'service')
+        .map(item => item.serviceId)
+        .filter(Boolean);
       
-      if (!coupon) {
-        return { success: false, message: 'Invalid coupon code' };
+      const categoryIds = Array.from(new Set(
+        cart.items
+          .map(item => item.categoryId)
+          .filter(Boolean)
+      ));
+
+      // Call server API for coupon validation and application
+      // CRITICAL FIX: apiRequest already returns parsed JSON, don't call .json() again
+      const result = await apiRequest('POST', '/api/v1/coupons/apply', {
+        code: code.trim(),
+        orderValue: cart.subtotal,
+        serviceIds,
+        categoryIds
+      });
+
+      if (!result.success) {
+        const message = result.message || 'Invalid coupon code';
+        toast({
+          title: 'Coupon Invalid',
+          description: message,
+          variant: 'destructive',
+        });
+        return { success: false, message };
       }
 
-      if (cart.subtotal < (coupon.minAmount || 0)) {
-        return { 
-          success: false, 
-          message: `Minimum order amount of ₹${coupon.minAmount} required for this coupon` 
-        };
-      }
+      const { coupon, discountAmount } = result;
 
-      // Calculate discount based on coupon type
-      const discountAmount = coupon.type === 'percentage' 
-        ? cart.subtotal * (coupon.value / 100)
-        : coupon.value;
+      // Convert server coupon format to client format
+      const couponInfo: CouponInfo = {
+        code: coupon.code,
+        type: coupon.type === 'percentage' ? 'percentage' : 'fixed',
+        value: coupon.value,
+        minAmount: coupon.minOrderAmount ? Number(coupon.minOrderAmount) : 0
+      };
 
       dispatch({ 
         type: 'APPLY_COUPON', 
         payload: { 
-          ...coupon, 
+          ...couponInfo, 
           discount: discountAmount 
         } 
       });
@@ -310,8 +333,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
       });
 
       return { success: true, discount: discountAmount };
-    } catch (error) {
-      return { success: false, message: 'Failed to apply coupon' };
+    } catch (error: any) {
+      console.error('Error applying coupon:', error);
+      const message = error.message || 'Failed to apply coupon';
+      toast({
+        title: 'Error',
+        description: message,
+        variant: 'destructive',
+      });
+      return { success: false, message };
     }
   };
 
