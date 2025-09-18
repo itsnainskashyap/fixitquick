@@ -954,6 +954,7 @@ const TaxManagementSystem = () => {
   const [selectedTax, setSelectedTax] = useState<Tax | null>(null);
   const [isCreateCategoryDialogOpen, setIsCreateCategoryDialogOpen] = useState(false);
   const [isEditCategoryDialogOpen, setIsEditCategoryDialogOpen] = useState(false);
+  const [showSubCategoryDialog, setShowSubCategoryDialog] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<ServiceCategory | null>(null);
   const [selectedMainCategory, setSelectedMainCategory] = useState<ServiceCategory | null>(null);
   const [categoryForm, setCategoryForm] = useState<Partial<InsertServiceCategory>>({
@@ -1708,23 +1709,10 @@ const TaxManagementSystem = () => {
                   </div>
                   <Button
                     onClick={() => {
-                      if (!selectedMainCategory) {
-                        toast({ title: 'Select Main Category', description: 'Please select a main category first to add subcategories.' });
-                        return;
-                      }
-                      setCategoryForm({ 
-                        name: '', 
-                        description: '', 
-                        icon: '', 
-                        level: 1, 
-                        parentId: selectedMainCategory.id, 
-                        isActive: true 
-                      });
-                      setIsCreateCategoryDialogOpen(true);
+                      setShowSubCategoryDialog(true);
                     }}
                     size="sm"
                     data-testid="add-subcategory"
-                    disabled={!selectedMainCategory}
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     Add Subcategory
@@ -1797,6 +1785,23 @@ const TaxManagementSystem = () => {
               </CardContent>
             </Card>
           </div>
+
+          {/* Subcategory Creation Dialog */}
+          <Dialog open={showSubCategoryDialog} onOpenChange={setShowSubCategoryDialog}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Create Subcategory</DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  Add a new subcategory under a main category. This helps organize services hierarchically.
+                </p>
+              </DialogHeader>
+              
+              <AddSubCategoryForm 
+                mainCategories={mainCategories?.data || []}
+                onSuccess={() => setShowSubCategoryDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* Calculator Tab Content */}
@@ -7911,3 +7916,194 @@ export default function Admin() {
     </div>
   );
 }
+
+// AddSubCategoryForm Component for hierarchical category creation
+const AddSubCategoryForm = ({ 
+  mainCategories, 
+  onSuccess 
+}: { 
+  mainCategories: ServiceCategory[], 
+  onSuccess: () => void 
+}) => {
+  const [subCategoryForm, setSubCategoryForm] = useState({
+    name: '',
+    description: '',
+    icon: '',
+    parentId: '',
+    isActive: true
+  });
+
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const createSubCategoryMutation = useMutation({
+    mutationFn: async (data: Partial<InsertServiceCategory>) => {
+      return await apiRequest('POST', '/api/v1/admin/categories', data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-main-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-sub-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-categories'] });
+      
+      toast({
+        title: "Subcategory Created",
+        description: "The subcategory has been successfully created.",
+      });
+      
+      // Reset form
+      setSubCategoryForm({
+        name: '',
+        description: '',
+        icon: '',
+        parentId: '',
+        isActive: true
+      });
+      
+      onSuccess();
+    },
+    onError: (error: any) => {
+      console.error('Error creating subcategory:', error);
+      toast({
+        title: "Error creating subcategory",
+        description: error.message || "Failed to create subcategory. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!subCategoryForm.name.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a subcategory name.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (!subCategoryForm.parentId) {
+      toast({
+        title: "Validation Error", 
+        description: "Please select a main category.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    createSubCategoryMutation.mutate({
+      name: subCategoryForm.name.trim(),
+      description: subCategoryForm.description.trim() || null,
+      icon: subCategoryForm.icon || null,
+      parentId: subCategoryForm.parentId,
+      level: 1,
+      isActive: subCategoryForm.isActive,
+      sortOrder: 0
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Main Category Selection - REQUIRED */}
+      <div>
+        <Label htmlFor="parent-category">Main Category *</Label>
+        <Select 
+          value={subCategoryForm.parentId} 
+          onValueChange={(value) => setSubCategoryForm({ ...subCategoryForm, parentId: value })}
+          data-testid="subcategory-parent-select"
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select main category first" />
+          </SelectTrigger>
+          <SelectContent>
+            {mainCategories.map((category) => (
+              <SelectItem key={category.id} value={category.id}>
+                <div className="flex items-center gap-2">
+                  <Folder className="w-4 h-4 text-blue-600" />
+                  {category.name}
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-gray-500 mt-1">Choose the main category this subcategory belongs to</p>
+      </div>
+
+      {/* Subcategory Name */}
+      <div>
+        <Label htmlFor="subcategory-name">Subcategory Name *</Label>
+        <Input
+          id="subcategory-name"
+          value={subCategoryForm.name}
+          onChange={(e) => setSubCategoryForm({ ...subCategoryForm, name: e.target.value })}
+          placeholder="e.g., Installation, Repair, Maintenance"
+          data-testid="subcategory-name-input"
+        />
+      </div>
+
+      {/* Description */}
+      <div>
+        <Label htmlFor="subcategory-description">Description (Optional)</Label>
+        <Textarea
+          id="subcategory-description"
+          value={subCategoryForm.description}
+          onChange={(e) => setSubCategoryForm({ ...subCategoryForm, description: e.target.value })}
+          placeholder="Brief description of this subcategory"
+          data-testid="subcategory-description-input"
+        />
+      </div>
+
+      {/* Icon */}
+      <div>
+        <Label htmlFor="subcategory-icon">Icon (Optional)</Label>
+        <Input
+          id="subcategory-icon"
+          value={subCategoryForm.icon}
+          onChange={(e) => setSubCategoryForm({ ...subCategoryForm, icon: e.target.value })}
+          placeholder="🔧"
+          data-testid="subcategory-icon-input"
+        />
+      </div>
+
+      {/* Active Status */}
+      <div className="flex items-center space-x-2">
+        <input
+          type="checkbox"
+          id="subcategory-active"
+          checked={subCategoryForm.isActive}
+          onChange={(e) => setSubCategoryForm({ ...subCategoryForm, isActive: e.target.checked })}
+          data-testid="subcategory-active-checkbox"
+        />
+        <Label htmlFor="subcategory-active">Active</Label>
+      </div>
+
+      {/* Submit Buttons */}
+      <DialogFooter>
+        <Button 
+          type="button" 
+          variant="outline" 
+          onClick={onSuccess}
+          data-testid="cancel-subcategory"
+        >
+          Cancel
+        </Button>
+        <Button 
+          type="submit" 
+          disabled={createSubCategoryMutation.isPending}
+          data-testid="submit-subcategory"
+        >
+          {createSubCategoryMutation.isPending ? (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Creating...
+            </>
+          ) : (
+            'Create Subcategory'
+          )}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+};
