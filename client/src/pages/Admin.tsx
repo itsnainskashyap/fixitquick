@@ -1234,42 +1234,28 @@ const TaxManagementSystem = () => {
     setSelectedMainCategory(category || null);
   };
 
-  // Function to handle category deletion
-  const handleDeleteCategory = async (category: ServiceCategory) => {
-    try {
-      const isMainCategory = category.level === 0;
-      const categoryType = isMainCategory ? 'main category' : 'subcategory';
+  // Enhanced function to handle category deletion with better UX
+  const handleDeleteCategory = (category: ServiceCategory) => {
+    const isMainCategory = category.level === 0;
+    const categoryType = isMainCategory ? 'main category' : 'subcategory';
+    
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the ${categoryType} "${category.name}"?\n\n` +
+      `This action cannot be undone. If this ${categoryType} has subcategories or services, ` +
+      `you will need to move them first.`
+    );
+    
+    if (confirmed) {
+      // Store category info for success message since mutation can't access it
+      const categoryInfo = { name: category.name, type: categoryType };
       
-      const confirmed = confirm(`Are you sure you want to delete this ${categoryType}? This action cannot be undone.`);
-      if (!confirmed) return;
-
-      await apiRequest('DELETE', `/api/v1/admin/service-categories/${category.id}`);
-      
-      // Invalidate relevant queries
-      queryClient.invalidateQueries({ queryKey: ['admin-main-categories'] });
-      queryClient.invalidateQueries({ queryKey: ['service-categories'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-categories'] });
-      
-      // If it was a main category, clear selection to avoid invalid state
-      if (isMainCategory) {
-        setSelectedMainCategory(null);
-        // Also invalidate all subcategory queries
-        queryClient.invalidateQueries({ queryKey: ['admin-sub-categories'] });
-      } else if (selectedMainCategory) {
-        // If it was a subcategory, refresh the specific subcategories list
-        queryClient.invalidateQueries({ queryKey: ['admin-sub-categories', selectedMainCategory.id] });
-      }
-      
-      toast({
-        title: `${categoryType} deleted successfully`,
-        description: `The ${categoryType} has been removed.`
-      });
-    } catch (error: any) {
-      console.error('Error deleting category:', error);
-      toast({
-        title: 'Error deleting category',
-        description: error.message || 'Failed to delete category',
-        variant: 'destructive'
+      deleteCategoryMutation.mutate(category.id, {
+        onSuccess: () => {
+          toast({
+            title: `${categoryInfo.type} deleted successfully`,
+            description: `"${categoryInfo.name}" has been removed.`,
+          });
+        }
       });
     }
   };
@@ -4860,24 +4846,42 @@ export default function Admin() {
 
   const deleteCategoryMutation = useMutation({
     mutationFn: async (categoryId: string) => {
-      // Note: Delete operations may need admin-specific endpoint for security
       return await apiRequest('DELETE', `/api/v1/admin/categories/${categoryId}`);
     },
-    onSuccess: () => {
-      // Invalidate admin queries
+    onSuccess: (data, categoryId) => {
+      // Comprehensive query invalidation for proper data refresh
+      queryClient.invalidateQueries({ queryKey: ['admin-main-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['service-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-sub-categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
-      // Invalidate user-facing queries for data synchronization
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/categories/tree'] });
-      toast({
-        title: "Category deleted",
-        description: "Category has been deleted successfully.",
-      });
+      
+      // Clear main category selection if it was deleted
+      if (selectedMainCategory?.id === categoryId) {
+        setSelectedMainCategory(null);
+      }
+      
+      // Success toast will be shown by the calling function with specific details
     },
     onError: (error: any) => {
+      console.error('Error deleting category:', error);
+      const errorMessage = error.message || "Failed to delete category";
+      
+      // Provide specific error messages based on common scenarios
+      let userMessage = errorMessage;
+      if (errorMessage.includes('subcategories')) {
+        userMessage = "Cannot delete category: Please move or delete all subcategories first.";
+      } else if (errorMessage.includes('services')) {
+        userMessage = "Cannot delete category: Please move all services to another category first.";
+      } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+        userMessage = "Category not found. It may have already been deleted.";
+      }
+      
       toast({
-        title: "Delete failed",
-        description: error.message || "Failed to delete category",
+        title: "Unable to delete category",
+        description: userMessage,
         variant: "destructive",
       });
     },
@@ -5085,11 +5089,6 @@ export default function Admin() {
     updateCategoryMutation.mutate({ categoryId: selectedCategory.id, data });
   };
 
-  const handleDeleteCategory = (categoryId: string) => {
-    if (window.confirm('Are you sure you want to delete this category? This action cannot be undone.')) {
-      deleteCategoryMutation.mutate(categoryId);
-    }
-  };
 
   // Category image handlers
   const handleCategoryImageUpload = async (categoryId: string, images: UploadedImage[]) => {
@@ -6775,7 +6774,7 @@ export default function Admin() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleDeleteCategory(category.id)}
+                                onClick={() => handleDeleteCategory(category)}
                                 data-testid={`delete-category-${category.id}`}
                               >
                                 <Trash2 className="w-4 h-4 text-red-500" />
@@ -6811,7 +6810,7 @@ export default function Admin() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleDeleteCategory(subCategory.id)}
+                                      onClick={() => handleDeleteCategory(subCategory)}
                                       data-testid={`delete-subcategory-${subCategory.id}`}
                                     >
                                       <Trash2 className="w-3 h-3 text-red-500" />
