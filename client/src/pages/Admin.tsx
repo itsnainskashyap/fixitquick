@@ -955,6 +955,17 @@ const TaxManagementSystem = () => {
   const [isCreateCategoryDialogOpen, setIsCreateCategoryDialogOpen] = useState(false);
   const [isEditCategoryDialogOpen, setIsEditCategoryDialogOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<ServiceCategory | null>(null);
+  const [selectedMainCategory, setSelectedMainCategory] = useState<ServiceCategory | null>(null);
+  const [categoryForm, setCategoryForm] = useState<Partial<InsertServiceCategory>>({
+    name: '',
+    description: '',
+    icon: '',
+    slug: '',
+    level: 0,
+    parentId: null,
+    sortOrder: 0,
+    isActive: true
+  });
   const [previewOrderValue, setPreviewOrderValue] = useState(1000);
   const [taxForm, setTaxForm] = useState<Partial<InsertTax>>({
     type: 'percentage',
@@ -977,10 +988,6 @@ const TaxManagementSystem = () => {
     partCategories: [],
     stateRestrictions: [],
     cityRestrictions: []
-  });
-  const [categoryForm, setCategoryForm] = useState<Partial<InsertServiceCategory>>({
-    isActive: true,
-    sortOrder: 0
   });
 
   const { toast } = useToast();
@@ -1016,6 +1023,15 @@ const TaxManagementSystem = () => {
       const response = await apiRequest('GET', '/api/v1/admin/categories');
       return response.data || [];
     }
+  });
+
+  // Fetch main categories (level 0)
+  const { data: mainCategories = [], isLoading: mainCategoriesLoading } = useQuery({
+    queryKey: ['admin-main-categories'],
+    queryFn: async () => {
+      return await apiRequest('GET', '/api/v1/admin/service-categories?level=0&activeOnly=false');
+    },
+    select: (response) => response.data || []
   });
 
   // Fetch service statistics
@@ -1166,8 +1182,14 @@ const TaxManagementSystem = () => {
 
   const resetCategoryForm = () => {
     setCategoryForm({
-      isActive: true,
-      sortOrder: 0
+      name: '',
+      description: '',
+      icon: '',
+      slug: '',
+      level: 0,
+      parentId: null,
+      sortOrder: 0,
+      isActive: true
     });
   };
 
@@ -1179,8 +1201,75 @@ const TaxManagementSystem = () => {
 
   const handleEditCategory = (category: ServiceCategory) => {
     setSelectedCategory(category);
-    setCategoryForm(category);
+    setCategoryForm({
+      name: category.name || '',
+      description: category.description || '',
+      icon: category.icon || '',
+      slug: category.slug || '',
+      level: category.level || 0,
+      parentId: category.parentId,
+      sortOrder: category.sortOrder || 0,
+      isActive: category.isActive ?? true
+    });
     setIsEditCategoryDialogOpen(true);
+  };
+
+  // Query for subcategories when a main category is selected
+  const subCategoriesQuery = useQuery({
+    queryKey: ['admin-sub-categories', selectedMainCategory?.id],
+    queryFn: () => apiRequest('GET', `/api/v1/admin/service-categories?parentId=${selectedMainCategory?.id}&activeOnly=false`),
+    enabled: !!selectedMainCategory?.id,
+    select: (response) => response.data || []
+  });
+
+  // Function to fetch subcategories for a selected main category
+  const fetchSubCategories = async (categoryId: string) => {
+    if (!mainCategories || mainCategoriesLoading) {
+      console.warn('Main categories not loaded yet');
+      return;
+    }
+    const category = mainCategories.find((cat: ServiceCategory) => cat.id === categoryId);
+    setSelectedMainCategory(category || null);
+  };
+
+  // Function to handle category deletion
+  const handleDeleteCategory = async (category: ServiceCategory) => {
+    try {
+      const isMainCategory = category.level === 0;
+      const categoryType = isMainCategory ? 'main category' : 'subcategory';
+      
+      const confirmed = confirm(`Are you sure you want to delete this ${categoryType}? This action cannot be undone.`);
+      if (!confirmed) return;
+
+      await apiRequest('DELETE', `/api/v1/admin/service-categories/${category.id}`);
+      
+      // Invalidate relevant queries
+      queryClient.invalidateQueries({ queryKey: ['admin-main-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['service-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-categories'] });
+      
+      // If it was a main category, clear selection to avoid invalid state
+      if (isMainCategory) {
+        setSelectedMainCategory(null);
+        // Also invalidate all subcategory queries
+        queryClient.invalidateQueries({ queryKey: ['admin-sub-categories'] });
+      } else if (selectedMainCategory) {
+        // If it was a subcategory, refresh the specific subcategories list
+        queryClient.invalidateQueries({ queryKey: ['admin-sub-categories', selectedMainCategory.id] });
+      }
+      
+      toast({
+        title: `${categoryType} deleted successfully`,
+        description: `The ${categoryType} has been removed.`
+      });
+    } catch (error: any) {
+      console.error('Error deleting category:', error);
+      toast({
+        title: 'Error deleting category',
+        description: error.message || 'Failed to delete category',
+        variant: 'destructive'
+      });
+    }
   };
 
   const handleBulkActivate = () => {
@@ -1199,6 +1288,7 @@ const TaxManagementSystem = () => {
   const categories = categoriesData?.data || [];
   const stats = statsData?.data || {};
   const categoryStats = categoryStatsData?.data || {};
+  const subCategories = subCategoriesQuery.data || [];
 
   const filteredTaxes = taxes.filter((tax: Tax) => {
     const matchesSearch = !searchTerm || 
@@ -1520,92 +1610,205 @@ const TaxManagementSystem = () => {
 
         {/* Categories Tab Content */}
         <TabsContent value="categories" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                Tax Categories
-                <Button
-                  onClick={() => setIsCreateCategoryDialogOpen(true)}
-                  size="sm"
-                  data-testid="add-category"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Category
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {categoriesLoading ? (
-                <div className="space-y-3">
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="flex items-center space-x-4">
-                      <Skeleton className="h-4 flex-1" />
-                      <Skeleton className="h-4 w-20" />
-                      <Skeleton className="h-4 w-16" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Category Details</TableHead>
-                      <TableHead>Default Rate</TableHead>
-                      <TableHead>Priority</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categories.map((category: ServiceCategory) => (
-                      <TableRow key={category.id}>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium text-foreground">{category.name}</div>
-                            <div className="text-sm text-muted-foreground">
-                              Level {category.level} • {category.serviceCount || 0} services
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Main Categories Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Folder className="w-5 h-5" />
+                    Main Categories
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setCategoryForm({ name: '', description: '', icon: '', level: 0, parentId: null, isActive: true });
+                      setIsCreateCategoryDialogOpen(true);
+                    }}
+                    size="sm"
+                    data-testid="add-main-category"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Main Category
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {categoriesLoading ? (
+                  <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center space-x-4">
+                        <Skeleton className="h-4 flex-1" />
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {mainCategories?.data?.map((category: any) => (
+                      <div key={category.id} className="border rounded-lg p-4 bg-background hover:bg-muted/50 transition-colors">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              {category.icon && <span className="text-lg">{category.icon}</span>}
+                              <h3 className="font-medium text-foreground">{category.name}</h3>
+                              <Badge variant={category.isActive ? 'default' : 'secondary'}>
+                                {category.isActive ? 'Active' : 'Inactive'}
+                              </Badge>
                             </div>
                             {category.description && (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                {category.description}
-                              </div>
+                              <p className="text-sm text-muted-foreground mb-2">{category.description}</p>
                             )}
+                            <div className="text-xs text-muted-foreground">
+                              {category.subCategoriesCount || 0} subcategories • {category.serviceCount || 0} total services
+                            </div>
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm font-medium">
-                            {category.serviceCount || 0} services
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {category.sortOrder}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={category.isActive ? 'default' : 'secondary'}>
-                            {category.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
                           <div className="flex items-center gap-2">
                             <Button
                               size="sm"
                               variant="outline"
+                              onClick={() => {
+                                setSelectedMainCategory(category);
+                                fetchSubCategories(category.id);
+                              }}
+                              data-testid={`view-subcategories-${category.id}`}
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
                               onClick={() => handleEditCategory(category)}
-                              data-testid={`edit-category-${category.id}`}
+                              data-testid={`edit-main-category-${category.id}`}
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDeleteCategory(category)}
+                              data-testid={`delete-main-category-${category.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
-                        </TableCell>
-                      </TableRow>
+                        </div>
+                      </div>
                     ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+                    {(!mainCategories?.data || mainCategories.data.length === 0) && (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No main categories found. Create one to get started.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Subcategories Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="w-5 h-5" />
+                    Subcategories
+                    {selectedMainCategory && (
+                      <span className="text-sm text-muted-foreground">
+                        for {selectedMainCategory.name}
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => {
+                      if (!selectedMainCategory) {
+                        toast({ title: 'Select Main Category', description: 'Please select a main category first to add subcategories.' });
+                        return;
+                      }
+                      setCategoryForm({ 
+                        name: '', 
+                        description: '', 
+                        icon: '', 
+                        level: 1, 
+                        parentId: selectedMainCategory.id, 
+                        isActive: true 
+                      });
+                      setIsCreateCategoryDialogOpen(true);
+                    }}
+                    size="sm"
+                    data-testid="add-subcategory"
+                    disabled={!selectedMainCategory}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Subcategory
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {subCategoriesLoading ? (
+                  <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center space-x-4">
+                        <Skeleton className="h-4 flex-1" />
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                ) : selectedMainCategory ? (
+                  <div className="space-y-3">
+                    {subCategories?.map((subcategory: any) => (
+                      <div key={subcategory.id} className="border rounded-lg p-4 bg-background hover:bg-muted/50 transition-colors">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              {subcategory.icon && <span className="text-lg">{subcategory.icon}</span>}
+                              <h4 className="font-medium text-foreground">{subcategory.name}</h4>
+                              <Badge variant={subcategory.isActive ? 'default' : 'secondary'}>
+                                {subcategory.isActive ? 'Active' : 'Inactive'}
+                              </Badge>
+                            </div>
+                            {subcategory.description && (
+                              <p className="text-sm text-muted-foreground mb-2">{subcategory.description}</p>
+                            )}
+                            <div className="text-xs text-muted-foreground">
+                              {subcategory.servicesCount || 0} services
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditCategory(subcategory)}
+                              data-testid={`edit-subcategory-${subcategory.id}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDeleteCategory(subcategory)}
+                              data-testid={`delete-subcategory-${subcategory.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {(!subCategories || subCategories.length === 0) && (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No subcategories found for this main category.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Select a main category to view its subcategories.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* Calculator Tab Content */}
