@@ -24,7 +24,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { queryClient, apiRequest } from '@/lib/queryClient';
-import { format, addDays, startOfToday, isAfter, isBefore, addMinutes } from 'date-fns';
+import { Skeleton } from '@/components/ui/skeleton';
+import { format, addDays, startOfToday, isAfter, isBefore, addMinutes, isToday } from 'date-fns';
 import { 
   ArrowLeft, 
   ArrowRight,
@@ -312,7 +313,6 @@ export default function ServiceBooking() {
       ...(data.bookingType === 'scheduled' && {
         scheduledAt: new Date(`${format(data.scheduledDate!, 'yyyy-MM-dd')}T${data.scheduledTime}`).toISOString(),
       }),
-      ...(data.providerId && { providerId: data.providerId }),
     };
 
     createServiceBookingMutation.mutate(bookingData);
@@ -332,35 +332,96 @@ export default function ServiceBooking() {
     }, 3000);
   };
 
+  // Helper function to convert HH:mm time string to minutes since midnight
+  const timeToMinutes = (timeStr: string): number => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+
   const getAvailableTimeSlots = (date: Date, providerId?: string) => {
-    if (!providers || providers.length === 0) {
-      // Return all time slots if no providers available yet
-      return timeSlots;
+    // Handle loading state - show empty array with proper loading indication
+    if (loadingProviders) {
+      return [];
     }
     
-    // If no specific provider is selected, use the first available provider
-    const selectedProvider = providerId 
-      ? providers.find(p => p.userId === providerId)
-      : providers[0];
-    
-    if (!selectedProvider) {
-      // Fallback to all time slots if no provider found
-      return timeSlots;
+    // Handle no providers available
+    if (!providers || providers.length === 0) {
+      return [];
     }
     
     const dayName = format(date, 'EEEE').toLowerCase();
-    const availability = selectedProvider.availability[dayName];
     
-    if (!availability) return [];
+    // If specific provider is selected, use only that provider
+    if (providerId) {
+      const selectedProvider = providers.find(p => p.userId === providerId);
+      if (!selectedProvider) return [];
+      
+      const availability = selectedProvider.availability[dayName];
+      if (!availability) return [];
+      
+      const [start, end] = availability.split('-');
+      const startMinutes = timeToMinutes(start);
+      const endMinutes = timeToMinutes(end);
+      
+      let availableSlots = timeSlots.filter(slot => {
+        const slotMinutes = timeToMinutes(slot);
+        return slotMinutes >= startMinutes && slotMinutes < endMinutes;
+      });
+      
+      // Apply same-day cutoff for selected provider
+      if (isToday(date)) {
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const bufferMinutes = 45; // Dispatch + travel buffer
+        const cutoffMinutes = currentMinutes + bufferMinutes;
+        
+        availableSlots = availableSlots.filter(slot => {
+          const slotMinutes = timeToMinutes(slot);
+          return slotMinutes > cutoffMinutes;
+        });
+      }
+      
+      return availableSlots;
+    }
     
-    const [start, end] = availability.split('-');
-    const startHour = parseInt(start.split(':')[0]);
-    const endHour = parseInt(end.split(':')[0]);
+    // FIXED: Compute union of availability across ALL eligible providers
+    // Create a boolean array to track slot availability across all providers
+    const slotAvailability = new Array(timeSlots.length).fill(false);
     
-    return timeSlots.filter(slot => {
-      const slotHour = parseInt(slot.split(':')[0]);
-      return slotHour >= startHour && slotHour < endHour;
+    // Check availability for each provider and OR the results together
+    providers.forEach(provider => {
+      const availability = provider.availability[dayName];
+      if (!availability) return;
+      
+      const [start, end] = availability.split('-');
+      const startMinutes = timeToMinutes(start);
+      const endMinutes = timeToMinutes(end);
+      
+      timeSlots.forEach((slot, index) => {
+        const slotMinutes = timeToMinutes(slot);
+        if (slotMinutes >= startMinutes && slotMinutes < endMinutes) {
+          slotAvailability[index] = true;
+        }
+      });
     });
+    
+    // Get all available slots from the union of provider availabilities
+    let availableSlots = timeSlots.filter((_, index) => slotAvailability[index]);
+    
+    // FIXED: Apply same-day time cutoff with buffer for dispatch/travel
+    if (isToday(date)) {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const bufferMinutes = 45; // 45-minute buffer for dispatch + travel time
+      const cutoffMinutes = currentMinutes + bufferMinutes;
+      
+      availableSlots = availableSlots.filter(slot => {
+        const slotMinutes = timeToMinutes(slot);
+        return slotMinutes > cutoffMinutes;
+      });
+    }
+    
+    return availableSlots;
   };
 
   const calculateTotal = () => {
@@ -372,9 +433,63 @@ export default function ServiceBooking() {
 
   if (loadingService) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="loading-spinner" />
-      </div>
+      <Layout>
+        <main className="pb-6">
+          {/* Header Skeleton */}
+          <div className="mb-6">
+            <Skeleton className="h-10 w-32 mb-4" />
+            <div className="flex items-center justify-center mb-6">
+              <div className="flex items-center space-x-2 md:space-x-4">
+                <Skeleton className="w-8 h-8 rounded-full" />
+                <Skeleton className="h-1 w-8 md:w-12" />
+                <Skeleton className="w-8 h-8 rounded-full" />
+                <Skeleton className="h-1 w-8 md:w-12" />
+                <Skeleton className="w-8 h-8 rounded-full" />
+                <Skeleton className="h-1 w-8 md:w-12" />
+                <Skeleton className="w-8 h-8 rounded-full" />
+              </div>
+            </div>
+            <div className="text-center mb-6">
+              <Skeleton className="h-8 w-48 mx-auto mb-2" />
+              <Skeleton className="h-4 w-64 mx-auto" />
+            </div>
+          </div>
+          
+          {/* Service Details Skeleton */}
+          <div className="mb-6">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-start space-x-4">
+                  <Skeleton className="w-16 h-16 rounded-lg" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-5 w-32" />
+                    <Skeleton className="h-4 w-full" />
+                    <div className="flex items-center space-x-4">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-12" />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          
+          {/* Form Skeleton */}
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-40" />
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+      </Layout>
     );
   }
 
@@ -545,20 +660,37 @@ export default function ServiceBooking() {
                               className="w-full"
                               data-testid="booking-type-tabs"
                             >
-                              <TabsList className="grid w-full grid-cols-2">
-                                <TabsTrigger value="instant" className="flex items-center space-x-2">
+                              <TabsList className="grid w-full grid-cols-2 h-12">
+                                <TabsTrigger 
+                                  value="instant" 
+                                  className="flex items-center space-x-2 data-[state=active]:bg-orange-500 data-[state=active]:text-white transition-all duration-200 font-medium"
+                                >
                                   <Zap className="w-4 h-4" />
                                   <span>Instant</span>
                                 </TabsTrigger>
-                                <TabsTrigger value="scheduled" className="flex items-center space-x-2">
+                                <TabsTrigger 
+                                  value="scheduled" 
+                                  className="flex items-center space-x-2 data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all duration-200 font-medium"
+                                >
                                   <CalendarIcon className="w-4 h-4" />
                                   <span>Scheduled</span>
                                 </TabsTrigger>
                               </TabsList>
                               <TabsContent value="instant" className="mt-4">
                                 <div className="space-y-4">
-                                  <div className="flex items-start space-x-3 p-4 bg-orange-50 dark:bg-orange-950/20 rounded-lg border border-orange-200 dark:border-orange-800">
-                                    <Timer className="w-5 h-5 text-orange-500 mt-0.5" />
+                                  <motion.div 
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="flex items-start space-x-3 p-4 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-950/20 dark:to-red-950/20 rounded-lg border border-orange-200 dark:border-orange-800"
+                                  >
+                                    <div className="relative">
+                                      <Timer className="w-5 h-5 text-orange-500 mt-0.5" />
+                                      <motion.div
+                                        animate={{ scale: [1, 1.2, 1] }}
+                                        transition={{ duration: 2, repeat: Infinity }}
+                                        className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full"
+                                      />
+                                    </div>
                                     <div>
                                       <h3 className="font-medium text-orange-900 dark:text-orange-100">
                                         Get service within 30 minutes
@@ -567,13 +699,25 @@ export default function ServiceBooking() {
                                         We'll find the nearest available provider and they'll reach you ASAP.
                                         Perfect for urgent repairs or emergencies.
                                       </p>
+                                      <div className="flex items-center space-x-2 mt-2">
+                                        <Badge variant="outline" className="text-xs border-orange-300 text-orange-700">
+                                          Fast Response
+                                        </Badge>
+                                        <Badge variant="outline" className="text-xs border-orange-300 text-orange-700">
+                                          Higher Priority
+                                        </Badge>
+                                      </div>
                                     </div>
-                                  </div>
+                                  </motion.div>
                                 </div>
                               </TabsContent>
                               <TabsContent value="scheduled" className="mt-4">
                                 <div className="space-y-4">
-                                  <div className="flex items-start space-x-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                  <motion.div 
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="flex items-start space-x-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-lg border border-blue-200 dark:border-blue-800"
+                                  >
                                     <CalendarIcon className="w-5 h-5 text-blue-500 mt-0.5" />
                                     <div>
                                       <h3 className="font-medium text-blue-900 dark:text-blue-100">
@@ -583,8 +727,16 @@ export default function ServiceBooking() {
                                         Choose your preferred date and time. More providers to choose from
                                         and better rates for planned services.
                                       </p>
+                                      <div className="flex items-center space-x-2 mt-2">
+                                        <Badge variant="outline" className="text-xs border-blue-300 text-blue-700">
+                                          Better Rates
+                                        </Badge>
+                                        <Badge variant="outline" className="text-xs border-blue-300 text-blue-700">
+                                          More Options
+                                        </Badge>
+                                      </div>
                                     </div>
-                                  </div>
+                                  </motion.div>
                                 </div>
                               </TabsContent>
                             </Tabs>
@@ -730,15 +882,15 @@ export default function ServiceBooking() {
                         disabled={!form.watch('urgency') || providerSearching}
                         data-testid="find-providers"
                       >
-                        {providerSearching ? (
+                        {providerSearching || loadingProviders ? (
                           <>
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             Finding Providers...
                           </>
                         ) : (
                           <>
-                            Find Providers
-                            <Route className="w-4 h-4 ml-2" />
+                            Continue
+                            <ArrowRight className="w-4 h-4 ml-2" />
                           </>
                         )}
                       </Button>
@@ -799,8 +951,36 @@ export default function ServiceBooking() {
                                   isBefore(date, startOfToday()) || 
                                   isAfter(date, addDays(new Date(), 30))
                                 }
+                                modifiers={{
+                                  available: (date) => {
+                                    if (!providers || providers.length === 0) return false;
+                                    if (isBefore(date, startOfToday()) || isAfter(date, addDays(new Date(), 30))) return false;
+                                    const dayName = format(date, 'EEEE').toLowerCase();
+                                    return providers.some(provider => provider.availability[dayName]);
+                                  }
+                                }}
+                                modifiersStyles={{
+                                  available: {
+                                    backgroundColor: 'hsl(var(--primary))',
+                                    color: 'hsl(var(--primary-foreground))',
+                                    fontWeight: 'bold'
+                                  }
+                                }}
                                 initialFocus
                               />
+                              <div className="p-3 border-t text-xs text-muted-foreground">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2">
+                                    <div className="w-3 h-3 rounded bg-primary"></div>
+                                    <span>Providers available</span>
+                                  </div>
+                                  {providers && providers.length > 0 && (
+                                    <span className="text-primary font-medium">
+                                      {providers.filter(p => p.isOnline).length} online
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </PopoverContent>
                           </Popover>
                           <FormMessage />
@@ -826,13 +1006,78 @@ export default function ServiceBooking() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              {form.watch('scheduledDate') && 
-                                getAvailableTimeSlots(form.watch('scheduledDate')!).map((time) => (
-                                  <SelectItem key={time} value={time}>
-                                    {time}
+                              {form.watch('scheduledDate') && loadingProviders ? (
+                                <div className="p-4">
+                                  <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <span>Loading available slots...</span>
+                                  </div>
+                                </div>
+                              ) : form.watch('scheduledDate') ? (() => {
+                                const availableSlots = getAvailableTimeSlots(form.watch('scheduledDate')!);
+                                
+                                if (availableSlots.length === 0) {
+                                  if (!providers || providers.length === 0) {
+                                    return (
+                                      <div className="p-4 text-center">
+                                        <AlertTriangle className="w-6 h-6 text-amber-500 mx-auto mb-2" />
+                                        <p className="text-sm text-muted-foreground font-medium">
+                                          No providers available
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          Please try selecting a different date
+                                        </p>
+                                      </div>
+                                    );
+                                  } else if (isToday(form.watch('scheduledDate')!)) {
+                                    return (
+                                      <div className="p-4 text-center">
+                                        <Clock className="w-6 h-6 text-blue-500 mx-auto mb-2" />
+                                        <p className="text-sm text-muted-foreground font-medium">
+                                          No slots available for today
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          Try tomorrow or select a different date
+                                        </p>
+                                      </div>
+                                    );
+                                  } else {
+                                    return (
+                                      <div className="p-4 text-center">
+                                        <Calendar className="w-6 h-6 text-gray-500 mx-auto mb-2" />
+                                        <p className="text-sm text-muted-foreground font-medium">
+                                          No slots available on this date
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          Providers are not working on this day
+                                        </p>
+                                      </div>
+                                    );
+                                  }
+                                }
+                                
+                                return availableSlots.map((time) => (
+                                  <SelectItem 
+                                    key={time} 
+                                    value={time}
+                                    data-testid={`time-slot-${time}`}
+                                  >
+                                    <div className="flex items-center justify-between w-full">
+                                      <span>{time}</span>
+                                      <Badge variant="secondary" className="ml-2 text-xs">
+                                        Available
+                                      </Badge>
+                                    </div>
                                   </SelectItem>
-                                ))
-                              }
+                                ));
+                              })() : (
+                                <div className="p-4 text-center">
+                                  <CalendarIcon className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+                                  <p className="text-sm text-muted-foreground">
+                                    Select a date to see available times
+                                  </p>
+                                </div>
+                              )}
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -1074,7 +1319,14 @@ export default function ServiceBooking() {
                     disabled={createServiceBookingMutation.isPending}
                     data-testid="confirm-booking"
                   >
-                    {createServiceBookingMutation.isPending ? 'Booking...' : 'Confirm Booking'}
+                    {createServiceBookingMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating Booking...
+                      </>
+                    ) : (
+                      'Confirm Booking'
+                    )}
                   </Button>
                 </div>
               </form>
