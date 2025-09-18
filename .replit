@@ -16,10 +16,6 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 37405
-externalPort = 3000
-
-[[ports]]
 localPort = 38119
 externalPort = 4200
 
@@ -74,10 +70,10 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "NODE_ENV=development ALLOW_DEV_AUTH=true JWT_SECRET_KEY=dev-jwt-key-12345 npm run dev"
+waitForPort = 5000
