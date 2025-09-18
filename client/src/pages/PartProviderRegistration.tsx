@@ -64,14 +64,25 @@ const personalDetailsSchema = z.object({
 });
 
 const businessDetailsSchema = z.object({
-  description: z.string().min(50, 'Business description must be at least 50 characters'),
-  experience: z.number().min(0, 'Experience must be 0 or more years').max(50, 'Experience cannot exceed 50 years'),
+  businessAddress: z.object({
+    street: z.string().min(1, 'Street address is required'),
+    city: z.string().min(1, 'City is required'),
+    state: z.string().min(1, 'State is required'),
+    pincode: z.string().min(6, 'Valid pincode is required').max(6, 'Pincode must be 6 digits'),
+    country: z.string().default('India'),
+  }),
   gstNumber: z.string().optional(),
   panNumber: z.string().optional(),
-  minOrderValue: z.number().min(0, 'Minimum order value must be 0 or more'),
-  maxOrderValue: z.number().min(0, 'Maximum order value must be 0 or more'),
-  processingTime: z.number().min(1, 'Processing time must be at least 1 hour').max(720, 'Processing time cannot exceed 720 hours'),
-  shippingAreas: z.array(z.string()).min(1, 'Please add at least one shipping area'),
+  bankAccountNumber: z.string().optional(),
+  bankName: z.string().optional(),
+  bankBranch: z.string().optional(),
+  ifscCode: z.string().optional(),
+  accountHolderName: z.string().optional(),
+  minOrderValue: z.number().min(0, 'Minimum order value must be 0 or more').default(0),
+  maxOrderValue: z.number().min(0, 'Maximum order value must be 0 or more').optional(),
+  processingTime: z.number().min(1, 'Processing time must be at least 1 hour').default(24),
+  shippingAreas: z.array(z.string()).default([]),
+  paymentTerms: z.enum(['immediate', '15_days', '30_days', '45_days']).default('immediate'),
 });
 
 const inventorySchema = z.object({
@@ -220,14 +231,25 @@ export default function PartProviderRegistration() {
   const businessForm = useForm<BusinessDetailsForm>({
     resolver: zodResolver(businessDetailsSchema),
     defaultValues: {
-      description: '',
-      experience: 0,
+      businessAddress: {
+        street: '',
+        city: user?.location?.city || '',
+        state: '',
+        pincode: user?.location?.pincode || '',
+        country: 'India',
+      },
       gstNumber: '',
       panNumber: '',
-      minOrderValue: 500,
-      maxOrderValue: 100000,
+      bankAccountNumber: '',
+      bankName: '',
+      bankBranch: '',
+      ifscCode: '',
+      accountHolderName: '',
+      minOrderValue: 0,
+      maxOrderValue: undefined,
       processingTime: 24,
       shippingAreas: [],
+      paymentTerms: 'immediate',
     },
   });
 
@@ -286,15 +308,17 @@ export default function PartProviderRegistration() {
   // Final registration mutation
   const registerMutation = useMutation({
     mutationFn: async (data: any) => {
-      const response = await apiRequest('POST', '/api/v1/parts-provider/apply', data);
-      return response.json();
+      return await apiRequest('POST', '/api/v1/parts-provider/register', data);
     },
     onSuccess: () => {
       toast({
         title: 'Registration successful!',
         description: 'Your parts provider application has been submitted for verification.',
       });
-      setLocation('/provider-pending');
+      // Invalidate user profile to update role
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/auth/me'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/profile'] });
+      setLocation('/parts-provider-pending');
     },
     onError: (error: any) => {
       toast({
@@ -350,21 +374,47 @@ export default function PartProviderRegistration() {
   const handleFinalSubmit = async () => {
     setIsSubmitting(true);
     
-    const personalData = personalForm.getValues();
-    const businessData = businessForm.getValues();
-    const inventoryData = inventoryForm.getValues();
-    
-    const registrationData = {
-      ...personalData,
-      ...businessData,
-      partsCategories: inventoryData.selectedCategories,
-      specializations: inventoryData.specializations,
-      brandsDeal: inventoryData.brandsDeal,
-      qualityCertifications: inventoryData.qualityCertifications,
-    };
+    try {
+      // Check if required documents are uploaded before proceeding
+      if (!getRequiredDocumentsStatus()) {
+        toast({
+          title: 'Missing Required Documents',
+          description: 'Please upload all required documents before submitting your application.',
+          variant: 'destructive',
+        });
+        setIsSubmitting(false);
+        return;
+      }
 
-    registerMutation.mutate(registrationData);
-    setIsSubmitting(false);
+      const personalData = personalForm.getValues();
+      const businessData = businessForm.getValues();
+      
+      // Format data to match exact backend schema - only include accepted fields
+      const registrationData = {
+        businessName: personalData.businessName,
+        businessType: personalData.businessType,
+        businessAddress: businessData.businessAddress,
+        gstNumber: businessData.gstNumber || undefined,
+        panNumber: businessData.panNumber || undefined,
+        bankAccountNumber: businessData.bankAccountNumber || undefined,
+        bankName: businessData.bankName || undefined,
+        bankBranch: businessData.bankBranch || undefined,
+        ifscCode: businessData.ifscCode || undefined,
+        accountHolderName: businessData.accountHolderName || undefined,
+        minOrderValue: businessData.minOrderValue,
+        maxOrderValue: businessData.maxOrderValue,
+        processingTime: businessData.processingTime,
+        shippingAreas: businessData.shippingAreas,
+        paymentTerms: businessData.paymentTerms,
+      };
+
+      // Validate the complete registration data against backend schema
+      await registerMutation.mutateAsync(registrationData);
+    } catch (error) {
+      console.error('Registration submission error:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Check if user is eligible for registration
