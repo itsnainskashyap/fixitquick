@@ -222,13 +222,7 @@ export default function Home() {
           className="mb-6"
         >
           <div className="flex space-x-3 overflow-x-auto pb-2">
-            <Button
-              onClick={() => setLocation('/services')}
-              className="flex-shrink-0"
-              data-testid="book-now-button"
-            >
-              Book Now
-            </Button>
+            {/* Book Now button removed as requested */}
             <Button
               variant="secondary"
               onClick={() => setLocation('/orders')}
@@ -324,20 +318,7 @@ export default function Home() {
                   <p className="text-xs text-muted-foreground mt-1 text-center line-clamp-2 leading-tight">
                     {category.description || 'Professional service'}
                   </p>
-                  <div className="flex gap-1 mt-2 justify-center">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-xs px-2 py-1 h-6"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleInstantBooking(category.id, category.name);
-                      }}
-                      data-testid={`instant-book-${category.id}`}
-                    >
-                      Book Now
-                    </Button>
-                  </div>
+                  {/* Book Now button removed as requested */}
                 </motion.div>
               ))}
             </div>

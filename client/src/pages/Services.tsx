@@ -103,9 +103,11 @@ export default function Services() {
   const loadCategoryPath = async (categoryId: string) => {
     try {
       const path = await apiRequest('GET', `/api/v1/categories/${categoryId}/path`);
-      setSelectedCategoryPath(path);
+      // Ensure path is always an array to prevent .map errors
+      setSelectedCategoryPath(Array.isArray(path) ? path : []);
     } catch (error) {
       console.error('Error loading category path:', error);
+      setSelectedCategoryPath([]);
     }
   };
 

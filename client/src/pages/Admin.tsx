@@ -6588,7 +6588,11 @@ export default function Admin() {
               {servicesList && servicesList.length > 0 ? (
                 <div className="grid gap-4">
                   {filteredServices.map((service: Service) => {
-                    const category = Array.isArray(mainCategories) ? mainCategories.find(c => c.id === service.categoryId) : null;
+                    // Fix: Search in both main categories and subcategories  
+                    const category = Array.isArray(mainCategories) 
+                      ? mainCategories.find(c => c.id === service.categoryId) || 
+                        (Array.isArray(adminCategories) ? adminCategories.find(c => c.id === service.categoryId) : null)
+                      : null;
                     return (
                       <Card key={service.id} className="transition-all duration-200 hover:shadow-lg">
                         <CardContent className="p-6">
@@ -7601,6 +7605,11 @@ export default function Admin() {
                       {Array.isArray(mainCategories) ? mainCategories.map((category) => (
                         <SelectItem key={category.id} value={category.id}>
                           {category.icon} {category.name}
+                        </SelectItem>
+                      )) : null}
+                      {Array.isArray(adminCategories) ? adminCategories.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.icon} {category.name} (Sub)
                         </SelectItem>
                       )) : null}
                     </SelectContent>
