@@ -174,10 +174,16 @@ export default function ServiceBooking() {
   const { user } = useAuth();
   const { toast } = useToast();
   
-  // Get URL parameters for instant booking
+  // Get URL parameters for booking type and detect category context
   const urlParams = new URLSearchParams(window.location.search);
   const bookingTypeFromUrl = urlParams.get('type') as 'instant' | 'scheduled' | null;
   const urgencyFromUrl = urlParams.get('urgency') as 'low' | 'normal' | 'high' | 'urgent' | null;
+  
+  // Check if user came from category navigation (no instant booking allowed)
+  const isFromCategory = !bookingTypeFromUrl || urlParams.get('category') !== null;
+  
+  // Force scheduled booking when coming from categories per requirements
+  const forcedBookingType = isFromCategory ? 'scheduled' : (bookingTypeFromUrl || 'instant');
   
   // Enhanced state management
   const [step, setStep] = useState(0); // Start with step 0 for booking type selection
@@ -195,7 +201,7 @@ export default function ServiceBooking() {
   const form = useForm<BookingFormData>({
     resolver: zodResolver(bookingSchema),
     defaultValues: {
-      bookingType: bookingTypeFromUrl || 'instant',
+      bookingType: forcedBookingType,
       urgency: urgencyFromUrl || 'normal',
       phone: user?.phone || '',
       notes: '',

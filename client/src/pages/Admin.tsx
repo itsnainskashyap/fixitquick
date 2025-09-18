@@ -4393,16 +4393,20 @@ export default function Admin() {
   });
   const pendingPartsProviders = (pendingPartsProvidersResponse as any)?.data || [];
 
-  // Fetch category hierarchy
-  const { data: categoryHierarchyResponse } = useQuery({
+  // Fetch category hierarchy with error handling
+  const { data: categoryHierarchyResponse, isLoading: categoryHierarchyLoading, error: categoryHierarchyError } = useQuery({
     queryKey: ['/api/v1/service-categories', 'tree'],
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/v1/categories/tree');
       return response.data || response; // Handle envelope format
     },
     enabled: !!user,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
-  const categoryHierarchy = (categoryHierarchyResponse as any)?.data || categoryHierarchyResponse || [];
+  const categoryHierarchy = Array.isArray(categoryHierarchyResponse) 
+    ? categoryHierarchyResponse 
+    : (categoryHierarchyResponse as any)?.data || [];
 
   // Fetch main categories
   const { data: mainCategoriesResponse, isLoading: mainCategoriesLoading } = useQuery({
@@ -6450,9 +6454,44 @@ export default function Admin() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {categoryHierarchy && categoryHierarchy.length > 0 ? (
+                  {categoryHierarchyError ? (
+                    <div className="p-4 border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/50 rounded-lg">
+                      <div className="flex items-center gap-2 text-red-600 dark:text-red-400 mb-2">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="font-medium">Failed to load category hierarchy</span>
+                      </div>
+                      <p className="text-sm text-red-600/80 dark:text-red-400/80">
+                        {categoryHierarchyError instanceof Error ? categoryHierarchyError.message : 'Unknown error occurred'}
+                      </p>
+                    </div>
+                  ) : categoryHierarchyLoading ? (
+                    <div className="space-y-3">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="border rounded-lg p-3 animate-pulse">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-6 h-6 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                              <div className="w-4 h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                              <div className="w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <div className="w-12 h-5 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                              <div className="w-16 h-5 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : categoryHierarchy && Array.isArray(categoryHierarchy) && categoryHierarchy.length > 0 ? (
                     <div className="space-y-2">
-                      {categoryHierarchy.map((category: any) => (
+                      {categoryHierarchy.map((category: any) => {
+                        // Defensive checks for category data
+                        if (!category || !category.id || !category.name) {
+                          console.warn('Invalid category data in Admin:', category);
+                          return null;
+                        }
+                        
+                        return (
                         <div key={category.id} className="border rounded-lg p-3">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center space-x-3">
@@ -6483,10 +6522,10 @@ export default function Admin() {
                             </div>
                             <div className="flex items-center space-x-2">
                               <Badge variant="secondary" className="text-xs">
-                                {category.subCategoriesCount || 0} sub
+                                {category.children?.length || 0} sub
                               </Badge>
                               <Badge variant="secondary" className="text-xs">
-                                {category.servicesCount || 0} services
+                                {category.serviceCount || 0} services
                               </Badge>
                               <Button
                                 variant="ghost"
@@ -6546,7 +6585,8 @@ export default function Admin() {
                             </div>
                           )}
                         </div>
-                      ))}
+                        );
+                      }).filter(Boolean)}
                     </div>
                   ) : (
                     <div className="text-center py-12">

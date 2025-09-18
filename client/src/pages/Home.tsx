@@ -99,8 +99,8 @@ export default function Home() {
   };
 
   const handleInstantBooking = (categoryId: string, categoryName: string) => {
-    // Navigate directly to services with instant booking enabled for this category
-    setLocation(`/services?category=${categoryId}&instant=true`);
+    // Navigate directly to services with scheduled booking only for this category
+    setLocation(`/services?category=${categoryId}`);
   };
 
 

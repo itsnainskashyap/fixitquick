@@ -1788,7 +1788,33 @@ export class PostgresStorage implements IStorage {
       })
     );
     
-    return categoriesWithCounts;
+    // Step 3: Build hierarchical tree structure with children arrays
+    const categoryMap = new Map<string, ServiceCategory & { children?: ServiceCategory[] }>();
+    const rootCategories: ServiceCategory[] = [];
+    
+    // Create a map of all categories with children arrays
+    categoriesWithCounts.forEach(category => {
+      categoryMap.set(category.id, {
+        ...category,
+        children: []
+      });
+    });
+    
+    // Build tree structure: assign children to parents and collect root categories
+    categoriesWithCounts.forEach(category => {
+      const categoryWithChildren = categoryMap.get(category.id)!;
+      
+      if (category.parentId && categoryMap.has(category.parentId)) {
+        // This is a child category - add it to parent's children array
+        const parent = categoryMap.get(category.parentId)!;
+        parent.children!.push(categoryWithChildren);
+      } else if (category.level === 0) {
+        // This is a root category - add it to root categories array
+        rootCategories.push(categoryWithChildren);
+      }
+    });
+    
+    return rootCategories;
   }
 
   async getCategoryPath(categoryId: string): Promise<ServiceCategory[]> {

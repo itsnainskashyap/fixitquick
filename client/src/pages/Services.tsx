@@ -84,7 +84,6 @@ export default function Services() {
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
   const categoryFromUrl = urlParams.get('category');
-  const instantFromUrl = urlParams.get('instant');
 
   useEffect(() => {
     if (categoryFromUrl && categoryFromUrl !== 'all') {
@@ -96,9 +95,9 @@ export default function Services() {
       setSelectedCategoryPath([]);
     }
     
-    // Enable instant booking mode if specified in URL
-    setInstantBookingEnabled(instantFromUrl === 'true');
-  }, [categoryFromUrl, instantFromUrl]);
+    // Categories always use scheduled booking only
+    setInstantBookingEnabled(false);
+  }, [categoryFromUrl]);
 
   // Load category breadcrumb path
   const loadCategoryPath = async (categoryId: string) => {
@@ -110,31 +109,34 @@ export default function Services() {
     }
   };
 
-  // Fetch hierarchical category tree
-  const { data: categoryTree, isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
+  // Fetch hierarchical category tree with error handling
+  const { data: categoryTree, isLoading: loadingCategories, error: categoryTreeError } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/categories/tree'],
     staleTime: 5 * 60 * 1000, // 5 minutes cache
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
-  // Fetch main categories (root level)
-  const { data: mainCategories, isLoading: loadingMainCategories } = useQuery<ServiceCategory[]>({
+  // Fetch main categories (root level) with error handling
+  const { data: mainCategories, isLoading: loadingMainCategories, error: mainCategoriesError } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/services/categories/main'],
     staleTime: 5 * 60 * 1000,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
-  // Fetch services based on selected category
-  const { data: services, isLoading: loadingServices } = useQuery<Service[]>({
+  // Fetch services based on selected category with error handling
+  const { data: services, isLoading: loadingServices, error: servicesError } = useQuery<Service[]>({
     queryKey: ['/api/v1/services', selectedCategory, sortBy, priceRange, searchQuery],
     staleTime: 2 * 60 * 1000, // 2 minutes cache
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
   const handleServiceBook = (serviceId: string) => {
-    // If instant booking is enabled, go directly to instant booking
-    if (instantBookingEnabled) {
-      setLocation(`/services/${serviceId}/book?type=instant&urgency=normal`);
-    } else {
-      setLocation(`/services/${serviceId}/book`);
-    }
+    // Categories always use scheduled booking only
+    // Instant booking is disabled from category navigation per requirements
+    setLocation(`/services/${serviceId}/book`);
   };
 
   const handleAddToCart = (serviceId: string) => {
@@ -180,49 +182,21 @@ export default function Services() {
     selectCategory(categoryId);
   };
 
-  // Build hierarchical tree structure from flat category array
-  const buildCategoryTree = (categories: ServiceCategory[]): CategoryTreeNode[] => {
-    const categoryMap = new Map<string, CategoryTreeNode>();
-    const rootCategories: CategoryTreeNode[] = [];
-
-    // Create map of all categories
-    categories.forEach(category => {
-      categoryMap.set(category.id, {
-        ...category,
-        children: [],
-        expanded: expandedCategories.has(category.id),
-      });
-    });
-
-    // Build tree structure
-    categories.forEach(category => {
-      const treeNode = categoryMap.get(category.id);
-      if (!treeNode) return;
-
-      if (!category.parentId) {
-        rootCategories.push(treeNode);
-      } else {
-        const parent = categoryMap.get(category.parentId);
-        if (parent) {
-          parent.children.push(treeNode);
-        }
-      }
-    });
-
-    // Sort by sortOrder within each level
-    const sortChildren = (nodes: CategoryTreeNode[]) => {
-      nodes.sort((a, b) => a.sortOrder - b.sortOrder);
-      nodes.forEach(node => sortChildren(node.children));
-    };
-
-    sortChildren(rootCategories);
-    return rootCategories;
+  // Process hierarchical category tree (API now returns proper tree structure)
+  const processCategories = (categories: ServiceCategory[]): CategoryTreeNode[] => {
+    if (!categories || !Array.isArray(categories)) return [];
+    
+    return categories.map(category => ({
+      ...category,
+      children: category.children ? processCategories(category.children) : [],
+      expanded: expandedCategories.has(category.id),
+    }));
   };
 
-  // Memoized category tree
+  // Memoized category tree with defensive checks
   const categoryTreeStructure = useMemo(() => {
-    if (!categoryTree) return [];
-    return buildCategoryTree(categoryTree);
+    if (!categoryTree || !Array.isArray(categoryTree)) return [];
+    return processCategories(categoryTree);
   }, [categoryTree, expandedCategories]);
 
   // Filter categories for search
@@ -473,8 +447,50 @@ export default function Services() {
           </Card>
         </motion.div>
 
+        {/* Error handling for category data */}
+        {(categoryTreeError || mainCategoriesError || servicesError) && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/50">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                  <AlertCircle className="w-4 h-4" />
+                  <span className="font-medium">Failed to load data</span>
+                </div>
+                <p className="text-sm text-red-600/80 dark:text-red-400/80 mt-1">
+                  {categoryTreeError ? 'Failed to load category tree. ' : ''}
+                  {mainCategoriesError ? 'Failed to load main categories. ' : ''}
+                  {servicesError ? 'Failed to load services. ' : ''}
+                  Please try refreshing the page.
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Loading state for categories */}
+        {(loadingCategories || loadingMainCategories) && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Loading categories...</span>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
         {/* Quick Category Access (Main Categories) */}
-        {mainCategories && mainCategories.length > 0 && (
+        {mainCategories && Array.isArray(mainCategories) && mainCategories.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -518,25 +534,33 @@ export default function Services() {
                   scrollSnapType: 'x proximity'
                 }}
               >
-                {mainCategories.slice(0, 8).map((category) => (
-                  <Button
-                    key={category.id}
-                    variant={selectedCategory === category.id ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => selectCategory(category.id)}
-                    className="flex items-center gap-2 flex-shrink-0 scroll-snap-align-start"
-                    data-testid={`quick-category-${category.id}`}
-                    style={{ scrollSnapAlign: 'start' }}
-                  >
-                    <span>{category.icon}</span>
-                    {category.name}
-                    {category.serviceCount && category.serviceCount > 0 && (
-                      <Badge variant="secondary" className="text-xs">
-                        {category.serviceCount}
-                      </Badge>
-                    )}
-                  </Button>
-                ))}
+                {mainCategories.slice(0, 8).map((category) => {
+                  // Defensive checks for category data
+                  if (!category || !category.id || !category.name) {
+                    console.warn('Invalid category data:', category);
+                    return null;
+                  }
+                  
+                  return (
+                    <Button
+                      key={category.id}
+                      variant={selectedCategory === category.id ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => selectCategory(category.id)}
+                      className="flex items-center gap-2 flex-shrink-0 scroll-snap-align-start"
+                      data-testid={`quick-category-${category.id}`}
+                      style={{ scrollSnapAlign: 'start' }}
+                    >
+                      {category.icon && <span>{category.icon}</span>}
+                      {category.name}
+                      {category.serviceCount && category.serviceCount > 0 && (
+                        <Badge variant="secondary" className="text-xs">
+                          {category.serviceCount}
+                        </Badge>
+                      )}
+                    </Button>
+                  );
+                }).filter(Boolean)}
               </div>
             </div>
           </motion.div>
@@ -646,6 +670,7 @@ export default function Services() {
                       onBook={handleServiceBook}
                       onAddToCart={handleAddToCart}
                       variant={viewMode === 'grid' ? 'compact' : 'default'}
+                      context='category'
                     />
                   </motion.div>
                 ))

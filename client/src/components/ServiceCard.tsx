@@ -22,6 +22,7 @@ interface ServiceCardProps {
   variant?: 'default' | 'compact' | 'featured';
   showBookButton?: boolean;
   showAddToCart?: boolean;
+  context?: 'category' | 'direct'; // New prop to detect category context
 }
 
 // Helper component to render service icon with proper size handling
@@ -100,6 +101,7 @@ export function ServiceCard({
   variant = 'default',
   showBookButton = true,
   showAddToCart = true,
+  context = 'direct', // Default to direct access
 }: ServiceCardProps) {
   const handleBook = () => {
     if (isAvailable && onBook) {
@@ -222,7 +224,7 @@ export function ServiceCard({
                       className="flex-1"
                       data-testid={`book-${id}`}
                     >
-                      Book Now
+                      {context === 'category' ? 'Schedule Service' : 'Book Now'}
                     </Button>
                   )}
                 </div>
@@ -301,7 +303,7 @@ export function ServiceCard({
               className="text-xs px-3 py-1"
               data-testid={`book-${id}`}
             >
-              Book
+              {context === 'category' ? 'Schedule' : 'Book'}
             </Button>
           )}
         </div>
