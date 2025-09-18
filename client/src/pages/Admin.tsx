@@ -1645,7 +1645,7 @@ const TaxManagementSystem = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {mainCategories?.data?.map((category: any) => (
+                    {mainCategories?.map((category: any) => (
                       <div key={category.id} className="border rounded-lg p-4 bg-background hover:bg-muted/50 transition-colors">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
