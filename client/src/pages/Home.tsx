@@ -98,6 +98,11 @@ export default function Home() {
     setLocation(`/categories/${categoryId}/subcategories`);
   };
 
+  const handleInstantBooking = (categoryId: string, categoryName: string) => {
+    // Navigate directly to services with instant booking enabled for this category
+    setLocation(`/services?category=${categoryId}&instant=true`);
+  };
+
 
 
 
@@ -319,6 +324,20 @@ export default function Home() {
                   <p className="text-xs text-muted-foreground mt-1 text-center line-clamp-2 leading-tight">
                     {category.description || 'Professional service'}
                   </p>
+                  <div className="flex gap-1 mt-2 justify-center">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs px-2 py-1 h-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleInstantBooking(category.id, category.name);
+                      }}
+                      data-testid={`instant-book-${category.id}`}
+                    >
+                      Book Now
+                    </Button>
+                  </div>
                 </motion.div>
               ))}
             </div>

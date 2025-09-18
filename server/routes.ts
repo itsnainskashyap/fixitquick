@@ -3870,10 +3870,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const categoryId = req.params.categoryId;
       const subcategories = await storage.getSubcategories(categoryId);
-      res.json({
-        success: true,
-        data: subcategories
-      });
+      // Return direct array for frontend compatibility
+      res.json(subcategories);
     } catch (error) {
       console.error('Error fetching subcategories:', error);
       res.status(500).json({ message: 'Failed to fetch subcategories' });
@@ -3891,10 +3889,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxDepth ? parseInt(maxDepth as string) : undefined,
         activeOnly === 'true'
       );
-      res.json({
-        success: true,
-        data: tree
-      });
+      // Return direct array for frontend compatibility
+      res.json(tree);
     } catch (error) {
       console.error('Error fetching category tree:', error);
       res.status(500).json({
@@ -4285,17 +4281,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Category hierarchy validation helper
+  const validateCategoryHierarchy = async (categoryId: string): Promise<{ valid: boolean; message?: string }> => {
+    const category = await storage.getServiceCategory(categoryId);
+    if (!category) {
+      return { valid: false, message: 'Category not found' };
+    }
+    
+    // For 2-level hierarchy: Main categories (level 0) are mandatory, sub-categories (level 1) are optional
+    if (category.level > 1) {
+      return { valid: false, message: 'Invalid category level. Only main categories (level 0) and sub-categories (level 1) are allowed' };
+    }
+    
+    // If it's a sub-category (level 1), ensure parent exists and is level 0
+    if (category.level === 1 && category.parentId) {
+      const parentCategory = await storage.getServiceCategory(category.parentId);
+      if (!parentCategory) {
+        return { valid: false, message: 'Parent category not found' };
+      }
+      if (parentCategory.level !== 0) {
+        return { valid: false, message: 'Parent must be a main category (level 0)' };
+      }
+    }
+    
+    return { valid: true };
+  };
+
   // POST /api/v1/admin/services - Create new service
   app.post('/api/v1/admin/services', adminSessionMiddleware, async (req, res) => {
     try {
       const validatedData = serviceCreateSchema.parse(req.body);
       
-      // Verify category exists
-      const category = await storage.getServiceCategory(validatedData.categoryId);
-      if (!category) {
+      // Verify category exists and validate hierarchy
+      const hierarchyValidation = await validateCategoryHierarchy(validatedData.categoryId);
+      if (!hierarchyValidation.valid) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid category ID'
+          message: `Category validation failed: ${hierarchyValidation.message}`
         });
       }
 

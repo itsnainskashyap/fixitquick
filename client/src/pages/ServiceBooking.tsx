@@ -174,6 +174,11 @@ export default function ServiceBooking() {
   const { user } = useAuth();
   const { toast } = useToast();
   
+  // Get URL parameters for instant booking
+  const urlParams = new URLSearchParams(window.location.search);
+  const bookingTypeFromUrl = urlParams.get('type') as 'instant' | 'scheduled' | null;
+  const urgencyFromUrl = urlParams.get('urgency') as 'low' | 'normal' | 'high' | 'urgent' | null;
+  
   // Enhanced state management
   const [step, setStep] = useState(0); // Start with step 0 for booking type selection
   const [createdBookingId, setCreatedBookingId] = useState<string | null>(null);
@@ -190,13 +195,20 @@ export default function ServiceBooking() {
   const form = useForm<BookingFormData>({
     resolver: zodResolver(bookingSchema),
     defaultValues: {
-      bookingType: 'instant',
-      urgency: 'normal',
+      bookingType: bookingTypeFromUrl || 'instant',
+      urgency: urgencyFromUrl || 'normal',
       phone: user?.phone || '',
       notes: '',
       paymentMethod: 'online',
     },
   });
+  
+  // Auto-advance to step 1 if we have instant booking parameters
+  useEffect(() => {
+    if (bookingTypeFromUrl === 'instant' && urgencyFromUrl && serviceLocation) {
+      setStep(1); // Skip booking type selection and go straight to details
+    }
+  }, [bookingTypeFromUrl, urgencyFromUrl, serviceLocation]);
 
   const bookingType = form.watch('bookingType');
 

@@ -65,6 +65,7 @@ export default function Services() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCategoryTree, setShowCategoryTree] = useState(false);
+  const [instantBookingEnabled, setInstantBookingEnabled] = useState(false);
 
   // Horizontal scrolling for Quick Access categories
   const {
@@ -83,6 +84,7 @@ export default function Services() {
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
   const categoryFromUrl = urlParams.get('category');
+  const instantFromUrl = urlParams.get('instant');
 
   useEffect(() => {
     if (categoryFromUrl && categoryFromUrl !== 'all') {
@@ -93,7 +95,10 @@ export default function Services() {
       setSelectedCategory('all');
       setSelectedCategoryPath([]);
     }
-  }, [categoryFromUrl]);
+    
+    // Enable instant booking mode if specified in URL
+    setInstantBookingEnabled(instantFromUrl === 'true');
+  }, [categoryFromUrl, instantFromUrl]);
 
   // Load category breadcrumb path
   const loadCategoryPath = async (categoryId: string) => {
@@ -124,7 +129,12 @@ export default function Services() {
   });
 
   const handleServiceBook = (serviceId: string) => {
-    setLocation(`/services/${serviceId}/book`);
+    // If instant booking is enabled, go directly to instant booking
+    if (instantBookingEnabled) {
+      setLocation(`/services/${serviceId}/book?type=instant&urgency=normal`);
+    } else {
+      setLocation(`/services/${serviceId}/book`);
+    }
   };
 
   const handleAddToCart = (serviceId: string) => {
