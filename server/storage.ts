@@ -193,7 +193,7 @@ import {
 } from "@shared/schema";
 
 // Single typed combinator utility for WHERE conditions
-function whereAll(...conditions: Array<SQL<boolean> | undefined>): SQL<boolean> | undefined {
+function whereAll(...conditions: Array<SQL<boolean> | SQL<unknown> | undefined>): SQL<boolean> | undefined {
   const validConditions = conditions.filter(Boolean) as SQL<boolean>[];
   if (validConditions.length === 0) {
     return undefined;
@@ -1940,15 +1940,15 @@ export class PostgresStorage implements IStorage {
   async getServices(filters?: { categoryId?: string; isActive?: boolean; isTestService?: boolean }): Promise<Service[]> {
     let baseQuery = db.select().from(services);
     
-    const conditions: SQL[] = [];
+    const conditions: Array<SQL<boolean> | undefined> = [];
     if (filters?.isActive !== undefined) {
-      conditions.push(eq(services.isActive, filters.isActive));
+      conditions.push(eq(services.isActive, filters.isActive) as SQL<boolean>);
     }
     if (filters?.categoryId && filters.categoryId !== 'all') {
-      conditions.push(eq(services.categoryId, filters.categoryId));
+      conditions.push(eq(services.categoryId, filters.categoryId) as SQL<boolean>);
     }
     if (filters?.isTestService !== undefined) {
-      conditions.push(eq(services.isTestService, filters.isTestService));
+      conditions.push(eq(services.isTestService, filters.isTestService) as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
@@ -2194,7 +2194,7 @@ export class PostgresStorage implements IStorage {
         taxes: typeof order.meta.taxes === 'number' ? order.meta.taxes : Number(order.meta.taxes) || 0,
         notes: typeof order.meta.notes === 'string' ? order.meta.notes : String(order.meta.notes || ''),
         customerNotes: typeof order.meta.customerNotes === 'string' ? order.meta.customerNotes : String(order.meta.customerNotes || ''),
-        specialRequirements: typeof order.meta.specialRequirements === 'string' ? order.meta.specialRequirements : String(order.meta.specialRequirements || ''),
+        specialRequirements: Array.isArray(order.meta.specialRequirements) ? order.meta.specialRequirements : typeof order.meta.specialRequirements === 'string' ? [order.meta.specialRequirements] : [],
         urgencyLevel: typeof order.meta.urgencyLevel === 'string' ? order.meta.urgencyLevel : String(order.meta.urgencyLevel || ''),
         paymentMethod: typeof order.meta.paymentMethod === 'string' ? order.meta.paymentMethod : String(order.meta.paymentMethod || ''),
         paymentStatus: typeof order.meta.paymentStatus === 'string' ? order.meta.paymentStatus : String(order.meta.paymentStatus || ''),
@@ -2217,7 +2217,7 @@ export class PostgresStorage implements IStorage {
         taxes: typeof data.meta.taxes === 'number' ? data.meta.taxes : Number(data.meta.taxes) || 0,
         notes: typeof data.meta.notes === 'string' ? data.meta.notes : String(data.meta.notes || ''),
         customerNotes: typeof data.meta.customerNotes === 'string' ? data.meta.customerNotes : String(data.meta.customerNotes || ''),
-        specialRequirements: typeof data.meta.specialRequirements === 'string' ? data.meta.specialRequirements : String(data.meta.specialRequirements || ''),
+        specialRequirements: Array.isArray(data.meta.specialRequirements) ? data.meta.specialRequirements : typeof data.meta.specialRequirements === 'string' ? [data.meta.specialRequirements] : [],
         urgencyLevel: typeof data.meta.urgencyLevel === 'string' ? data.meta.urgencyLevel : String(data.meta.urgencyLevel || ''),
         paymentMethod: typeof data.meta.paymentMethod === 'string' ? data.meta.paymentMethod : String(data.meta.paymentMethod || ''),
         paymentStatus: typeof data.meta.paymentStatus === 'string' ? data.meta.paymentStatus : String(data.meta.paymentStatus || ''),
@@ -2841,13 +2841,13 @@ export class PostgresStorage implements IStorage {
     
     const conditions: Array<SQL<boolean> | undefined> = [];
     if (filters?.categoryId) {
-      conditions.push(eq(serviceProviders.categoryId, filters.categoryId));
+      conditions.push(eq(serviceProviders.categoryId, filters.categoryId) as SQL<boolean>);
     }
     if (filters?.isVerified !== undefined) {
-      conditions.push(eq(serviceProviders.isVerified, filters.isVerified));
+      conditions.push(eq(serviceProviders.isVerified, filters.isVerified) as SQL<boolean>);
     }
     if (filters?.verificationStatus) {
-      conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus as ServiceProviderVerificationStatusType));
+      conditions.push(eq(serviceProviders.verificationStatus, filters.verificationStatus as ServiceProviderVerificationStatusType) as SQL<boolean>);
     }
     
     const whereClause = whereAll(...conditions);
