@@ -3358,7 +3358,45 @@ export const providerPhoneNotificationSettings = pgTable("provider_phone_notific
   activeIdx: index("ppns_active_idx").on(table.isActive),
 }));
 
+// Service requests table for user suggestions of new services
+export const serviceRequests = pgTable("service_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  
+  // Service request details
+  name: varchar("name").notNull(),
+  description: text("description").notNull(),
+  categoryId: varchar("category_id").references(() => serviceCategories.id),
+  estimatedPrice: varchar("estimated_price"), // User's price estimate as text
+  urgency: varchar("urgency", { enum: ["low", "medium", "high"] }).default("medium"),
+  contactInfo: varchar("contact_info").notNull(),
+  location: varchar("location"),
+  
+  // Admin processing
+  status: varchar("status", { enum: ["pending", "under_review", "approved", "rejected", "implemented"] }).default("pending"),
+  adminNotes: text("admin_notes"), // Admin's internal notes
+  adminResponse: text("admin_response"), // Response sent to user
+  reviewedBy: varchar("reviewed_by").references(() => users.id), // Admin who reviewed
+  reviewedAt: timestamp("reviewed_at"),
+  
+  // Implementation tracking
+  implementedAsServiceId: varchar("implemented_as_service_id").references(() => services.id),
+  implementedAt: timestamp("implemented_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => sql`now()`),
+}, (table) => ({
+  userIdIdx: index("sr_user_id_idx").on(table.userId),
+  statusIdx: index("sr_status_idx").on(table.status),
+  categoryIdIdx: index("sr_category_id_idx").on(table.categoryId),
+  urgencyIdx: index("sr_urgency_idx").on(table.urgency),
+  createdAtIdx: index("sr_created_at_idx").on(table.createdAt),
+}));
+
 // Phone notification system insert schemas - defined after table definitions to avoid circular dependencies
 export const insertPhoneCallLogSchema = createInsertSchema(phoneCallLogs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertNotificationStatisticsSchema = createInsertSchema(notificationStatistics).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertProviderPhoneNotificationSettingsSchema = createInsertSchema(providerPhoneNotificationSettings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertServiceRequestSchema = createInsertSchema(serviceRequests).omit({ id: true, createdAt: true, updatedAt: true, reviewedAt: true, implementedAt: true });
+export type ServiceRequest = typeof serviceRequests.$inferSelect;
+export type InsertServiceRequest = z.infer<typeof insertServiceRequestSchema>;

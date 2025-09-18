@@ -3751,6 +3751,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
 
+  // POST /api/v1/service-requests - Create service request (authenticated users)
+  app.post('/api/v1/service-requests',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const serviceRequestData = req.body;
+
+        // Validate that category exists if provided
+        if (serviceRequestData.categoryId) {
+          const category = await storage.getServiceCategory(serviceRequestData.categoryId);
+          if (!category) {
+            return res.status(400).json({
+              success: false,
+              message: 'Category not found'
+            });
+          }
+        }
+
+        // Add user ID to the request
+        const requestWithUserId = {
+          ...serviceRequestData,
+          userId: req.user?.id || null
+        };
+
+        // Create service request
+        const newServiceRequest = await storage.createServiceRequest(requestWithUserId);
+
+        res.status(201).json({
+          success: true,
+          data: newServiceRequest,
+          message: 'Service request submitted successfully'
+        });
+      } catch (error) {
+        console.error('Error creating service request:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to submit service request'
+        });
+      }
+    });
+
+  // GET /api/v1/service-requests - Get service requests (admin only)
+  app.get('/api/v1/service-requests',
+    adminSessionMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const { status, categoryId, limit = '50' } = req.query;
+        
+        const filters: any = {};
+        if (status) filters.status = status as string;
+        if (categoryId) filters.categoryId = categoryId as string;
+        if (limit) filters.limit = parseInt(limit as string);
+
+        const serviceRequests = await storage.getServiceRequests(filters);
+
+        res.json({
+          success: true,
+          data: serviceRequests
+        });
+      } catch (error) {
+        console.error('Error fetching service requests:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to fetch service requests'
+        });
+      }
+    });
+
   // GET /api/v1/users - Get all users with filtering (admin only)
   app.get('/api/v1/users',
     adminSessionMiddleware,
@@ -4281,27 +4349,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Category hierarchy validation helper
+  // Category hierarchy validation helper - NOW REQUIRES SUBCATEGORY (LEVEL 1)
   const validateCategoryHierarchy = async (categoryId: string): Promise<{ valid: boolean; message?: string }> => {
     const category = await storage.getServiceCategory(categoryId);
     if (!category) {
       return { valid: false, message: 'Category not found' };
     }
     
-    // For 2-level hierarchy: Main categories (level 0) are mandatory, sub-categories (level 1) are optional
-    if (category.level > 1) {
-      return { valid: false, message: 'Invalid category level. Only main categories (level 0) and sub-categories (level 1) are allowed' };
+    // MANDATORY SUBCATEGORY: Services can only be created in subcategories (level 1)
+    if (category.level !== 1) {
+      return { valid: false, message: 'Services must be created in a subcategory. Please select a subcategory (not a main category).' };
     }
     
-    // If it's a sub-category (level 1), ensure parent exists and is level 0
-    if (category.level === 1 && category.parentId) {
-      const parentCategory = await storage.getServiceCategory(category.parentId);
-      if (!parentCategory) {
-        return { valid: false, message: 'Parent category not found' };
-      }
-      if (parentCategory.level !== 0) {
-        return { valid: false, message: 'Parent must be a main category (level 0)' };
-      }
+    // Ensure the subcategory has a valid parent (level 0)
+    if (!category.parentId) {
+      return { valid: false, message: 'Subcategory must have a parent main category' };
+    }
+    
+    const parentCategory = await storage.getServiceCategory(category.parentId);
+    if (!parentCategory) {
+      return { valid: false, message: 'Parent category not found' };
+    }
+    if (parentCategory.level !== 0) {
+      return { valid: false, message: 'Parent must be a main category (level 0)' };
     }
     
     return { valid: true };

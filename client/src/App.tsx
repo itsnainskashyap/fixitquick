@@ -53,6 +53,7 @@ import LanguageRegion from "@/pages/LanguageRegion";
 import ReferEarn from "@/pages/ReferEarn";
 import HelpSupport from "@/pages/HelpSupport";
 import LegalPrivacy from "@/pages/LegalPrivacy";
+import ServiceRequest from "@/pages/ServiceRequest";
 
 // Import components
 import Layout, { MinimalLayout } from "@/components/Layout";
@@ -222,6 +223,9 @@ function Router() {
       
       {/* Category Hierarchy Routes */}
       <Route path="/categories/:categoryId/subcategories" component={() => <Layout><ProtectedRoute component={Subcategories} /></Layout>} />
+      
+      {/* Service Request Route */}
+      <Route path="/request-service" component={() => <Layout><ProtectedRoute component={ServiceRequest} /></Layout>} />
       
       {/* Provider Registration Routes */}
       <Route 

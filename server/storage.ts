@@ -200,6 +200,10 @@ import {
   insertSupportCallbackRequestSchema,
   insertSupportAgentSchema,
   insertServiceProviderProfileSchema,
+  serviceRequests,
+  type ServiceRequest,
+  type InsertServiceRequest,
+  insertServiceRequestSchema,
 } from "@shared/schema";
 
 // Single typed combinator utility for WHERE conditions
@@ -269,6 +273,13 @@ export interface IStorage {
   updateService(id: string, data: Partial<Omit<Service, 'id' | 'createdAt'>>): Promise<Service | undefined>;
   deleteService(id: string): Promise<{ success: boolean; message: string }>;
   getServicesByCategory(categoryId: string): Promise<Service[]>;
+
+  // Service Request methods
+  getServiceRequests(filters?: { userId?: string; status?: string; categoryId?: string; limit?: number }): Promise<ServiceRequest[]>;
+  getServiceRequest(id: string): Promise<ServiceRequest | undefined>;
+  createServiceRequest(request: InsertServiceRequest): Promise<ServiceRequest>;
+  updateServiceRequest(id: string, data: Partial<InsertServiceRequest>): Promise<ServiceRequest | undefined>;
+  deleteServiceRequest(id: string): Promise<{ success: boolean; message: string }>;
 
   // Order methods
   getOrders(filters?: { userId?: string; status?: string; limit?: number }): Promise<Order[]>;
@@ -2254,6 +2265,78 @@ export class PostgresStorage implements IStorage {
     } catch (error) {
       console.error('Error deleting selected test services:', error);
       return { success: false, message: 'Failed to delete selected services', deletedCount: 0 };
+    }
+  }
+
+  // Service Request methods
+  async getServiceRequests(filters?: { userId?: string; status?: string; categoryId?: string; limit?: number }): Promise<ServiceRequest[]> {
+    const conditions: Array<SQL<boolean> | undefined> = [];
+    if (filters?.userId) {
+      conditions.push(eq(serviceRequests.userId, filters.userId) as SQL<boolean>);
+    }
+    if (filters?.status) {
+      conditions.push(eq(serviceRequests.status, filters.status as any) as SQL<boolean>);
+    }
+    if (filters?.categoryId) {
+      conditions.push(eq(serviceRequests.categoryId, filters.categoryId) as SQL<boolean>);
+    }
+    
+    const whereClause = whereAll(...conditions);
+    
+    if (filters?.limit) {
+      if (whereClause) {
+        return await db.select().from(serviceRequests)
+          .where(whereClause)
+          .orderBy(desc(serviceRequests.createdAt))
+          .limit(filters.limit);
+      } else {
+        return await db.select().from(serviceRequests)
+          .orderBy(desc(serviceRequests.createdAt))
+          .limit(filters.limit);
+      }
+    }
+    
+    if (whereClause) {
+      return await db.select().from(serviceRequests)
+        .where(whereClause)
+        .orderBy(desc(serviceRequests.createdAt));
+    } else {
+      return await db.select().from(serviceRequests)
+        .orderBy(desc(serviceRequests.createdAt));
+    }
+  }
+
+  async getServiceRequest(id: string): Promise<ServiceRequest | undefined> {
+    const result = await db.select().from(serviceRequests).where(eq(serviceRequests.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createServiceRequest(request: InsertServiceRequest): Promise<ServiceRequest> {
+    const result = await db.insert(serviceRequests).values(request).returning();
+    return result[0];
+  }
+
+  async updateServiceRequest(id: string, data: Partial<InsertServiceRequest>): Promise<ServiceRequest | undefined> {
+    const result = await db.update(serviceRequests)
+      .set(data)
+      .where(eq(serviceRequests.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteServiceRequest(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const serviceRequest = await this.getServiceRequest(id);
+      if (!serviceRequest) {
+        return { success: false, message: 'Service request not found' };
+      }
+
+      await db.delete(serviceRequests).where(eq(serviceRequests.id, id));
+      
+      return { success: true, message: 'Service request deleted successfully' };
+    } catch (error) {
+      console.error('Error deleting service request:', error);
+      return { success: false, message: 'Failed to delete service request' };
     }
   }
 
