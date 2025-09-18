@@ -265,12 +265,8 @@ export default function ServiceBooking() {
     form.setValue('serviceLocation', location);
     setIsLocationSetup(false);
     
-    // Auto-advance to next step
-    if (bookingType === 'instant') {
-      setStep(2); // Go to urgency selection
-    } else {
-      setStep(2); // Go to date/time selection
-    }
+    // Auto-advance to step 1 for both booking types (urgency or date/time selection)
+    setStep(1);
   };
 
   const handleBookingTypeSelect = () => {
@@ -279,19 +275,15 @@ export default function ServiceBooking() {
       return;
     }
     
-    // If location is already set, advance to next step
-    if (bookingType === 'instant') {
-      setStep(2); // Go to urgency selection
-    } else {
-      setStep(2); // Go to date/time selection for scheduled
-    }
+    // If location is already set, advance to step 1 for both booking types
+    setStep(1);
   };
 
   const handleUrgencySelect = () => {
     const urgency = form.getValues().urgency;
     if (urgency && serviceLocation && service) {
       // Skip provider selection for all bookings - automatic matching handles provider assignment
-      setStep(3); // Go directly to review - provider matching is handled server-side
+      setStep(2); // Go to booking review (step 2)
     }
   };
 
@@ -300,7 +292,7 @@ export default function ServiceBooking() {
   const handleDateTimeSelect = () => {
     const formData = form.getValues();
     if (formData.scheduledDate && formData.scheduledTime) {
-      setStep(4); // Go to confirmation
+      setStep(2); // Go to booking review (step 2)
     }
   };
 
@@ -340,9 +332,24 @@ export default function ServiceBooking() {
     }, 3000);
   };
 
-  const getAvailableTimeSlots = (date: Date) => {
+  const getAvailableTimeSlots = (date: Date, providerId?: string) => {
+    if (!providers || providers.length === 0) {
+      // Return all time slots if no providers available yet
+      return timeSlots;
+    }
+    
+    // If no specific provider is selected, use the first available provider
+    const selectedProvider = providerId 
+      ? providers.find(p => p.userId === providerId)
+      : providers[0];
+    
+    if (!selectedProvider) {
+      // Fallback to all time slots if no provider found
+      return timeSlots;
+    }
+    
     const dayName = format(date, 'EEEE').toLowerCase();
-    const availability = provider.availability[dayName];
+    const availability = selectedProvider.availability[dayName];
     
     if (!availability) return [];
     
