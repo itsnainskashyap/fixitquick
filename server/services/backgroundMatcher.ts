@@ -1,5 +1,6 @@
 import { storage } from '../storage';
 import WebSocketManager from './websocket';
+import { phoneNotificationService } from './phoneNotifications';
 
 /**
  * Background Matcher Service
@@ -243,6 +244,11 @@ export class BackgroundMatcher {
             });
           }
 
+          // Send phone notification to provider (non-blocking)
+          this.sendPhoneNotificationToProvider(provider, booking, jobRequest).catch(error => {
+            console.error(`❌ BackgroundMatcher: Error sending phone notification to provider ${provider.userId}:`, error);
+          });
+
           offersCreated++;
         } catch (error) {
           console.error(`❌ BackgroundMatcher: Error creating job request for provider ${provider.userId}:`, error);
@@ -274,6 +280,83 @@ export class BackgroundMatcher {
       'low': 4,
     };
     return priorityMap[urgency as keyof typeof priorityMap] || 3;
+  }
+
+  /**
+   * Send phone notification to provider about new job offer
+   */
+  private async sendPhoneNotificationToProvider(provider: any, booking: any, jobRequest: any): Promise<void> {
+    try {
+      console.log(`📞 BackgroundMatcher: Sending phone notification to provider ${provider.userId} for booking ${booking.id}`);
+
+      // Get provider's phone number from their profile
+      const providerProfile = await storage.getServiceProvider(provider.userId);
+      if (!providerProfile || !providerProfile.phoneNumber) {
+        console.log(`📞 BackgroundMatcher: No phone number found for provider ${provider.userId}, skipping phone notification`);
+        return;
+      }
+
+      // Determine urgency level for phone notification
+      const urgencyMapping: Record<string, 'low' | 'normal' | 'high' | 'urgent'> = {
+        'low': 'low',
+        'normal': 'normal', 
+        'high': 'high',
+        'urgent': 'urgent'
+      };
+      
+      const phoneUrgency = urgencyMapping[booking.urgency || 'normal'] || 'normal';
+
+      // Queue phone notification with all relevant details
+      const phoneNotificationResult = await phoneNotificationService.queuePhoneNotification(
+        provider.userId,
+        providerProfile.phoneNumber,
+        booking.id,
+        {
+          urgency: phoneUrgency,
+          customerName: booking.customerName,
+          serviceType: booking.serviceTitle,
+          estimatedPrice: booking.totalAmount,
+          expiresInMinutes: 5, // Match the 5-minute timer
+          maxRetries: 2 // Allow retries for important notifications
+        }
+      );
+
+      if (phoneNotificationResult.success) {
+        console.log(`✅ BackgroundMatcher: Phone notification queued for provider ${provider.userId}, call ID: ${phoneNotificationResult.callId}`);
+        
+        // Update job request with phone notification info
+        if (phoneNotificationResult.callId) {
+          await storage.updateProviderJobRequest(jobRequest.id, {
+            phoneCallId: phoneNotificationResult.callId,
+            phoneNotificationSent: true,
+            phoneNotificationTimestamp: new Date()
+          });
+        }
+      } else {
+        console.log(`⚠️ BackgroundMatcher: Failed to queue phone notification for provider ${provider.userId}: ${phoneNotificationResult.message}`);
+        
+        // Update job request to record failed phone notification attempt
+        await storage.updateProviderJobRequest(jobRequest.id, {
+          phoneNotificationSent: false,
+          phoneNotificationError: phoneNotificationResult.message,
+          phoneNotificationTimestamp: new Date()
+        });
+      }
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error sending phone notification to provider ${provider.userId}:`, error);
+      
+      // Record error in job request
+      try {
+        await storage.updateProviderJobRequest(jobRequest.id, {
+          phoneNotificationSent: false,
+          phoneNotificationError: error instanceof Error ? error.message : 'Unknown error',
+          phoneNotificationTimestamp: new Date()
+        });
+      } catch (updateError) {
+        console.error(`❌ BackgroundMatcher: Error updating job request with phone notification error:`, updateError);
+      }
+    }
   }
 
   /**

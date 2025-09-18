@@ -922,6 +922,7 @@ export const userNotificationPreferences = pgTable("user_notification_preference
   emailNotifications: boolean("email_notifications").default(true),
   smsNotifications: boolean("sms_notifications").default(false),
   whatsappNotifications: boolean("whatsapp_notifications").default(true),
+  phoneCallNotifications: boolean("phone_call_notifications").default(false), // Phone ring notifications for providers
   
   // Category preferences
   orderUpdates: boolean("order_updates").default(true),
@@ -935,6 +936,11 @@ export const userNotificationPreferences = pgTable("user_notification_preference
   quietHoursStart: varchar("quiet_hours_start"), // "22:00"
   quietHoursEnd: varchar("quiet_hours_end"), // "07:00"
   timezone: varchar("timezone").default("Asia/Kolkata"),
+  
+  // Phone notification specific settings
+  phoneCallFrequencyLimit: integer("phone_call_frequency_limit").default(10), // Max calls per hour
+  phoneCallQuietHoursEnabled: boolean("phone_call_quiet_hours_enabled").default(true),
+  phoneCallMinInterval: integer("phone_call_min_interval").default(60), // Minimum seconds between calls
   
   // Sound preferences
   soundEnabled: boolean("sound_enabled").default(true),
@@ -1280,6 +1286,12 @@ export const providerJobRequests = pgTable("provider_job_requests", {
   estimatedArrival: timestamp("estimated_arrival"), // When provider expects to arrive
   acceptanceNotes: text("acceptance_notes"), // Provider's notes on acceptance
   declineReason: text("decline_reason"), // Reason for declining (if declined)
+  
+  // Phone notification tracking fields
+  phoneCallId: varchar("phone_call_id"), // Twilio call ID for phone notification
+  phoneNotificationSent: boolean("phone_notification_sent").default(false), // Whether phone notification was sent
+  phoneNotificationTimestamp: timestamp("phone_notification_timestamp"), // When phone notification was sent/attempted
+  phoneNotificationError: text("phone_notification_error"), // Error message if phone notification failed
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1684,6 +1696,8 @@ export const insertSupportTicketMessageSchema = createInsertSchema(supportTicket
 export const insertFaqSchema = createInsertSchema(faq).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSupportCallbackRequestSchema = createInsertSchema(supportCallbackRequests).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSupportAgentSchema = createInsertSchema(supportAgents).omit({ id: true, createdAt: true, updatedAt: true });
+
+// Phone notification system insert schemas - moved to end of file after table definitions
 
 // Support system validation schemas for API endpoints
 export const supportTicketCategoryEnum = z.enum(['technical', 'billing', 'account', 'service', 'parts', 'general']);
@@ -2875,6 +2889,14 @@ export type InsertDataExportRequest = z.infer<typeof insertDataExportRequestSche
 export type AccountDeletionRequest = typeof accountDeletionRequests.$inferSelect;
 export type InsertAccountDeletionRequest = z.infer<typeof insertAccountDeletionRequestSchema>;
 
+// Phone notification system types
+export type PhoneCallLog = typeof phoneCallLogs.$inferSelect;
+export type InsertPhoneCallLog = z.infer<typeof insertPhoneCallLogSchema>;
+export type NotificationStatistics = typeof notificationStatistics.$inferSelect;
+export type InsertNotificationStatistics = z.infer<typeof insertNotificationStatisticsSchema>;
+export type ProviderPhoneNotificationSettings = typeof providerPhoneNotificationSettings.$inferSelect;
+export type InsertProviderPhoneNotificationSettings = z.infer<typeof insertProviderPhoneNotificationSettingsSchema>;
+
 // Tax management type exports
 export type TaxCategory = typeof taxCategories.$inferSelect;
 export type InsertTaxCategory = z.infer<typeof insertTaxCategorySchema>;
@@ -3057,3 +3079,179 @@ export const OrderAssignmentStatusSchema = z.object({
   estimatedArrival: z.string().optional(),
 });
 export type OrderAssignmentStatus = z.infer<typeof OrderAssignmentStatusSchema>;
+
+// Phone call logs for tracking notification call attempts and outcomes
+export const phoneCallLogs = pgTable("phone_call_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Call details
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  orderId: varchar("order_id").references(() => orders.id),
+  jobRequestId: varchar("job_request_id").references(() => providerJobRequests.id),
+  
+  // Twilio integration
+  twilioCallSid: varchar("twilio_call_sid"), // Twilio call identifier
+  fromNumber: varchar("from_number").notNull(),
+  toNumber: varchar("to_number").notNull(),
+  
+  // Call status and outcome
+  status: varchar("status", {
+    enum: ["initiated", "ringing", "answered", "completed", "failed", "busy", "no_answer", "cancelled"]
+  }).default("initiated"),
+  duration: integer("duration"), // Call duration in seconds
+  
+  // Call attempt details
+  attemptNumber: integer("attempt_number").default(1), // Which retry attempt this was
+  maxAttempts: integer("max_attempts").default(3),
+  retryAfter: timestamp("retry_after"), // When to retry if failed
+  
+  // Provider response tracking
+  providerAnswered: boolean("provider_answered").default(false),
+  answerTime: timestamp("answer_time"), // When provider answered
+  hangupTime: timestamp("hangup_time"), // When call ended
+  hangupReason: varchar("hangup_reason"), // "completed", "hung_up", "timeout", etc.
+  
+  // Job offer response correlation
+  jobOfferAccepted: boolean("job_offer_accepted"),
+  jobOfferDeclined: boolean("job_offer_declined"),
+  responseReceivedAt: timestamp("response_received_at"), // When provider responded in app
+  
+  // Error tracking
+  errorCode: varchar("error_code"), // Twilio error code if failed
+  errorMessage: text("error_message"), // Detailed error message
+  
+  // Cost tracking
+  costInCents: integer("cost_in_cents"), // Call cost from Twilio (in cents)
+  currency: varchar("currency").default("USD"),
+  
+  // Metadata
+  userAgent: varchar("user_agent"), // If triggered from web
+  ipAddress: varchar("ip_address"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdIdx: index("pcl_provider_id_idx").on(table.providerId),
+  orderIdIdx: index("pcl_order_id_idx").on(table.orderId),
+  jobRequestIdIdx: index("pcl_job_request_id_idx").on(table.jobRequestId),
+  statusIdx: index("pcl_status_idx").on(table.status),
+  twilioSidIdx: index("pcl_twilio_sid_idx").on(table.twilioCallSid),
+  createdAtIdx: index("pcl_created_at_idx").on(table.createdAt),
+  attemptNumberIdx: index("pcl_attempt_number_idx").on(table.attemptNumber),
+}));
+
+// Notification statistics for admin monitoring and analytics
+export const notificationStatistics = pgTable("notification_statistics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Time period tracking
+  date: varchar("date").notNull(), // YYYY-MM-DD for daily stats
+  hour: integer("hour"), // 0-23 for hourly stats (null for daily aggregates)
+  
+  // Phone call statistics
+  totalPhoneCallsInitiated: integer("total_phone_calls_initiated").default(0),
+  totalPhoneCallsAnswered: integer("total_phone_calls_answered").default(0),
+  totalPhoneCallsCompleted: integer("total_phone_calls_completed").default(0),
+  totalPhoneCallsFailed: integer("total_phone_calls_failed").default(0),
+  totalPhoneCallsBusy: integer("total_phone_calls_busy").default(0),
+  totalPhoneCallsNoAnswer: integer("total_phone_calls_no_answer").default(0),
+  
+  // Response correlation
+  phoneCallsWithJobResponse: integer("phone_calls_with_job_response").default(0),
+  phoneCallsWithJobAcceptance: integer("phone_calls_with_job_acceptance").default(0),
+  phoneCallsWithJobDeclined: integer("phone_calls_with_job_declined").default(0),
+  
+  // Performance metrics
+  averageCallDuration: decimal("average_call_duration", { precision: 8, scale: 2 }), // in seconds
+  averageResponseTime: decimal("average_response_time", { precision: 8, scale: 2 }), // seconds from call to app response
+  successRate: decimal("success_rate", { precision: 5, scale: 2 }), // percentage of calls answered
+  responseRate: decimal("response_rate", { precision: 5, scale: 2 }), // percentage leading to job response
+  acceptanceRate: decimal("acceptance_rate", { precision: 5, scale: 2 }), // percentage leading to job acceptance
+  
+  // Cost tracking
+  totalCostInCents: integer("total_cost_in_cents").default(0),
+  averageCostPerCall: decimal("average_cost_per_call", { precision: 8, scale: 4 }), // in dollars
+  currency: varchar("currency").default("USD"),
+  
+  // Provider engagement
+  uniqueProvidersContacted: integer("unique_providers_contacted").default(0),
+  providersWhoAnswered: integer("providers_who_answered").default(0),
+  providersWhoResponded: integer("providers_who_responded").default(0),
+  
+  // System health
+  systemErrorCount: integer("system_error_count").default(0),
+  twilioErrorCount: integer("twilio_error_count").default(0),
+  retryAttempts: integer("retry_attempts").default(0),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  dateIdx: index("ns_date_idx").on(table.date),
+  dateHourIdx: index("ns_date_hour_idx").on(table.date, table.hour),
+  createdAtIdx: index("ns_created_at_idx").on(table.createdAt),
+}));
+
+// Provider-specific phone notification settings (extends notification preferences)
+export const providerPhoneNotificationSettings = pgTable("provider_phone_notification_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull().unique(),
+  
+  // Phone notification preferences
+  phoneNotificationsEnabled: boolean("phone_notifications_enabled").default(false),
+  emergencyPhoneNotifications: boolean("emergency_phone_notifications").default(true), // Always call for urgent jobs
+  
+  // Phone numbers for notifications (can have multiple)
+  primaryPhoneNumber: varchar("primary_phone_number"), // Main number for calls
+  backupPhoneNumber: varchar("backup_phone_number"), // Backup if primary fails
+  workPhoneNumber: varchar("work_phone_number"), // Business line
+  
+  // Notification timing preferences
+  phoneCallQuietHoursEnabled: boolean("phone_call_quiet_hours_enabled").default(true),
+  quietHoursStart: varchar("quiet_hours_start").default("22:00"), // No calls after 10 PM
+  quietHoursEnd: varchar("quiet_hours_end").default("07:00"), // No calls before 7 AM
+  timezone: varchar("timezone").default("Asia/Kolkata"),
+  
+  // Call frequency and limits
+  maxCallsPerHour: integer("max_calls_per_hour").default(10),
+  maxCallsPerDay: integer("max_calls_per_day").default(50),
+  minTimeBetweenCalls: integer("min_time_between_calls").default(60), // seconds
+  
+  // Call retry configuration
+  enableRetries: boolean("enable_retries").default(true),
+  maxRetryAttempts: integer("max_retry_attempts").default(3),
+  retryIntervalMinutes: integer("retry_interval_minutes").default(2),
+  
+  // Notification method preferences (prioritized order)
+  preferredNotificationMethods: jsonb("preferred_notification_methods").$type<Array<"push" | "phone" | "sms" | "whatsapp">>()
+    .default(sql`'["push", "phone"]'::jsonb`),
+  
+  // Voice message preferences
+  voiceMessageLanguage: varchar("voice_message_language", {
+    enum: ["en", "hi", "mr", "bn", "ta", "te", "gu", "kn", "ml", "or", "pa", "ur"]
+  }).default("en"),
+  useCustomVoiceMessage: boolean("use_custom_voice_message").default(false),
+  customVoiceMessageUrl: varchar("custom_voice_message_url"), // URL to custom voice recording
+  
+  // Performance tracking
+  totalCallsReceived: integer("total_calls_received").default(0),
+  totalCallsAnswered: integer("total_calls_answered").default(0),
+  totalJobsAccepted: integer("total_jobs_accepted").default(0),
+  averageResponseTimeSeconds: decimal("average_response_time_seconds", { precision: 8, scale: 2 }),
+  
+  // Status
+  isActive: boolean("is_active").default(true),
+  lastCallReceivedAt: timestamp("last_call_received_at"),
+  lastCallAnsweredAt: timestamp("last_call_answered_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdIdx: index("ppns_provider_id_idx").on(table.providerId),
+  enabledIdx: index("ppns_enabled_idx").on(table.phoneNotificationsEnabled),
+  activeIdx: index("ppns_active_idx").on(table.isActive),
+}));
+
+// Phone notification system insert schemas - defined after table definitions to avoid circular dependencies
+export const insertPhoneCallLogSchema = createInsertSchema(phoneCallLogs).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNotificationStatisticsSchema = createInsertSchema(notificationStatistics).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProviderPhoneNotificationSettingsSchema = createInsertSchema(providerPhoneNotificationSettings).omit({ id: true, createdAt: true, updatedAt: true });

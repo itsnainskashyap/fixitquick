@@ -10301,6 +10301,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Twilio webhook endpoint for call status updates with signature verification
+  app.post('/api/webhooks/twilio/call-status', express.raw({ type: 'application/x-www-form-urlencoded' }), async (req, res) => {
+    try {
+      console.log('📞 Twilio webhook received:', {
+        headers: req.headers,
+        bodyLength: req.body?.length || 0,
+        contentType: req.headers['content-type']
+      });
+
+      const signature = req.headers['x-twilio-signature'] as string;
+      if (!signature) {
+        console.error('❌ Missing Twilio signature header');
+        return res.status(400).json({ error: 'Missing signature header' });
+      }
+
+      const rawBody = req.body.toString();
+      const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      
+      // Parse URL-encoded body manually since we're using raw middleware
+      const params = new URLSearchParams(rawBody);
+      const webhookData: any = {};
+      for (const [key, value] of params.entries()) {
+        webhookData[key] = value;
+      }
+
+      console.log('📞 Parsed webhook data:', {
+        CallSid: webhookData.CallSid,
+        CallStatus: webhookData.CallStatus,
+        Duration: webhookData.Duration,
+        ErrorCode: webhookData.ErrorCode,
+        ErrorMessage: webhookData.ErrorMessage
+      });
+
+      // Verify webhook signature for security
+      const isValidSignature = twilioService.verifyWebhookSignature(
+        rawBody, 
+        signature, 
+        fullUrl
+      );
+
+      if (!isValidSignature) {
+        console.error('❌ Invalid Twilio webhook signature');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+
+      // Process the webhook event
+      await twilioService.processWebhookEvent(webhookData);
+
+      console.log('✅ Twilio webhook processed successfully');
+      res.status(200).json({ success: true, message: 'Webhook processed' });
+
+    } catch (error) {
+      console.error('❌ Error processing Twilio webhook:', error);
+      res.status(500).json({ 
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
   // Deprecated webhook endpoint
   app.post('/api/v1/webhooks/payment', async (req, res) => {
     console.warn('⚠️ Deprecated webhook endpoint called - use /api/v1/webhooks/stripe or /api/v1/payments/webhook');

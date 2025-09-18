@@ -69,6 +69,16 @@ import {
   type InsertProviderJobRequest,
   type ServiceProviderProfile,
   type InsertServiceProviderProfile,
+  // Import phone notification schemas
+  type PhoneCallLog,
+  type InsertPhoneCallLog,
+  type ProviderPhoneNotificationSettings,
+  type InsertProviderPhoneNotificationSettings,
+  type NotificationStatistics,
+  type InsertNotificationStatistics,
+  phoneCallLogs,
+  providerPhoneNotificationSettings,
+  notificationStatistics,
   // Import new strongly typed schemas
   ServiceProviderVerificationStatus,
   type ServiceProviderVerificationStatusType,
@@ -929,6 +939,8 @@ export interface IStorage {
   declineProviderJobRequest(bookingId: string, providerId: string, reason?: string): Promise<{ success: boolean; message?: string }>;
   cancelOtherJobRequests(bookingId: string, acceptedProviderId: string): Promise<void>;
   cancelAllJobRequests(bookingId: string): Promise<void>;
+  updateProviderJobRequest(jobRequestId: string, data: Partial<InsertProviderJobRequest>): Promise<ProviderJobRequest | undefined>;
+  getJobRequestByPhoneCallId(callId: string): Promise<ProviderJobRequest | undefined>;
 
   // Provider Matching methods
   findMatchingProviders(criteria: {
@@ -1246,6 +1258,41 @@ export interface IStorage {
   upsertProviderProfile(providerId: string, profileData: Partial<InsertServiceProviderProfile>): Promise<ServiceProviderProfile | undefined>;
   updateProviderLocation(providerId: string, location: { latitude: number; longitude: number }): Promise<ServiceProviderProfile | undefined>;
   setProviderOnlineStatus(providerId: string, status: 'online' | 'offline' | 'busy'): Promise<ServiceProviderProfile | undefined>;
+
+  // Phone call logs methods
+  createPhoneCallLog(log: InsertPhoneCallLog): Promise<PhoneCallLog>;
+  getPhoneCallLogs(filters?: { 
+    providerId?: string; 
+    status?: string; 
+    limit?: number; 
+    offset?: number;
+    fromDate?: Date;
+    toDate?: Date;
+  }): Promise<PhoneCallLog[]>;
+  getPhoneCallLog(id: string): Promise<PhoneCallLog | undefined>;
+  updatePhoneCallLog(id: string, data: Partial<InsertPhoneCallLog>): Promise<PhoneCallLog | undefined>;
+  getCallStatistics(providerId?: string, fromDate?: Date, toDate?: Date): Promise<{
+    totalCalls: number;
+    successfulCalls: number;
+    failedCalls: number;
+    averageDuration: number;
+    totalCost: number;
+  }>;
+
+  // Provider phone notification settings methods
+  createProviderPhoneNotificationSettings(settings: InsertProviderPhoneNotificationSettings): Promise<ProviderPhoneNotificationSettings>;
+  getProviderPhoneNotificationSettings(providerId: string): Promise<ProviderPhoneNotificationSettings | undefined>;
+  updateProviderPhoneNotificationSettings(providerId: string, data: Partial<InsertProviderPhoneNotificationSettings>): Promise<ProviderPhoneNotificationSettings | undefined>;
+  
+  // Notification statistics methods
+  createNotificationStatistics(stats: InsertNotificationStatistics): Promise<NotificationStatistics>;
+  getNotificationStatistics(filters?: { 
+    providerId?: string; 
+    notificationType?: string;
+    fromDate?: Date; 
+    toDate?: Date;
+  }): Promise<NotificationStatistics[]>;
+  updateNotificationStatistics(id: string, data: Partial<InsertNotificationStatistics>): Promise<NotificationStatistics | undefined>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -5949,6 +5996,53 @@ export class PostgresStorage implements IStorage {
         eq(providerJobRequests.bookingId, bookingId),
         eq(providerJobRequests.status, 'sent')
       ));
+  }
+
+  async updateProviderJobRequest(jobRequestId: string, data: Partial<InsertProviderJobRequest>): Promise<ProviderJobRequest | undefined> {
+    try {
+      console.log(`📤 storage.updateProviderJobRequest: Updating job request ${jobRequestId}`);
+      
+      const result = await db.update(providerJobRequests)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(providerJobRequests.id, jobRequestId))
+        .returning();
+
+      if (result.length === 0) {
+        console.log(`📤 storage.updateProviderJobRequest: Job request ${jobRequestId} not found`);
+        return undefined;
+      }
+
+      console.log(`✅ storage.updateProviderJobRequest: Updated job request ${jobRequestId}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateProviderJobRequest: Error updating job request ${jobRequestId}:`, error);
+      return undefined;
+    }
+  }
+
+  async getJobRequestByPhoneCallId(callId: string): Promise<ProviderJobRequest | undefined> {
+    try {
+      console.log(`📤 storage.getJobRequestByPhoneCallId: Finding job request for call ${callId}`);
+      
+      const result = await db.select()
+        .from(providerJobRequests)
+        .where(eq(providerJobRequests.phoneCallId, callId))
+        .limit(1);
+
+      if (result.length === 0) {
+        console.log(`📤 storage.getJobRequestByPhoneCallId: No job request found for call ${callId}`);
+        return undefined;
+      }
+
+      console.log(`✅ storage.getJobRequestByPhoneCallId: Found job request ${result[0].id} for call ${callId}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getJobRequestByPhoneCallId: Error finding job request for call ${callId}:`, error);
+      return undefined;
+    }
   }
 
   // ========================================
@@ -10904,6 +10998,334 @@ export class PostgresStorage implements IStorage {
     } catch (error) {
       console.error(`❌ storage.setProviderOnlineStatus: Error setting status for provider ${providerId}:`, error);
       return undefined;
+    }
+  }
+
+  // Phone call logs methods
+  async createPhoneCallLog(log: InsertPhoneCallLog): Promise<PhoneCallLog> {
+    try {
+      console.log(`📞 storage.createPhoneCallLog: Creating call log for provider ${log.providerId}`);
+      
+      const result = await db.insert(phoneCallLogsTable)
+        .values(log)
+        .returning();
+      
+      console.log(`✅ storage.createPhoneCallLog: Created call log ${log.id}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.createPhoneCallLog: Error creating call log:`, error);
+      throw error;
+    }
+  }
+
+  async getPhoneCallLogs(filters?: { 
+    providerId?: string; 
+    status?: string; 
+    limit?: number; 
+    offset?: number;
+    fromDate?: Date;
+    toDate?: Date;
+  }): Promise<PhoneCallLog[]> {
+    try {
+      console.log(`📞 storage.getPhoneCallLogs: Fetching call logs with filters:`, filters);
+      
+      let query = db.select().from(phoneCallLogsTable);
+      
+      // Apply filters
+      const conditions: (SQL<boolean> | undefined)[] = [];
+      
+      if (filters?.providerId) {
+        conditions.push(eq(phoneCallLogsTable.providerId, filters.providerId));
+      }
+      
+      if (filters?.status) {
+        conditions.push(eq(phoneCallLogsTable.status, filters.status));
+      }
+      
+      if (filters?.fromDate) {
+        conditions.push(gte(phoneCallLogsTable.timestamp, filters.fromDate));
+      }
+      
+      if (filters?.toDate) {
+        conditions.push(lte(phoneCallLogsTable.timestamp, filters.toDate));
+      }
+      
+      const whereCondition = whereAll(...conditions);
+      if (whereCondition) {
+        query = query.where(whereCondition);
+      }
+      
+      // Order by timestamp descending
+      query = query.orderBy(desc(phoneCallLogsTable.timestamp));
+      
+      // Apply pagination
+      if (filters?.limit) {
+        query = query.limit(filters.limit);
+      }
+      
+      if (filters?.offset) {
+        query = query.offset(filters.offset);
+      }
+      
+      const result = await query;
+      console.log(`✅ storage.getPhoneCallLogs: Found ${result.length} call logs`);
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getPhoneCallLogs: Error fetching call logs:`, error);
+      throw error;
+    }
+  }
+
+  async getPhoneCallLog(id: string): Promise<PhoneCallLog | undefined> {
+    try {
+      console.log(`📞 storage.getPhoneCallLog: Fetching call log ${id}`);
+      
+      const result = await db.select()
+        .from(phoneCallLogsTable)
+        .where(eq(phoneCallLogsTable.id, id))
+        .limit(1);
+      
+      if (result.length === 0) {
+        console.log(`📞 storage.getPhoneCallLog: Call log ${id} not found`);
+        return undefined;
+      }
+      
+      console.log(`✅ storage.getPhoneCallLog: Found call log ${id}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getPhoneCallLog: Error fetching call log ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async updatePhoneCallLog(id: string, data: Partial<InsertPhoneCallLog>): Promise<PhoneCallLog | undefined> {
+    try {
+      console.log(`📞 storage.updatePhoneCallLog: Updating call log ${id}`);
+      
+      const result = await db.update(phoneCallLogsTable)
+        .set(data)
+        .where(eq(phoneCallLogsTable.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        console.log(`📞 storage.updatePhoneCallLog: Call log ${id} not found`);
+        return undefined;
+      }
+      
+      console.log(`✅ storage.updatePhoneCallLog: Updated call log ${id}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updatePhoneCallLog: Error updating call log ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async getCallStatistics(providerId?: string, fromDate?: Date, toDate?: Date): Promise<{
+    totalCalls: number;
+    successfulCalls: number;
+    failedCalls: number;
+    averageDuration: number;
+    totalCost: number;
+  }> {
+    try {
+      console.log(`📞 storage.getCallStatistics: Getting call statistics for provider ${providerId || 'all'}`);
+      
+      const conditions: (SQL<boolean> | undefined)[] = [];
+      
+      if (providerId) {
+        conditions.push(eq(phoneCallLogsTable.providerId, providerId));
+      }
+      
+      if (fromDate) {
+        conditions.push(gte(phoneCallLogsTable.timestamp, fromDate));
+      }
+      
+      if (toDate) {
+        conditions.push(lte(phoneCallLogsTable.timestamp, toDate));
+      }
+      
+      const whereCondition = whereAll(...conditions);
+      
+      let query = db.select({
+        totalCalls: count(),
+        successfulCalls: sql<number>`sum(case when ${phoneCallLogsTable.status} in ('completed', 'answered') then 1 else 0 end)`,
+        failedCalls: sql<number>`sum(case when ${phoneCallLogsTable.status} in ('failed', 'no-answer', 'busy', 'canceled') then 1 else 0 end)`,
+        averageDuration: sql<number>`avg(${phoneCallLogsTable.duration})`,
+        totalCost: sql<number>`sum(${phoneCallLogsTable.cost})`
+      }).from(phoneCallLogsTable);
+      
+      if (whereCondition) {
+        query = query.where(whereCondition);
+      }
+      
+      const result = await query;
+      
+      const stats = {
+        totalCalls: Number(result[0]?.totalCalls || 0),
+        successfulCalls: Number(result[0]?.successfulCalls || 0),
+        failedCalls: Number(result[0]?.failedCalls || 0),
+        averageDuration: Number(result[0]?.averageDuration || 0),
+        totalCost: Number(result[0]?.totalCost || 0)
+      };
+      
+      console.log(`✅ storage.getCallStatistics: Retrieved statistics:`, stats);
+      return stats;
+    } catch (error) {
+      console.error(`❌ storage.getCallStatistics: Error getting call statistics:`, error);
+      return {
+        totalCalls: 0,
+        successfulCalls: 0,
+        failedCalls: 0,
+        averageDuration: 0,
+        totalCost: 0
+      };
+    }
+  }
+
+  // Provider phone notification settings methods
+  async createProviderPhoneNotificationSettings(settings: InsertProviderPhoneNotificationSettings): Promise<ProviderPhoneNotificationSettings> {
+    try {
+      console.log(`📞 storage.createProviderPhoneNotificationSettings: Creating settings for provider ${settings.providerId}`);
+      
+      const result = await db.insert(providerPhoneNotificationSettingsTable)
+        .values(settings)
+        .returning();
+      
+      console.log(`✅ storage.createProviderPhoneNotificationSettings: Created settings for provider ${settings.providerId}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.createProviderPhoneNotificationSettings: Error creating settings:`, error);
+      throw error;
+    }
+  }
+
+  async getProviderPhoneNotificationSettings(providerId: string): Promise<ProviderPhoneNotificationSettings | undefined> {
+    try {
+      console.log(`📞 storage.getProviderPhoneNotificationSettings: Fetching settings for provider ${providerId}`);
+      
+      const result = await db.select()
+        .from(providerPhoneNotificationSettingsTable)
+        .where(eq(providerPhoneNotificationSettingsTable.providerId, providerId))
+        .limit(1);
+      
+      if (result.length === 0) {
+        console.log(`📞 storage.getProviderPhoneNotificationSettings: Settings not found for provider ${providerId}`);
+        return undefined;
+      }
+      
+      console.log(`✅ storage.getProviderPhoneNotificationSettings: Found settings for provider ${providerId}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.getProviderPhoneNotificationSettings: Error fetching settings for provider ${providerId}:`, error);
+      throw error;
+    }
+  }
+
+  async updateProviderPhoneNotificationSettings(providerId: string, data: Partial<InsertProviderPhoneNotificationSettings>): Promise<ProviderPhoneNotificationSettings | undefined> {
+    try {
+      console.log(`📞 storage.updateProviderPhoneNotificationSettings: Updating settings for provider ${providerId}`);
+      
+      const result = await db.update(providerPhoneNotificationSettingsTable)
+        .set(data)
+        .where(eq(providerPhoneNotificationSettingsTable.providerId, providerId))
+        .returning();
+      
+      if (result.length === 0) {
+        console.log(`📞 storage.updateProviderPhoneNotificationSettings: Settings not found for provider ${providerId}`);
+        return undefined;
+      }
+      
+      console.log(`✅ storage.updateProviderPhoneNotificationSettings: Updated settings for provider ${providerId}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateProviderPhoneNotificationSettings: Error updating settings for provider ${providerId}:`, error);
+      throw error;
+    }
+  }
+  
+  // Notification statistics methods
+  async createNotificationStatistics(stats: InsertNotificationStatistics): Promise<NotificationStatistics> {
+    try {
+      console.log(`📞 storage.createNotificationStatistics: Creating notification statistics`);
+      
+      const result = await db.insert(notificationStatistics)
+        .values(stats)
+        .returning();
+      
+      console.log(`✅ storage.createNotificationStatistics: Created notification statistics ${stats.id}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.createNotificationStatistics: Error creating notification statistics:`, error);
+      throw error;
+    }
+  }
+
+  async getNotificationStatistics(filters?: { 
+    providerId?: string; 
+    notificationType?: string;
+    fromDate?: Date; 
+    toDate?: Date;
+  }): Promise<NotificationStatistics[]> {
+    try {
+      console.log(`📞 storage.getNotificationStatistics: Fetching notification statistics with filters:`, filters);
+      
+      let query = db.select().from(notificationStatistics);
+      
+      // Apply filters
+      const conditions: (SQL<boolean> | undefined)[] = [];
+      
+      if (filters?.providerId) {
+        conditions.push(eq(notificationStatistics.providerId, filters.providerId));
+      }
+      
+      if (filters?.notificationType) {
+        conditions.push(eq(notificationStatistics.notificationType, filters.notificationType));
+      }
+      
+      if (filters?.fromDate) {
+        conditions.push(gte(notificationStatistics.timestamp, filters.fromDate));
+      }
+      
+      if (filters?.toDate) {
+        conditions.push(lte(notificationStatistics.timestamp, filters.toDate));
+      }
+      
+      const whereCondition = whereAll(...conditions);
+      if (whereCondition) {
+        query = query.where(whereCondition);
+      }
+      
+      // Order by timestamp descending
+      query = query.orderBy(desc(notificationStatistics.timestamp));
+      
+      const result = await query;
+      console.log(`✅ storage.getNotificationStatistics: Found ${result.length} notification statistics`);
+      return result;
+    } catch (error) {
+      console.error(`❌ storage.getNotificationStatistics: Error fetching notification statistics:`, error);
+      throw error;
+    }
+  }
+
+  async updateNotificationStatistics(id: string, data: Partial<InsertNotificationStatistics>): Promise<NotificationStatistics | undefined> {
+    try {
+      console.log(`📞 storage.updateNotificationStatistics: Updating notification statistics ${id}`);
+      
+      const result = await db.update(notificationStatistics)
+        .set(data)
+        .where(eq(notificationStatistics.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        console.log(`📞 storage.updateNotificationStatistics: Notification statistics ${id} not found`);
+        return undefined;
+      }
+      
+      console.log(`✅ storage.updateNotificationStatistics: Updated notification statistics ${id}`);
+      return result[0];
+    } catch (error) {
+      console.error(`❌ storage.updateNotificationStatistics: Error updating notification statistics ${id}:`, error);
+      throw error;
     }
   }
 

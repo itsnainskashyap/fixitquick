@@ -33,6 +33,29 @@ interface VerificationResult {
   isLocked?: boolean;
 }
 
+interface VoiceCallResult {
+  success: boolean;
+  message: string;
+  callSid?: string;
+  status?: string;
+  duration?: number;
+  cost?: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface VoiceCallOptions {
+  jobRequestId?: string;
+  orderId?: string;
+  urgency?: 'low' | 'normal' | 'high' | 'urgent';
+  customerName?: string;
+  serviceType?: string;
+  estimatedPrice?: number;
+  language?: string;
+  maxDuration?: number; // seconds
+  retryAttempt?: number;
+}
+
 class TwilioService {
   private client: any;
   private config: TwilioConfig;
@@ -47,6 +70,12 @@ class TwilioService {
   private readonly RESEND_COOLDOWN_SECONDS = 30;
   private readonly MAX_RESENDS_PER_HOUR = 3;
   private readonly BCRYPT_ROUNDS = 12;
+
+  // Voice call constants
+  private readonly DEFAULT_CALL_TIMEOUT = 30; // seconds
+  private readonly MAX_CALL_DURATION = 60; // seconds
+  private readonly CALL_RETRY_DELAY = 120; // seconds between retries
+  private readonly MAX_CALL_RETRIES = 3;
 
   constructor() {
     this.config = {
@@ -1026,6 +1055,442 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
       };
     }
   }
+
+  /**
+   * Make a voice call to notify provider about new job request
+   */
+  async makeProviderNotificationCall(
+    phoneNumber: string, 
+    options: VoiceCallOptions = {}
+  ): Promise<VoiceCallResult> {
+    try {
+      // Normalize phone number
+      const normalizedPhone = this.formatPhoneNumber(phoneNumber);
+      if (!normalizedPhone) {
+        return {
+          success: false,
+          message: 'Invalid phone number format. Please use format +[country code][number]'
+        };
+      }
+
+      // Generate professional voice message
+      const twiML = this.generateVoiceMessage(options);
+      
+      if (this.isStubMode) {
+        console.log(`📞 [STUB MODE] Voice call to ${normalizedPhone}`);
+        console.log(`📞 [STUB MODE] Message: ${this.extractMessageFromTwiML(twiML)}`);
+        console.log(`📞 [STUB MODE] Options:`, options);
+        return {
+          success: true,
+          message: 'Voice call initiated successfully (stub mode)',
+          callSid: `stub_call_${Date.now()}`,
+          status: 'completed'
+        };
+      }
+
+      // Make the actual voice call
+      const call = await this.client.calls.create({
+        to: normalizedPhone,
+        from: this.config.fromNumber,
+        twiml: twiML,
+        timeout: options.maxDuration || this.DEFAULT_CALL_TIMEOUT,
+        record: false, // Don't record calls for privacy
+        machineDetection: 'Enable', // Detect answering machines
+        machineDetectionTimeout: 10,
+        machineDetectionSpeechThreshold: 2400,
+        machineDetectionSpeechEndThreshold: 1200,
+        statusCallback: process.env.TWILIO_STATUS_CALLBACK_URL,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        statusCallbackMethod: 'POST'
+      });
+
+      console.log(`📞 Voice call initiated successfully to ${this.maskPhoneNumber(normalizedPhone)}, SID: ${call.sid}`);
+      
+      return {
+        success: true,
+        message: 'Voice call initiated successfully',
+        callSid: call.sid,
+        status: call.status
+      };
+
+    } catch (error: any) {
+      console.error(`Voice call error for ${this.maskPhoneNumber(phoneNumber)}:`, {
+        code: error.code,
+        message: error.message,
+        moreInfo: error.moreInfo
+      });
+
+      // Handle specific Twilio voice call errors
+      return this.handleVoiceCallError(error, phoneNumber);
+    }
+  }
+
+  /**
+   * Generate TwiML for professional voice message
+   */
+  private generateVoiceMessage(options: VoiceCallOptions): string {
+    const {
+      urgency = 'normal',
+      customerName,
+      serviceType,
+      estimatedPrice,
+      language = 'en',
+      retryAttempt = 1
+    } = options;
+
+    // Select voice and language
+    const voice = this.getVoiceForLanguage(language);
+    
+    // Build the message based on urgency and context
+    let message = '';
+    
+    if (urgency === 'urgent') {
+      message = 'URGENT: ';
+    }
+    
+    message += 'You have a new service request';
+    
+    if (serviceType) {
+      message += ` for ${serviceType}`;
+    }
+    
+    if (customerName) {
+      message += ` from ${customerName}`;
+    }
+    
+    if (estimatedPrice) {
+      message += `. Estimated value: ${Math.round(estimatedPrice)} rupees`;
+    }
+    
+    message += '. Please check your FixitQuick app to accept or decline this request within 5 minutes.';
+    
+    if (retryAttempt > 1) {
+      message += ` This is attempt ${retryAttempt}.`;
+    }
+    
+    // Create TwiML with professional settings
+    const twiML = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="${voice}" language="${this.getTwilioLanguageCode(language)}">
+    ${message}
+  </Say>
+  <Pause length="1"/>
+  <Say voice="${voice}" language="${this.getTwilioLanguageCode(language)}">
+    Thank you. This message will repeat once more.
+  </Say>
+  <Pause length="2"/>
+  <Say voice="${voice}" language="${this.getTwilioLanguageCode(language)}">
+    ${message}
+  </Say>
+</Response>`;
+
+    return twiML;
+  }
+
+  /**
+   * Get appropriate Twilio voice for language
+   */
+  private getVoiceForLanguage(language: string): string {
+    const voiceMap: Record<string, string> = {
+      'en': 'alice',
+      'hi': 'alice', // Twilio doesn't have Hindi voice, use English
+      'mr': 'alice',
+      'bn': 'alice',
+      'ta': 'alice',
+      'te': 'alice',
+      'gu': 'alice',
+      'kn': 'alice',
+      'ml': 'alice',
+      'or': 'alice',
+      'pa': 'alice',
+      'ur': 'alice'
+    };
+    
+    return voiceMap[language] || 'alice';
+  }
+
+  /**
+   * Get Twilio language code for Text-to-Speech
+   */
+  private getTwilioLanguageCode(language: string): string {
+    const languageMap: Record<string, string> = {
+      'en': 'en-US',
+      'hi': 'en-US', // Fallback to English for Indian languages
+      'mr': 'en-US',
+      'bn': 'en-US',
+      'ta': 'en-US',
+      'te': 'en-US',
+      'gu': 'en-US',
+      'kn': 'en-US',
+      'ml': 'en-US',
+      'or': 'en-US',
+      'pa': 'en-US',
+      'ur': 'en-US'
+    };
+    
+    return languageMap[language] || 'en-US';
+  }
+
+  /**
+   * Extract plain text message from TwiML for logging
+   */
+  private extractMessageFromTwiML(twiML: string): string {
+    // Simple regex to extract text from <Say> tags
+    const matches = twiML.match(/<Say[^>]*>(.*?)<\/Say>/g);
+    if (matches && matches.length > 0) {
+      // Get first Say tag content and clean it
+      return matches[0].replace(/<Say[^>]*>|<\/Say>/g, '').trim();
+    }
+    return 'Voice message';
+  }
+
+  /**
+   * Handle voice call errors with appropriate user messages
+   */
+  private handleVoiceCallError(error: any, phoneNumber: string): VoiceCallResult {
+    const maskedPhone = this.maskPhoneNumber(phoneNumber);
+    
+    if (error.code === 21211) {
+      return {
+        success: false,
+        message: 'Invalid phone number format',
+        errorCode: error.code,
+        errorMessage: error.message
+      };
+    } else if (error.code === 21608) {
+      // Trial account limitation
+      if (this.isProduction) {
+        console.warn(`📞 Production voice call failed: Unverified number ${maskedPhone} (Twilio trial limitation)`);
+        return {
+          success: false,
+          message: 'This phone number must be verified with our calling provider. Please contact support.',
+          errorCode: error.code,
+          errorMessage: error.message
+        };
+      } else {
+        if (this.config.devFallbackEnabled) {
+          console.log(`📞 Development fallback for voice call to ${phoneNumber} (Twilio trial limitation)`);
+          return {
+            success: true,
+            message: 'Voice call initiated successfully (development fallback)',
+            callSid: `dev_fallback_${Date.now()}`,
+            status: 'completed'
+          };
+        } else {
+          return {
+            success: false,
+            message: 'Voice call failed due to trial limitations. Set TWILIO_DEV_FALLBACK=true for development.',
+            errorCode: error.code,
+            errorMessage: error.message
+          };
+        }
+      }
+    } else if (error.code === 21614) {
+      return {
+        success: false,
+        message: 'Phone number is invalid or not reachable',
+        errorCode: error.code,
+        errorMessage: error.message
+      };
+    } else if (error.code === 20003) {
+      return {
+        success: false,
+        message: 'Authentication failed. Please contact support.',
+        errorCode: error.code,
+        errorMessage: error.message
+      };
+    }
+
+    // Generic error handling
+    const userMessage = this.isProduction 
+      ? 'Unable to make call. Please try again or contact support.'
+      : 'Voice call failed. Please try again later.';
+      
+    return {
+      success: false,
+      message: userMessage,
+      errorCode: error.code,
+      errorMessage: error.message
+    };
+  }
+
+  /**
+   * Check call status using Twilio API
+   */
+  async checkCallStatus(callSid: string): Promise<{
+    status: string;
+    duration?: number;
+    cost?: number;
+    direction?: string;
+    startTime?: Date;
+    endTime?: Date;
+  } | null> {
+    try {
+      if (this.isStubMode) {
+        return {
+          status: 'completed',
+          duration: 30,
+          cost: 0.01,
+          direction: 'outbound-api',
+          startTime: new Date(Date.now() - 30000),
+          endTime: new Date()
+        };
+      }
+
+      const call = await this.client.calls(callSid).fetch();
+      
+      return {
+        status: call.status,
+        duration: call.duration ? parseInt(call.duration) : undefined,
+        cost: call.price ? parseFloat(call.price) : undefined,
+        direction: call.direction,
+        startTime: call.startTime ? new Date(call.startTime) : undefined,
+        endTime: call.endTime ? new Date(call.endTime) : undefined
+      };
+    } catch (error) {
+      console.error('Error checking call status:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Cancel an ongoing call
+   */
+  async cancelCall(callSid: string): Promise<boolean> {
+    try {
+      if (this.isStubMode) {
+        console.log(`📞 [STUB MODE] Cancelled call ${callSid}`);
+        return true;
+      }
+
+      await this.client.calls(callSid).update({ status: 'canceled' });
+      console.log(`📞 Call ${callSid} cancelled successfully`);
+      return true;
+    } catch (error) {
+      console.error('Error cancelling call:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Verify Twilio webhook signature for security
+   */
+  verifyWebhookSignature(payload: string, signature: string, url: string): boolean {
+    try {
+      if (this.isStubMode) {
+        console.log('📞 [STUB MODE] Webhook signature verification bypassed');
+        return true;
+      }
+
+      if (!this.config.authToken) {
+        console.warn('⚠️ Cannot verify webhook signature - missing auth token');
+        return false;
+      }
+
+      // Use Twilio's built-in webhook signature validation
+      const expectedSignature = twilio.validateRequest(
+        this.config.authToken,
+        payload,
+        signature,
+        url
+      );
+
+      return expectedSignature;
+    } catch (error) {
+      console.error('Error verifying webhook signature:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Process Twilio webhook event for call status updates
+   */
+  async processWebhookEvent(webhookData: any): Promise<void> {
+    try {
+      const { CallSid, CallStatus, Duration, ErrorCode, ErrorMessage } = webhookData;
+      
+      console.log(`📞 Processing webhook event for call ${CallSid}: ${CallStatus}`);
+
+      // Log the call event in phone call logs
+      await storage.createPhoneCallLog({
+        id: `call_log_${CallSid}_${Date.now()}`,
+        providerId: '', // Will be filled from job request lookup
+        callId: CallSid,
+        status: CallStatus,
+        duration: Duration ? parseInt(Duration) : undefined,
+        errorCode: ErrorCode,
+        errorMessage: ErrorMessage,
+        timestamp: new Date(),
+        callDirection: 'outbound',
+        cost: 0, // Will be updated later if available
+        webhookData: JSON.stringify(webhookData)
+      });
+
+      // Update job request status based on call status
+      await this.updateJobRequestFromCallStatus(CallSid, CallStatus, Duration, ErrorCode, ErrorMessage);
+
+    } catch (error) {
+      console.error('Error processing webhook event:', error);
+    }
+  }
+
+  /**
+   * Update job request status based on call status
+   */
+  private async updateJobRequestFromCallStatus(
+    callSid: string, 
+    callStatus: string, 
+    duration?: string,
+    errorCode?: string,
+    errorMessage?: string
+  ): Promise<void> {
+    try {
+      // Find job request by phone call ID
+      const jobRequest = await storage.getJobRequestByPhoneCallId(callSid);
+      
+      if (!jobRequest) {
+        console.log(`📞 No job request found for call ${callSid}`);
+        return;
+      }
+
+      const updateData: any = {
+        phoneNotificationTimestamp: new Date()
+      };
+
+      switch (callStatus) {
+        case 'initiated':
+          updateData.phoneNotificationSent = true;
+          console.log(`📞 Call ${callSid} initiated for job request ${jobRequest.id}`);
+          break;
+          
+        case 'ringing':
+          console.log(`📞 Call ${callSid} ringing for job request ${jobRequest.id}`);
+          break;
+          
+        case 'answered':
+          console.log(`📞 Call ${callSid} answered for job request ${jobRequest.id}`);
+          break;
+          
+        case 'completed':
+          console.log(`📞 Call ${callSid} completed (duration: ${duration}s) for job request ${jobRequest.id}`);
+          break;
+          
+        case 'failed':
+        case 'canceled':
+        case 'busy':
+        case 'no-answer':
+          updateData.phoneNotificationError = errorMessage || `Call ${callStatus}`;
+          console.log(`📞 Call ${callSid} ${callStatus} for job request ${jobRequest.id}: ${errorMessage}`);
+          break;
+      }
+
+      // Update the job request with call status
+      await storage.updateProviderJobRequest(jobRequest.id, updateData);
+      
+    } catch (error) {
+      console.error(`Error updating job request for call ${callSid}:`, error);
+    }
+  }
 }
 
 // Create singleton instance
@@ -1042,7 +1507,7 @@ export const isValidPhoneNumber = (phone: string): boolean => {
 };
 
 // Export types for use in routes
-export type { OTPResult, VerificationResult };
+export type { OTPResult, VerificationResult, VoiceCallResult, VoiceCallOptions };
 
 // Default export
 export default twilioService;
