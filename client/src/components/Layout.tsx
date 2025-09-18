@@ -30,9 +30,9 @@ export function Layout({
   // Consistent height management - mobile-first approach with extra padding
   const [headerHeight, setHeaderHeight] = useState(() => {
     if (typeof window !== 'undefined') {
-      return window.innerWidth < 640 ? 220 : 280; // Much higher defaults to prevent overlap
+      return window.innerWidth < 640 ? 250 : 320; // Extremely high defaults to completely prevent overlap
     }
-    return 280;
+    return 320;
   });
   
   // Bottom navigation height tracking for precise spacing
@@ -174,12 +174,12 @@ export function Layout({
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3 }}
         style={{
-          paddingTop: showHeader ? `calc(var(--header-height, 280px) + 2rem)` : '0',
+          paddingTop: showHeader ? `calc(var(--header-height, 320px) + 3rem)` : '0',
           paddingBottom: showBottomNav ? 'calc(var(--bottom-nav-height, 80px) + var(--safe-area-inset-bottom, 0px) + 1rem)' : '1.5rem',
           minHeight: showHeader 
             ? showBottomNav 
-              ? 'calc(100vh - var(--header-height, 280px) - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
-              : 'calc(100vh - var(--header-height, 280px))'
+              ? 'calc(100vh - var(--header-height, 320px) - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
+              : 'calc(100vh - var(--header-height, 320px))'
             : showBottomNav
               ? 'calc(100vh - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
               : '100vh',
