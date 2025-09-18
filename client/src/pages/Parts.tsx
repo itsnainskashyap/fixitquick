@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
+import { Layout } from '@/components/Layout';
 import { CartSidebar } from '@/components/CartSidebar';
 import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
@@ -272,8 +273,8 @@ export default function Parts() {
   );
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <main className="px-4 pb-6">
+    <Layout>
+      <main className="pb-6">
         {/* Hero Section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2" data-testid="text-page-title">
@@ -426,7 +427,6 @@ export default function Parts() {
       </main>
 
       <CartSidebar isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
-      <BottomNavigation />
-    </div>
+    </Layout>
   );
 }
