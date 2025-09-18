@@ -5,6 +5,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { Layout } from '@/components/Layout';
 import LocationSetup from '@/components/LocationSetup';
 import { OrderAssignmentStatus } from '@/components/OrderAssignmentStatus';
 import { BottomNavigation } from '@/components/BottomNavigation';
@@ -384,8 +385,8 @@ export default function ServiceBooking() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <main className="px-4 pb-6">
+    <Layout>
+      <main className="pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -1162,6 +1163,6 @@ export default function ServiceBooking() {
       </main>
 
       <BottomNavigation />
-    </div>
+    </Layout>
   );
 }
