@@ -378,8 +378,8 @@ const PromotionalMediaManagementSystem = () => {
     }
   };
 
-  const media = (mediaData as any)?.media || [];
-  const stats = (statsData as any)?.statistics || {};
+  const media = mediaData?.data || [];
+  const stats = statsData?.data || {};
 
   const filteredMedia = media.filter((item: any) => {
     const matchesSearch = !searchTerm || 
@@ -1011,10 +1011,10 @@ const TaxManagementSystem = () => {
 
   // Fetch service categories
   const { data: categoriesData, isLoading: categoriesLoading } = useQuery({
-    queryKey: ['/api/v1/service-categories', 'admin'],
+    queryKey: ['admin-categories'],
     queryFn: async () => {
       const response = await apiRequest('GET', '/api/v1/admin/categories');
-      return response.data || response; // Handle envelope format
+      return response.data || [];
     }
   });
 
@@ -1095,14 +1095,13 @@ const TaxManagementSystem = () => {
   const createCategoryMutation = useMutation({
     mutationFn: async (categoryData: InsertServiceCategory) => await apiRequest('POST', '/api/v1/admin/categories', categoryData),
     onSuccess: () => {
-      // Invalidate admin queries using prefix invalidation for TanStack Query v5
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] });
+      // Invalidate admin queries with consistent patterns
+      queryClient.invalidateQueries({ queryKey: ['admin-categories'] });
       queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
       
-      // Invalidate user-facing queries for immediate data sync (using prefix invalidation)
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-categories'] }); // This covers tree, all, admin variations
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/services/categories'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
+      // Invalidate user-facing queries for immediate data sync
+      queryClient.invalidateQueries({ queryKey: ['service-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['services'] });
       
       setIsCreateCategoryDialogOpen(false);
       resetCategoryForm();
@@ -1196,10 +1195,10 @@ const TaxManagementSystem = () => {
     }
   };
 
-  const taxes = (taxesData as any)?.taxes || [];
-  const categories = (categoriesData as any)?.categories || [];
-  const stats = (statsData as any)?.statistics || {};
-  const categoryStats = (categoryStatsData as any)?.statistics || {};
+  const taxes = taxesData?.data || [];
+  const categories = categoriesData?.data || [];
+  const stats = statsData?.data || {};
+  const categoryStats = categoryStatsData?.data || {};
 
   const filteredTaxes = taxes.filter((tax: Tax) => {
     const matchesSearch = !searchTerm || 
@@ -2510,9 +2509,9 @@ const CouponManagementSystem = () => {
     setSelectedCoupon(null);
   };
   
-  const statistics = (statisticsData as any)?.statistics;
-  const coupons = (couponsData as any)?.coupons || [];
-  const totalCoupons = (couponsData as any)?.total || 0;
+  const statistics = statisticsData?.data;
+  const coupons = couponsData?.data || [];
+  const totalCoupons = couponsData?.total || 0;
   
   return (
     <div className="space-y-6">
@@ -4324,7 +4323,7 @@ export default function Admin() {
 
   // Fetch admin dashboard stats
   const { data: stats } = useQuery({
-    queryKey: ['/api/v1/admin/stats'],
+    queryKey: ['admin-stats'],
     queryFn: async () => {
       return await apiRequest('GET', '/api/v1/admin/stats');
     },
@@ -4342,7 +4341,7 @@ export default function Admin() {
     },
     enabled: !!user,
   });
-  const users = (usersResponse as any)?.data || [];
+  const users = usersResponse?.data || usersResponse || [];
 
   // Fetch orders
   const { data: ordersResponse } = useQuery({
@@ -4352,7 +4351,7 @@ export default function Admin() {
     },
     enabled: !!user,
   });
-  const orders = (ordersResponse as any)?.data || [];
+  const orders = ordersResponse?.data || ordersResponse || [];
 
   // Fetch pending verifications
   const { data: verificationsResponse } = useQuery({

@@ -3399,7 +3399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI cache statistics for monitoring
-  app.get('/api/v1/ai/cache-stats', requireRole(['admin']), async (req, res) => {
+  app.get('/api/v1/ai/cache-stats', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
       const stats = openRouterService.getCacheStats();
 
@@ -8708,20 +8708,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         users = [...users, ...providers.flat()];
       }
       
-      res.json(users);
+      res.json({ success: true, data: users });
     } catch (error) {
       console.error('Error fetching users:', error);
-      res.status(500).json({ message: 'Failed to fetch users' });
+      res.status(500).json({ success: false, message: 'Failed to fetch users' });
     }
   });
 
   app.get('/api/v1/admin/orders', adminSessionMiddleware, async (req, res) => {
     try {
       const orders = await storage.getOrders({ limit: 100 });
-      res.json(orders);
+      res.json({ success: true, data: orders });
     } catch (error) {
       console.error('Error fetching orders:', error);
-      res.status(500).json({ message: 'Failed to fetch orders' });
+      res.status(500).json({ success: false, message: 'Failed to fetch orders' });
     }
   });
 
@@ -9694,10 +9694,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      res.json(categoriesWithMeta);
+      res.json({
+        success: true,
+        data: categoriesWithMeta
+      });
     } catch (error) {
       console.error('Error fetching admin categories:', error);
-      res.status(500).json({ message: 'Failed to fetch categories' });
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch categories' 
+      });
     }
   });
 
@@ -9739,7 +9745,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json(tree);
+      res.json({
+        success: true,
+        data: tree
+      });
     } catch (error) {
       console.error('Error fetching category hierarchy:', error);
       res.status(500).json({ message: 'Failed to fetch category hierarchy' });
