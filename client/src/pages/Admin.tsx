@@ -5373,16 +5373,14 @@ export default function Admin() {
     const finalCategoryId = serviceFormData.categoryId || selectedServiceMainCategory.id;
     
     const data = {
-      ...serviceFormData,
+      name: serviceFormData.name,
+      description: serviceFormData.description || undefined,
       categoryId: finalCategoryId, // Use calculated final category ID
-      iconType: serviceFormData.iconType,
-      iconValue: serviceFormData.iconValue,
-      pricing: {
-        basePrice: serviceFormData.basePrice,
-        currency: serviceFormData.currency,
-        unit: serviceFormData.unit,
-        priceType: serviceFormData.priceType
-      }
+      basePrice: Number(serviceFormData.basePrice), // Ensure number format for decimal field
+      iconType: serviceFormData.iconType || 'emoji',
+      iconValue: serviceFormData.iconValue || '🔧',
+      isActive: serviceFormData.isActive !== undefined ? serviceFormData.isActive : true,
+      // Only send fields that exist in backend schema - exclude currency, unit, priceType
     };
     
     createServiceMutation.mutate(data);
@@ -5421,15 +5419,14 @@ export default function Admin() {
     }
     
     const data = {
-      ...serviceFormData,
-      iconType: serviceFormData.iconType,
-      iconValue: serviceFormData.iconValue,
-      pricing: {
-        basePrice: serviceFormData.basePrice,
-        currency: serviceFormData.currency,
-        unit: serviceFormData.unit,
-        priceType: serviceFormData.priceType
-      }
+      name: serviceFormData.name,
+      description: serviceFormData.description || undefined,
+      categoryId: serviceFormData.categoryId,
+      basePrice: Number(serviceFormData.basePrice), // Ensure number format for decimal field
+      iconType: serviceFormData.iconType || 'emoji',
+      iconValue: serviceFormData.iconValue || '🔧',
+      isActive: serviceFormData.isActive !== undefined ? serviceFormData.isActive : true,
+      // Only send fields that exist in backend schema - exclude currency, unit, priceType
     };
     
     updateServiceMutation.mutate({ serviceId: selectedService.id, data });
