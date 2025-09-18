@@ -27,12 +27,12 @@ export function Layout({
   const lastHeaderHeight = useRef<number>(0);
   const lastBottomNavHeight = useRef<number>(0);
   
-  // Consistent height management - mobile-first approach
+  // Consistent height management - mobile-first approach with extra padding
   const [headerHeight, setHeaderHeight] = useState(() => {
     if (typeof window !== 'undefined') {
-      return window.innerWidth < 640 ? 180 : 208; // Better mobile defaults
+      return window.innerWidth < 640 ? 200 : 240; // Increased defaults for better spacing
     }
-    return 208;
+    return 240;
   });
   
   // Bottom navigation height tracking for precise spacing
@@ -174,12 +174,12 @@ export function Layout({
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3 }}
         style={{
-          paddingTop: showHeader ? 'var(--header-height, 208px)' : '0',
+          paddingTop: showHeader ? `calc(var(--header-height, 240px) + 1rem)` : '0',
           paddingBottom: showBottomNav ? 'calc(var(--bottom-nav-height, 80px) + var(--safe-area-inset-bottom, 0px) + 1rem)' : '1.5rem',
           minHeight: showHeader 
             ? showBottomNav 
-              ? 'calc(100vh - var(--header-height, 208px) - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
-              : 'calc(100vh - var(--header-height, 208px))'
+              ? 'calc(100vh - var(--header-height, 240px) - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
+              : 'calc(100vh - var(--header-height, 240px))'
             : showBottomNav
               ? 'calc(100vh - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
               : '100vh',
