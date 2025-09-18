@@ -3817,6 +3817,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/v1/admin/services/statistics - Get service statistics
+  app.get('/api/v1/admin/services/statistics', adminSessionMiddleware, async (req, res) => {
+    console.log('🔍 Services statistics endpoint hit - processing request');
+    try {
+      const allServices = await storage.getServices();
+      const activeServices = allServices.filter(s => s.isActive);
+      const testServices = allServices.filter(s => s.isTestService);
+      
+      // Calculate category distribution
+      const categoryStats = new Map();
+      for (const service of allServices) {
+        if (service.categoryId) {
+          const category = await storage.getServiceCategory(service.categoryId);
+          const categoryName = category?.name || 'Uncategorized';
+          categoryStats.set(categoryName, (categoryStats.get(categoryName) || 0) + 1);
+        }
+      }
+
+      // Calculate price ranges
+      const priceRanges = {
+        low: allServices.filter(s => parseFloat(s.basePrice) <= 500).length,
+        medium: allServices.filter(s => parseFloat(s.basePrice) > 500 && parseFloat(s.basePrice) <= 2000).length,
+        high: allServices.filter(s => parseFloat(s.basePrice) > 2000).length
+      };
+
+      res.json({
+        success: true,
+        statistics: {
+          total: allServices.length,
+          active: activeServices.length,
+          inactive: allServices.length - activeServices.length,
+          test: testServices.length,
+          avgPrice: allServices.length > 0 ? 
+            allServices.reduce((sum, s) => sum + parseFloat(s.basePrice), 0) / allServices.length : 0,
+          totalBookings: allServices.reduce((sum, s) => sum + (s.totalBookings || 0), 0),
+          avgRating: allServices.length > 0 ? 
+            allServices.reduce((sum, s) => sum + parseFloat(s.rating || '0'), 0) / allServices.length : 0,
+          categoryDistribution: Object.fromEntries(categoryStats),
+          priceRanges
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching service statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch service statistics'
+      });
+    }
+  });
+
   // GET /api/v1/admin/services/:id - Get specific service with admin details
   app.get('/api/v1/admin/services/:id', adminSessionMiddleware, async (req, res) => {
     try {
@@ -4025,55 +4075,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to bulk update services'
-      });
-    }
-  });
-
-  // GET /api/v1/admin/services/statistics - Get service statistics
-  app.get('/api/v1/admin/services/statistics', adminSessionMiddleware, async (req, res) => {
-    try {
-      const allServices = await storage.getServices();
-      const activeServices = allServices.filter(s => s.isActive);
-      const testServices = allServices.filter(s => s.isTestService);
-      
-      // Calculate category distribution
-      const categoryStats = new Map();
-      for (const service of allServices) {
-        if (service.categoryId) {
-          const category = await storage.getServiceCategory(service.categoryId);
-          const categoryName = category?.name || 'Uncategorized';
-          categoryStats.set(categoryName, (categoryStats.get(categoryName) || 0) + 1);
-        }
-      }
-
-      // Calculate price ranges
-      const priceRanges = {
-        low: allServices.filter(s => parseFloat(s.basePrice) <= 500).length,
-        medium: allServices.filter(s => parseFloat(s.basePrice) > 500 && parseFloat(s.basePrice) <= 2000).length,
-        high: allServices.filter(s => parseFloat(s.basePrice) > 2000).length
-      };
-
-      res.json({
-        success: true,
-        statistics: {
-          total: allServices.length,
-          active: activeServices.length,
-          inactive: allServices.length - activeServices.length,
-          test: testServices.length,
-          avgPrice: allServices.length > 0 ? 
-            allServices.reduce((sum, s) => sum + parseFloat(s.basePrice), 0) / allServices.length : 0,
-          totalBookings: allServices.reduce((sum, s) => sum + (s.totalBookings || 0), 0),
-          avgRating: allServices.length > 0 ? 
-            allServices.reduce((sum, s) => sum + parseFloat(s.rating || '0'), 0) / allServices.length : 0,
-          categoryDistribution: Object.fromEntries(categoryStats),
-          priceRanges
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching service statistics:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch service statistics'
       });
     }
   });
@@ -12014,6 +12015,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get coupon statistics and analytics
+  app.get('/api/v1/admin/coupons/statistics', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    console.log('🔍 Coupons statistics endpoint hit - processing request');
+    try {
+      const { couponId } = req.query;
+      const statistics = await storage.getCouponStatistics(couponId as string);
+
+      res.json({
+        success: true,
+        statistics
+      });
+    } catch (error) {
+      console.error('Error fetching coupon statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch coupon statistics',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
+
   // Get specific coupon by ID with detailed information
   app.get('/api/v1/admin/coupons/:id', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -12244,26 +12266,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         success: false,
         message: 'Failed to bulk delete coupons',
-        error: 'INTERNAL_ERROR'
-      });
-    }
-  });
-
-  // Get coupon statistics and analytics
-  app.get('/api/v1/admin/coupons/statistics', adminSessionMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { couponId } = req.query;
-      const statistics = await storage.getCouponStatistics(couponId as string);
-
-      res.json({
-        success: true,
-        statistics
-      });
-    } catch (error) {
-      console.error('Error fetching coupon statistics:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch coupon statistics',
         error: 'INTERNAL_ERROR'
       });
     }
