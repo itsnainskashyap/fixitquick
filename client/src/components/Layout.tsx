@@ -23,13 +23,26 @@ export function Layout({
   showPWAPrompt = true
 }: LayoutProps) {
   const headerRef = useRef<HTMLDivElement>(null);
-  // Mobile-optimized default height - smaller for mobile screens
+  const bottomNavRef = useRef<HTMLDivElement>(null);
+  const lastHeaderHeight = useRef<number>(0);
+  const lastBottomNavHeight = useRef<number>(0);
+  
+  // Consistent height management - mobile-first approach
   const [headerHeight, setHeaderHeight] = useState(() => {
     if (typeof window !== 'undefined') {
-      return window.innerWidth < 640 ? 160 : 208; // Smaller default for mobile
+      return window.innerWidth < 640 ? 180 : 208; // Better mobile defaults
     }
     return 208;
   });
+  
+  // Bottom navigation height tracking for precise spacing
+  const [bottomNavHeight, setBottomNavHeight] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 640 ? 72 : 80; // Mobile-optimized bottom nav height
+    }
+    return 80;
+  });
+  
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [, setRouterLocation] = useLocation();
   
@@ -51,14 +64,18 @@ export function Layout({
     }
   };
 
-  // Use ResizeObserver for better performance than window resize
+  // Optimized ResizeObserver for header - measures total height including safe-area
   useEffect(() => {
     if (!headerRef.current) return;
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const newHeight = entry.contentRect.height;
-        if (Math.abs(newHeight - headerHeight) > 2) {
+        // Use getBoundingClientRect() to get total height including safe-area padding
+        const rect = entry.target.getBoundingClientRect();
+        const newHeight = rect.height;
+        // Use ref to prevent dependency on state that causes resubscription
+        if (Math.abs(newHeight - lastHeaderHeight.current) > 2) {
+          lastHeaderHeight.current = newHeight;
           setHeaderHeight(newHeight);
           document.documentElement.style.setProperty('--header-height', `${newHeight}px`);
         }
@@ -70,7 +87,39 @@ export function Layout({
     return () => {
       resizeObserver.disconnect();
     };
-  }, [headerHeight]);
+  }, []); // No dependencies to prevent unnecessary resubscriptions
+
+  // Optimized ResizeObserver for bottom navigation - measures total height including safe-area
+  useEffect(() => {
+    if (!showBottomNav) {
+      // Handle showBottomNav=false case by setting height to 0
+      document.documentElement.style.setProperty('--bottom-nav-height', '0px');
+      setBottomNavHeight(0);
+      return;
+    }
+
+    if (!bottomNavRef.current) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // Use getBoundingClientRect() to get total height including safe-area padding
+        const rect = entry.target.getBoundingClientRect();
+        const newHeight = rect.height;
+        // Use ref to prevent dependency on state that causes resubscription
+        if (Math.abs(newHeight - lastBottomNavHeight.current) > 2) {
+          lastBottomNavHeight.current = newHeight;
+          setBottomNavHeight(newHeight);
+          document.documentElement.style.setProperty('--bottom-nav-height', `${newHeight}px`);
+        }
+      }
+    });
+
+    resizeObserver.observe(bottomNavRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [showBottomNav]); // Only depend on showBottomNav visibility
 
   // Initial header height measurement
   useLayoutEffect(() => {
@@ -94,9 +143,12 @@ export function Layout({
     setIsCartOpen(true);
   };
 
-  // Set initial CSS variable
+  // Set initial CSS variables for dynamic spacing
   useLayoutEffect(() => {
     document.documentElement.style.setProperty('--header-height', `${headerHeight}px`);
+    document.documentElement.style.setProperty('--bottom-nav-height', showBottomNav ? `${bottomNavHeight}px` : '0px');
+    lastHeaderHeight.current = headerHeight;
+    lastBottomNavHeight.current = bottomNavHeight;
   }, []);
 
   return (
@@ -115,16 +167,22 @@ export function Layout({
         </div>
       )}
 
-      {/* Main Content Area - Mobile optimized */}
+      {/* Main Content Area - Fully responsive with consistent spacing */}
       <motion.main 
-        className="main-content"
+        className="main-content px-4 sm:px-6 lg:px-8"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3 }}
         style={{
-          paddingTop: showHeader ? 'var(--header-height, 160px)' : '0',
-          paddingBottom: showBottomNav ? '5rem' : '1.5rem',
-          minHeight: showHeader ? 'calc(100vh - var(--header-height, 160px))' : '100vh',
+          paddingTop: showHeader ? 'var(--header-height, 208px)' : '0',
+          paddingBottom: showBottomNav ? 'calc(var(--bottom-nav-height, 80px) + var(--safe-area-inset-bottom, 0px) + 1rem)' : '1.5rem',
+          minHeight: showHeader 
+            ? showBottomNav 
+              ? 'calc(100vh - var(--header-height, 208px) - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
+              : 'calc(100vh - var(--header-height, 208px))'
+            : showBottomNav
+              ? 'calc(100vh - var(--bottom-nav-height, 80px) - var(--safe-area-inset-bottom, 0px))'
+              : '100vh',
         }}
         data-testid="main-content"
       >
@@ -135,7 +193,9 @@ export function Layout({
       <FloatingCartWidget onClose={() => setIsCartOpen(false)} />
 
       {/* Bottom Navigation */}
-      {showBottomNav && <BottomNavigation />}
+      {showBottomNav && (
+        <BottomNavigation ref={bottomNavRef} />
+      )}
 
       {/* Cart Sidebar */}
       <CartSidebar 

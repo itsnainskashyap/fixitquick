@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
+import { Layout } from '@/components/Layout';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -90,8 +91,8 @@ export default function Cart() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <main className="px-4 pb-6 max-w-4xl mx-auto">
+    <Layout>
+      <main className="pb-6 max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -379,6 +380,6 @@ export default function Cart() {
           </div>
         )}
       </main>
-    </div>
+    </Layout>
   );
 }

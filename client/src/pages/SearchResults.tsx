@@ -5,8 +5,7 @@ import { useQuery, useInfiniteQuery, useMutation } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
 import { useToast } from '@/hooks/use-toast';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
+import { Layout } from '@/components/Layout';
 import { AISearchBar } from '@/components/AISearchBar';
 import { AIChat } from '@/components/AIChat';
 import { ServiceCard } from '@/components/ServiceCard';
@@ -371,8 +370,8 @@ export default function SearchResults() {
   const totalResults = searchResults?.pages?.[0]?.results?.totalResults || 0;
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <Layout>
+      <div className="max-w-7xl mx-auto">
       
       <main className="container mx-auto px-4 py-6 pb-20">
         {/* Enhanced Search Header */}
@@ -837,7 +836,7 @@ export default function SearchResults() {
         </div>
       </main>
 
-      <BottomNavigation />
-    </div>
+      </div>
+    </Layout>
   );
 }

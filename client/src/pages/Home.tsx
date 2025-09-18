@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
+import { Layout } from '@/components/Layout';
 import { ServiceCard } from '@/components/ServiceCard';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
@@ -117,7 +118,8 @@ export default function Home() {
   }
 
   return (
-    <div className="px-4 pb-6">
+    <Layout>
+      <div className="pb-6">
         {/* Welcome Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -501,6 +503,7 @@ export default function Home() {
             </div>
           )}
         </motion.div>
-    </div>
+      </div>
+    </Layout>
   );
 }

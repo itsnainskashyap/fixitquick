@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { 
@@ -57,7 +58,7 @@ const navigationItems: NavigationItem[] = [
   },
 ];
 
-export function BottomNavigation() {
+export const BottomNavigation = forwardRef<HTMLDivElement>((props, ref) => {
   const [location, setLocation] = useLocation();
 
   const handleNavigation = (path: string) => {
@@ -66,10 +67,11 @@ export function BottomNavigation() {
 
   return (
     <motion.nav
+      ref={ref}
       initial={{ y: 100 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-      className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-[var(--z-bottom-nav)] safe-bottom"
+      className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-[var(--z-bottom-nav)] bottom-nav-safe"
       data-testid="bottom-navigation"
     >
       <div className="flex items-center justify-around py-2 px-2">
@@ -123,7 +125,9 @@ export function BottomNavigation() {
       </div>
     </motion.nav>
   );
-}
+});
+
+BottomNavigation.displayName = 'BottomNavigation';
 
 // Hook for managing bottom navigation state
 export function useBottomNavigation() {

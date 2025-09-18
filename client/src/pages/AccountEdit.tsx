@@ -5,8 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
+import { Layout } from '@/components/Layout';
 import AvatarUpload from '@/components/AvatarUpload';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -427,10 +426,8 @@ export default function AccountEdit() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header />
-
-      <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
+    <Layout>
+      <main className="pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -1461,8 +1458,6 @@ export default function AccountEdit() {
           </Tabs>
         </motion.div>
       </main>
-
-      <BottomNavigation />
-    </div>
+    </Layout>
   );
 }

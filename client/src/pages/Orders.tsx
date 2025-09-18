@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useCart } from '@/hooks/useCart';
+import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -431,8 +432,8 @@ export default function Orders() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <main className="px-4 py-6">
+    <Layout>
+      <div className="max-w-6xl mx-auto">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -600,7 +601,7 @@ export default function Orders() {
             </TabsContent>
           </Tabs>
         </motion.div>
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 }

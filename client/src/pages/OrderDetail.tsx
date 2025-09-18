@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation, useRoute } from 'wouter';
+import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -329,9 +330,9 @@ export default function OrderDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background pb-20">
-        <Header />
-        <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
+      <Layout>
+        <div className="max-w-4xl mx-auto">
+        <main className="px-4 pb-6" >
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
@@ -339,16 +340,16 @@ export default function OrderDetail() {
             </div>
           </div>
         </main>
-        <BottomNavigation />
-      </div>
+        </div>
+      </Layout>
     );
   }
 
   if (error || !order) {
     return (
-      <div className="min-h-screen bg-background pb-20">
-        <Header />
-        <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
+      <Layout>
+        <div className="max-w-4xl mx-auto">
+        <main className="px-4 pb-6" >
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <AlertTriangle className="w-8 h-8 mx-auto mb-4 text-destructive" />
@@ -363,8 +364,8 @@ export default function OrderDetail() {
             </div>
           </div>
         </main>
-        <BottomNavigation />
-      </div>
+        </div>
+      </Layout>
     );
   }
 
@@ -373,10 +374,10 @@ export default function OrderDetail() {
   const isAdmin = userRole === 'admin';
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header />
+    <Layout>
+      <div className="max-w-4xl mx-auto">
 
-      <main className="px-4 pb-6 max-w-4xl mx-auto" style={{ paddingTop: 'var(--header-height, 160px)' }}>
+      <main className="px-4 pb-6 max-w-4xl mx-auto" >
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -923,7 +924,7 @@ export default function OrderDetail() {
         </motion.div>
       </main>
 
-      <BottomNavigation />
-    </div>
+      </div>
+    </Layout>
   );
 }

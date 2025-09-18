@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
+import { Layout } from '@/components/Layout';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -235,13 +234,8 @@ export default function Checkout() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <Header 
-        onCartClick={() => setLocation('/cart')} 
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="px-4 pb-6 max-w-4xl mx-auto" style={{ paddingTop: 'var(--header-height, 160px)' }}>
+    <Layout>
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -607,9 +601,7 @@ export default function Checkout() {
             </Card>
           </div>
         </div>
-      </main>
-
-      <BottomNavigation />
-    </div>
+      </div>
+    </Layout>
   );
 }

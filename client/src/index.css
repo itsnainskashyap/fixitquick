@@ -41,8 +41,15 @@
   --font-serif: Georgia, serif;
   --font-mono: 'Monaco', monospace;
   
-  /* Dynamic Layout Variables */
-  --header-height: 208px; /* Default fallback height (pt-52 equivalent) */
+  /* Dynamic Layout Variables - Mobile-first responsive */
+  --header-height: 208px; /* Default header height */
+  --bottom-nav-height: 80px; /* Default bottom navigation height */
+  
+  /* Safe Area Variables for modern devices with notches/dynamic islands */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
   
   /* Z-index hierarchy for consistent layering */
   --z-base: 1;
@@ -105,25 +112,35 @@
     background-color: hsl(var(--background));
     border-bottom: 1px solid hsl(var(--border));
     box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    /* Safe area support for devices with notches */
+    padding-top: var(--safe-area-inset-top);
+    padding-left: var(--safe-area-inset-left);
+    padding-right: var(--safe-area-inset-right);
   }
   
   .main-content {
-    min-height: calc(100vh - var(--header-height, 208px));
-    transition: padding-top 0.3s ease;
+    min-height: calc(100vh - var(--header-height, 208px) - var(--bottom-nav-height, 80px));
+    transition: all 0.3s ease;
+    position: relative;
   }
   
-  /* Responsive layout adjustments */
+  /* Enhanced responsive layout adjustments - Mobile-first approach */
+  @media (max-width: 640px) {
+    .main-content {
+      /* Ensure proper spacing on small screens */
+      min-height: calc(100vh - var(--header-height, 180px) - var(--bottom-nav-height, 72px));
+    }
+  }
+  
   @media (min-width: 768px) {
     .main-content {
-      padding-left: 1rem;
-      padding-right: 1rem;
+      /* Remove horizontal padding since Layout.tsx now handles this with Tailwind classes */
     }
   }
   
   @media (min-width: 1024px) {
     .main-content {
-      padding-left: 2rem;
-      padding-right: 2rem;
+      /* Layout.tsx handles responsive padding with px-4 sm:px-6 lg:px-8 */
     }
   }
 
@@ -630,15 +647,17 @@ html {
   }
 }
 
-/* Floating Cart Widget Styles */
+/* Floating Cart Widget Styles - Enhanced with dynamic bottom nav height */
 .floating-cart-widget {
-  @apply fixed bottom-20 left-4 right-4 z-[var(--z-floating-cart)];
+  @apply fixed left-4 right-4 z-[var(--z-floating-cart)];
+  bottom: calc(var(--bottom-nav-height, 80px) + 0.5rem);
   max-width: calc(100vw - 2rem);
 }
 
 @media (min-width: 640px) {
   .floating-cart-widget {
-    @apply left-6 right-6 bottom-24;
+    @apply left-6 right-6;
+    bottom: calc(var(--bottom-nav-height, 80px) + 1rem);
     max-width: calc(100vw - 3rem);
   }
 }
@@ -646,6 +665,7 @@ html {
 @media (min-width: 768px) {
   .floating-cart-widget {
     @apply left-8 right-8;
+    bottom: calc(var(--bottom-nav-height, 80px) + 1rem);
     max-width: calc(100vw - 4rem);
   }
 }
@@ -653,6 +673,7 @@ html {
 @media (min-width: 1024px) {
   .floating-cart-widget {
     @apply left-auto right-8;
+    bottom: calc(var(--bottom-nav-height, 80px) + 1rem);
     max-width: 400px;
     width: 400px;
   }
@@ -685,8 +706,7 @@ html {
 }
 
 .floating-cart-close {
-  @apply absolute top-2 right-2 w-8 h-8 p-0 hover:bg-white/20 text-white/80 hover:text-white;
-  border-radius: 6px;
+  @apply absolute top-2 right-2 w-8 h-8 p-0 hover:bg-white/20 text-white/80 hover:text-white rounded-md;
 }
 
 .floating-cart-summary {
@@ -843,4 +863,35 @@ html {
   .placeholder-transition {
     transition: none;
   }
+}
+
+/* Safe area utility classes for modern devices with notches/dynamic islands */
+.safe-bottom {
+  padding-bottom: calc(var(--safe-area-inset-bottom) + 0.5rem);
+}
+
+.safe-top {
+  padding-top: var(--safe-area-inset-top);
+}
+
+.safe-left {
+  padding-left: var(--safe-area-inset-left);
+}
+
+.safe-right {
+  padding-right: var(--safe-area-inset-right);
+}
+
+.safe-area {
+  padding-top: var(--safe-area-inset-top);
+  padding-bottom: var(--safe-area-inset-bottom);
+  padding-left: var(--safe-area-inset-left);
+  padding-right: var(--safe-area-inset-right);
+}
+
+/* Enhanced bottom navigation for safe areas */
+.bottom-nav-safe {
+  padding-bottom: calc(var(--safe-area-inset-bottom) + 0.5rem);
+  padding-left: var(--safe-area-inset-left);
+  padding-right: var(--safe-area-inset-right);
 }
