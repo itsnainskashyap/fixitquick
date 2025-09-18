@@ -69,7 +69,7 @@ export function BottomNavigation() {
       initial={{ y: 100 }}
       animate={{ y: 0 }}
       transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-      className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-40 safe-bottom"
+      className="fixed bottom-0 left-0 right-0 bg-background border-t border-border z-[var(--z-bottom-nav)] safe-bottom"
       data-testid="bottom-navigation"
     >
       <div className="flex items-center justify-around py-2 px-2">

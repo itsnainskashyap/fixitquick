@@ -43,6 +43,17 @@
   
   /* Dynamic Layout Variables */
   --header-height: 208px; /* Default fallback height (pt-52 equivalent) */
+  
+  /* Z-index hierarchy for consistent layering */
+  --z-base: 1;
+  --z-header: 40;
+  --z-bottom-nav: 40;
+  --z-backdrop: 45;
+  --z-floating-cart: 50;
+  --z-sidebar: 50;
+  --z-modal: 55;
+  --z-dropdown: 55;
+  --z-toast: 60;
 }
 
 .dark {
@@ -284,7 +295,7 @@
 
 /* PWA specific styles */
 .pwa-install-banner {
-  @apply fixed top-0 left-0 right-0 z-50 bg-primary text-primary-foreground p-4 shadow-lg;
+  @apply fixed top-0 left-0 right-0 z-[var(--z-modal)] bg-primary text-primary-foreground p-4 shadow-lg;
   animation: slideDown 0.3s ease-out;
 }
 
@@ -523,7 +534,7 @@ html {
 
 /* Cart sidebar styles - Mobile optimized */
 .cart-sidebar {
-  @apply fixed inset-y-0 right-0 bg-background border-l shadow-xl z-50 transform transition-transform duration-300;
+  @apply fixed inset-y-0 right-0 bg-background border-l shadow-xl z-[var(--z-sidebar)] transform transition-transform duration-300;
   border-left-color: rgba(147, 51, 234, 0.2);
   width: min(320px, 90vw); /* Mobile-first responsive width */
 }
@@ -621,7 +632,7 @@ html {
 
 /* Floating Cart Widget Styles */
 .floating-cart-widget {
-  @apply fixed bottom-20 left-4 right-4 z-50;
+  @apply fixed bottom-20 left-4 right-4 z-[var(--z-floating-cart)];
   max-width: calc(100vw - 2rem);
 }
 

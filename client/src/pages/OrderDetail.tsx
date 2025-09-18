@@ -331,7 +331,7 @@ export default function OrderDetail() {
     return (
       <div className="min-h-screen bg-background pb-20">
         <Header />
-        <main className="pt-52 px-4 pb-6">
+        <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
@@ -348,7 +348,7 @@ export default function OrderDetail() {
     return (
       <div className="min-h-screen bg-background pb-20">
         <Header />
-        <main className="pt-52 px-4 pb-6">
+        <main className="px-4 pb-6" style={{ paddingTop: 'var(--header-height, 160px)' }}>
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
               <AlertTriangle className="w-8 h-8 mx-auto mb-4 text-destructive" />
@@ -376,7 +376,7 @@ export default function OrderDetail() {
     <div className="min-h-screen bg-background pb-20">
       <Header />
 
-      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="px-4 pb-6 max-w-4xl mx-auto" style={{ paddingTop: 'var(--header-height, 160px)' }}>
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

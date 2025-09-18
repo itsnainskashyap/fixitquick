@@ -36,8 +36,19 @@ export function FloatingCartWidget({ onClose }: FloatingCartWidgetProps) {
     setLastCartSignature(cartSignature);
   }, [cartSignature, lastCartSignature]);
 
-  // Don't show widget on cart page or checkout pages
-  const hideOnPages = ['/cart', '/checkout'];
+  // Don't show widget on cart, checkout, profile, admin, and auth pages
+  const hideOnPages = [
+    '/cart', 
+    '/checkout', 
+    '/account', 
+    '/admin', 
+    '/login', 
+    '/admin-login', 
+    '/service-provider-login', 
+    '/parts-provider-login',
+    '/provider-registration',
+    '/part-provider-registration'
+  ];
   const shouldHide = hideOnPages.some(page => location.startsWith(page));
   
   // Don't show if cart is empty, on specific pages, or if manually dismissed
@@ -154,23 +165,4 @@ export function FloatingCartWidget({ onClose }: FloatingCartWidgetProps) {
       )}
     </AnimatePresence>
   );
-}
-
-// Hook for managing floating cart widget state
-export function useFloatingCartWidget() {
-  const { cart, getItemCount } = useCart();
-  const [location] = useLocation();
-  
-  const hideOnPages = ['/cart', '/checkout'];
-  const shouldHide = hideOnPages.some(page => location.startsWith(page));
-  
-  const isVisible = cart.items.length > 0 && !shouldHide;
-  const itemCount = getItemCount();
-  
-  return {
-    isVisible,
-    itemCount,
-    total: cart.total,
-    items: cart.items,
-  };
 }

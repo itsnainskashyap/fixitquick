@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
 import { CartSidebar } from '@/components/CartSidebar';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { useCart } from '@/hooks/useCart';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -275,12 +273,7 @@ export default function Parts() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header
-        onCartClick={() => setIsCartOpen(true)}
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-52 px-4 pb-6">
+      <main className="px-4 pb-6">
         {/* Hero Section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2" data-testid="text-page-title">

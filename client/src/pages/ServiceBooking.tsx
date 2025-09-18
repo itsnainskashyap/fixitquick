@@ -5,8 +5,6 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import LocationSetup from '@/components/LocationSetup';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -391,9 +389,7 @@ export default function ServiceBooking() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header />
-      
-      <main className="pt-52 px-4 pb-6">
+      <main className="px-4 pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -497,7 +493,7 @@ export default function ServiceBooking() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-[var(--z-modal)] p-4"
           >
             <Card className="w-full max-w-md">
               <CardHeader>

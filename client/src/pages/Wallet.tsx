@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -292,9 +290,7 @@ export default function WalletPage() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header />
-
-      <main className="pt-52 px-4 pb-6">
+      <main className="px-4 pb-6">
         {/* Page Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -341,9 +339,7 @@ For questions about our cookie policy, contact us at privacy@fixitquick.com
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header />
-
-      <main className="pt-52 px-4 pb-6">
+      <main className="px-4 pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

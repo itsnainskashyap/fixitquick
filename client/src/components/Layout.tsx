@@ -131,10 +131,8 @@ export function Layout({
         {children}
       </motion.main>
 
-      {/* Floating Cart Widget - only show when authenticated and has items */}
-      {isAuthenticated && getItemCount() > 0 && (
-        <FloatingCartWidget onClose={() => setIsCartOpen(false)} />
-      )}
+      {/* Floating Cart Widget - handles its own visibility logic */}
+      <FloatingCartWidget onClose={() => setIsCartOpen(false)} />
 
       {/* Bottom Navigation */}
       {showBottomNav && <BottomNavigation />}

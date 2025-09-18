@@ -241,7 +241,7 @@ export default function Checkout() {
         cartItemsCount={getItemCount()}
       />
 
-      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="px-4 pb-6 max-w-4xl mx-auto" style={{ paddingTop: 'var(--header-height, 160px)' }}>
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

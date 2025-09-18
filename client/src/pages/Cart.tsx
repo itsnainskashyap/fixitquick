@@ -3,8 +3,6 @@ import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -93,12 +91,7 @@ export default function Cart() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header 
-        onCartClick={() => {}} 
-        cartItemsCount={getItemCount()}
-      />
-
-      <main className="pt-52 px-4 pb-6 max-w-4xl mx-auto">
+      <main className="px-4 pb-6 max-w-4xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -386,8 +379,6 @@ export default function Cart() {
           </div>
         )}
       </main>
-
-      <BottomNavigation />
     </div>
   );
 }

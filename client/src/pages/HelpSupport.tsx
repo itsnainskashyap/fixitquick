@@ -5,8 +5,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Header } from '@/components/Header';
-import { BottomNavigation } from '@/components/BottomNavigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -244,9 +242,7 @@ export default function HelpSupport() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <Header />
-
-      <main className="pt-52 px-4 pb-6">
+      <main className="px-4 pb-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
