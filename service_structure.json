@@ -1,0 +1,944 @@
+{
+  "mainCategories": [
+    {
+      "name": "Electrician",
+      "slug": "electrician",
+      "icon": "⚡",
+      "description": "Electrical installation, repair and maintenance services",
+      "level": 0,
+      "sortOrder": 1,
+      "subcategories": [
+        {
+          "name": "Home Wiring",
+          "slug": "home-wiring",
+          "icon": "🔌",
+          "description": "Complete home electrical wiring solutions",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "New Electrical Installation",
+              "slug": "new-electrical-installation",
+              "description": "Complete electrical installation for new homes or major renovations",
+              "basePrice": 8000,
+              "estimatedDuration": 480,
+              "icon": "🔌",
+              "iconType": "emoji",
+              "iconValue": "🔌"
+            },
+            {
+              "name": "Home Rewiring Service",
+              "slug": "home-rewiring-service", 
+              "description": "Complete rewiring of old electrical systems for safety and efficiency",
+              "basePrice": 12000,
+              "estimatedDuration": 720,
+              "icon": "⚡",
+              "iconType": "emoji",
+              "iconValue": "⚡"
+            },
+            {
+              "name": "Switch & Socket Installation",
+              "slug": "switch-socket-installation",
+              "description": "Installation and replacement of electrical switches and sockets",
+              "basePrice": 150,
+              "estimatedDuration": 30,
+              "icon": "🔘",
+              "iconType": "emoji",
+              "iconValue": "🔘"
+            },
+            {
+              "name": "MCB & DB Installation",
+              "slug": "mcb-db-installation",
+              "description": "Main distribution board and MCB installation or upgrades",
+              "basePrice": 2500,
+              "estimatedDuration": 180,
+              "icon": "⚡",
+              "iconType": "emoji",
+              "iconValue": "⚡"
+            }
+          ]
+        },
+        {
+          "name": "Appliance Repair",
+          "slug": "appliance-repair",
+          "icon": "🔧",
+          "description": "Electrical appliance repair and maintenance",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Ceiling Fan Repair",
+              "slug": "ceiling-fan-repair",
+              "description": "Repair and maintenance of ceiling fans including motor and blade issues",
+              "basePrice": 300,
+              "estimatedDuration": 60,
+              "icon": "🪬",
+              "iconType": "emoji",
+              "iconValue": "🪬"
+            },
+            {
+              "name": "AC Repair & Service",
+              "slug": "ac-repair-service",
+              "description": "Air conditioner repair, gas filling and general maintenance",
+              "basePrice": 500,
+              "estimatedDuration": 90,
+              "icon": "❄️",
+              "iconType": "emoji",
+              "iconValue": "❄️"
+            },
+            {
+              "name": "LED & Bulb Installation",
+              "slug": "led-bulb-installation",
+              "description": "Installation and replacement of LED lights and bulbs",
+              "basePrice": 100,
+              "estimatedDuration": 20,
+              "icon": "💡",
+              "iconType": "emoji",
+              "iconValue": "💡"
+            },
+            {
+              "name": "Water Heater Repair",
+              "slug": "water-heater-repair",
+              "description": "Electric water heater and geyser repair services",
+              "basePrice": 400,
+              "estimatedDuration": 75,
+              "icon": "🚿",
+              "iconType": "emoji",
+              "iconValue": "🚿"
+            }
+          ]
+        },
+        {
+          "name": "Electrical Emergency",
+          "slug": "electrical-emergency",
+          "icon": "🚨",
+          "description": "Emergency electrical repair services",
+          "level": 1,
+          "sortOrder": 3,
+          "services": [
+            {
+              "name": "Power Outage Fix",
+              "slug": "power-outage-fix",
+              "description": "Emergency power restoration and electrical fault diagnosis",
+              "basePrice": 800,
+              "estimatedDuration": 120,
+              "icon": "⚡",
+              "iconType": "emoji",
+              "iconValue": "⚡"
+            },
+            {
+              "name": "Short Circuit Repair",
+              "slug": "short-circuit-repair",
+              "description": "Emergency short circuit detection and repair",
+              "basePrice": 600,
+              "estimatedDuration": 90,
+              "icon": "🚨",
+              "iconType": "emoji",
+              "iconValue": "🚨"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Plumber",
+      "slug": "plumber", 
+      "icon": "🔧",
+      "description": "Plumbing installation, repair and maintenance services",
+      "level": 0,
+      "sortOrder": 2,
+      "subcategories": [
+        {
+          "name": "Pipe Works",
+          "slug": "pipe-works",
+          "icon": "🚰",
+          "description": "Water pipe installation, repair and maintenance",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Pipe Installation",
+              "slug": "pipe-installation",
+              "description": "New water pipe installation for homes and commercial spaces",
+              "basePrice": 1500,
+              "estimatedDuration": 240,
+              "icon": "🚰",
+              "iconType": "emoji",
+              "iconValue": "🚰"
+            },
+            {
+              "name": "Pipe Leak Repair",
+              "slug": "pipe-leak-repair",
+              "description": "Detection and repair of water pipe leaks",
+              "basePrice": 350,
+              "estimatedDuration": 60,
+              "icon": "💧",
+              "iconType": "emoji",
+              "iconValue": "💧"
+            },
+            {
+              "name": "Pipe Blockage Clearing",
+              "slug": "pipe-blockage-clearing",
+              "description": "Clearing blocked water pipes and drainage systems",
+              "basePrice": 400,
+              "estimatedDuration": 90,
+              "icon": "🔧",
+              "iconType": "emoji",
+              "iconValue": "🔧"
+            }
+          ]
+        },
+        {
+          "name": "Bathroom Fitting",
+          "slug": "bathroom-fitting",
+          "icon": "🚿",
+          "description": "Complete bathroom fixture installation and repair",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Toilet Installation",
+              "slug": "toilet-installation",
+              "description": "Complete toilet and commode installation with fittings",
+              "basePrice": 800,
+              "estimatedDuration": 180,
+              "icon": "🚽",
+              "iconType": "emoji",
+              "iconValue": "🚽"
+            },
+            {
+              "name": "Basin & Sink Installation",
+              "slug": "basin-sink-installation", 
+              "description": "Washbasin and kitchen sink installation with plumbing",
+              "basePrice": 600,
+              "estimatedDuration": 120,
+              "icon": "🚿",
+              "iconType": "emoji",
+              "iconValue": "🚿"
+            },
+            {
+              "name": "Shower Installation",
+              "slug": "shower-installation",
+              "description": "Shower head and bathroom shower system installation",
+              "basePrice": 500,
+              "estimatedDuration": 90,
+              "icon": "🚿",
+              "iconType": "emoji",
+              "iconValue": "🚿"
+            },
+            {
+              "name": "Tap & Faucet Repair",
+              "slug": "tap-faucet-repair",
+              "description": "Kitchen and bathroom tap repair and replacement",
+              "basePrice": 200,
+              "estimatedDuration": 45,
+              "icon": "🚰",
+              "iconType": "emoji", 
+              "iconValue": "🚰"
+            }
+          ]
+        },
+        {
+          "name": "Emergency Plumbing",
+          "slug": "emergency-plumbing",
+          "icon": "🚨",
+          "description": "Emergency plumbing repair services",
+          "level": 1,
+          "sortOrder": 3,
+          "services": [
+            {
+              "name": "Emergency Leak Fix",
+              "slug": "emergency-leak-fix",
+              "description": "Urgent water leak repair and damage control",
+              "basePrice": 700,
+              "estimatedDuration": 90,
+              "icon": "💧",
+              "iconType": "emoji",
+              "iconValue": "💧"
+            },
+            {
+              "name": "Drain Unblocking",
+              "slug": "drain-unblocking",
+              "description": "Emergency drain and sewer unblocking services",
+              "basePrice": 500,
+              "estimatedDuration": 75,
+              "icon": "🔧",
+              "iconType": "emoji",
+              "iconValue": "🔧"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cleaner",
+      "slug": "cleaner",
+      "icon": "🧹",
+      "description": "Professional cleaning services for homes and offices",
+      "level": 0,
+      "sortOrder": 3,
+      "subcategories": [
+        {
+          "name": "Home Cleaning",
+          "slug": "home-cleaning",
+          "icon": "🏠",
+          "description": "Comprehensive home cleaning services",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Regular House Cleaning", 
+              "slug": "regular-house-cleaning",
+              "description": "Regular deep cleaning of entire house including all rooms",
+              "basePrice": 800,
+              "estimatedDuration": 180,
+              "icon": "🧹",
+              "iconType": "emoji",
+              "iconValue": "🧹"
+            },
+            {
+              "name": "Kitchen Deep Cleaning",
+              "slug": "kitchen-deep-cleaning",
+              "description": "Thorough kitchen cleaning including appliances and chimney",
+              "basePrice": 600,
+              "estimatedDuration": 120,
+              "icon": "🍳",
+              "iconType": "emoji",
+              "iconValue": "🍳"
+            },
+            {
+              "name": "Bathroom Deep Cleaning",
+              "slug": "bathroom-deep-cleaning",
+              "description": "Complete bathroom sanitization and deep cleaning",
+              "basePrice": 400,
+              "estimatedDuration": 90,
+              "icon": "🚿",
+              "iconType": "emoji",
+              "iconValue": "🚿"
+            },
+            {
+              "name": "Balcony Cleaning",
+              "slug": "balcony-cleaning",
+              "description": "Balcony and terrace cleaning with plant area maintenance",
+              "basePrice": 300,
+              "estimatedDuration": 60,
+              "icon": "🌿",
+              "iconType": "emoji",
+              "iconValue": "🌿"
+            }
+          ]
+        },
+        {
+          "name": "Specialized Cleaning", 
+          "slug": "specialized-cleaning",
+          "icon": "✨",
+          "description": "Specialized cleaning for specific items and areas",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Sofa & Carpet Cleaning",
+              "slug": "sofa-carpet-cleaning",
+              "description": "Professional sofa, carpet and upholstery cleaning",
+              "basePrice": 500,
+              "estimatedDuration": 120,
+              "icon": "🛋️",
+              "iconType": "emoji",
+              "iconValue": "🛋️"
+            },
+            {
+              "name": "AC Deep Cleaning",
+              "slug": "ac-deep-cleaning",
+              "description": "Split and window AC deep cleaning and sanitization",
+              "basePrice": 700,
+              "estimatedDuration": 90,
+              "icon": "❄️",
+              "iconType": "emoji",
+              "iconValue": "❄️"
+            },
+            {
+              "name": "Post Construction Cleaning",
+              "slug": "post-construction-cleaning",
+              "description": "Complete cleanup after construction or renovation work",
+              "basePrice": 1500,
+              "estimatedDuration": 360,
+              "icon": "🏗️",
+              "iconType": "emoji",
+              "iconValue": "🏗️"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Carpentry", 
+      "slug": "carpentry",
+      "icon": "🔨",
+      "description": "Woodwork, furniture repair and carpentry services",
+      "level": 0,
+      "sortOrder": 4,
+      "subcategories": [
+        {
+          "name": "Furniture Repair",
+          "slug": "furniture-repair",
+          "icon": "🪑",
+          "description": "Repair and restoration of furniture items",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Chair & Table Repair",
+              "slug": "chair-table-repair",
+              "description": "Repair of wooden chairs, tables and dining furniture",
+              "basePrice": 400,
+              "estimatedDuration": 90,
+              "icon": "🪑",
+              "iconType": "emoji",
+              "iconValue": "🪑"
+            },
+            {
+              "name": "Bed & Wardrobe Repair",
+              "slug": "bed-wardrobe-repair",
+              "description": "Repair of beds, wardrobes and bedroom furniture",
+              "basePrice": 600,
+              "estimatedDuration": 120,
+              "icon": "🛏️",
+              "iconType": "emoji",
+              "iconValue": "🛏️"
+            },
+            {
+              "name": "Door & Window Repair",
+              "slug": "door-window-repair",
+              "description": "Wooden door and window frame repair and maintenance",
+              "basePrice": 500,
+              "estimatedDuration": 120,
+              "icon": "🚪",
+              "iconType": "emoji",
+              "iconValue": "🚪"
+            }
+          ]
+        },
+        {
+          "name": "Custom Carpentry",
+          "slug": "custom-carpentry",
+          "icon": "🔨",
+          "description": "Custom furniture and carpentry work",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Custom Furniture Making",
+              "slug": "custom-furniture-making",
+              "description": "Custom designed furniture creation and installation", 
+              "basePrice": 2000,
+              "estimatedDuration": 480,
+              "icon": "🪑",
+              "iconType": "emoji",
+              "iconValue": "🪑"
+            },
+            {
+              "name": "Kitchen Cabinet Installation",
+              "slug": "kitchen-cabinet-installation",
+              "description": "Custom kitchen cabinet design and installation",
+              "basePrice": 3500,
+              "estimatedDuration": 360,
+              "icon": "🗄️",
+              "iconType": "emoji",
+              "iconValue": "🗄️"
+            },
+            {
+              "name": "Shelving & Storage Solutions",
+              "slug": "shelving-storage-solutions",
+              "description": "Custom shelving and storage solutions for homes",
+              "basePrice": 1200,
+              "estimatedDuration": 180,
+              "icon": "📚",
+              "iconType": "emoji",
+              "iconValue": "📚"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Pest Control",
+      "slug": "pest-control",
+      "icon": "🐛",
+      "description": "Professional pest control and extermination services",
+      "level": 0,
+      "sortOrder": 5,
+      "subcategories": [
+        {
+          "name": "Residential Pest Control",
+          "slug": "residential-pest-control",
+          "icon": "🏠",
+          "description": "Comprehensive pest control for homes",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Cockroach Control",
+              "slug": "cockroach-control",
+              "description": "Complete cockroach extermination and prevention treatment",
+              "basePrice": 800,
+              "estimatedDuration": 120,
+              "icon": "🪳",
+              "iconType": "emoji", 
+              "iconValue": "🪳"
+            },
+            {
+              "name": "Ant Control Treatment",
+              "slug": "ant-control-treatment",
+              "description": "Ant colony elimination and prevention services",
+              "basePrice": 600,
+              "estimatedDuration": 90,
+              "icon": "🐜",
+              "iconType": "emoji",
+              "iconValue": "🐜"
+            },
+            {
+              "name": "Termite Control",
+              "slug": "termite-control",
+              "description": "Pre and post construction termite control treatment",
+              "basePrice": 1500,
+              "estimatedDuration": 180,
+              "icon": "🐛",
+              "iconType": "emoji",
+              "iconValue": "🐛"
+            },
+            {
+              "name": "General Pest Control",
+              "slug": "general-pest-control",
+              "description": "Comprehensive treatment for multiple household pests",
+              "basePrice": 1200,
+              "estimatedDuration": 150,
+              "icon": "🐛",
+              "iconType": "emoji",
+              "iconValue": "🐛"
+            }
+          ]
+        },
+        {
+          "name": "Specialized Treatments",
+          "slug": "specialized-treatments",
+          "icon": "🔬",
+          "description": "Specialized pest control treatments",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Mosquito Control",
+              "slug": "mosquito-control",
+              "description": "Mosquito breeding control and adult mosquito elimination",
+              "basePrice": 700,
+              "estimatedDuration": 90,
+              "icon": "🦟",
+              "iconType": "emoji",
+              "iconValue": "🦟"
+            },
+            {
+              "name": "Bed Bug Treatment",
+              "slug": "bed-bug-treatment",
+              "description": "Complete bed bug elimination and mattress treatment",
+              "basePrice": 1000,
+              "estimatedDuration": 120,
+              "icon": "🛏️",
+              "iconType": "emoji",
+              "iconValue": "🛏️"
+            },
+            {
+              "name": "Rodent Control",
+              "slug": "rodent-control",
+              "description": "Rat and mice control with prevention measures",
+              "basePrice": 900,
+              "estimatedDuration": 120,
+              "icon": "🐭",
+              "iconType": "emoji",
+              "iconValue": "🐭"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Technology (Device Repair)",
+      "slug": "technology",
+      "icon": "📱",
+      "description": "Device repair and technology support services",
+      "level": 0,
+      "sortOrder": 6,
+      "subcategories": [
+        {
+          "name": "Mobile & Laptop Repair",
+          "slug": "mobile-laptop-repair",
+          "icon": "📱",
+          "description": "Smartphone and laptop repair services",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Mobile Screen Repair",
+              "slug": "mobile-screen-repair",
+              "description": "Smartphone screen replacement and repair services",
+              "basePrice": 1500,
+              "estimatedDuration": 90,
+              "icon": "📱",
+              "iconType": "emoji",
+              "iconValue": "📱"
+            },
+            {
+              "name": "Laptop Screen Replacement",
+              "slug": "laptop-screen-replacement",
+              "description": "Laptop display screen replacement and repair",
+              "basePrice": 4000,
+              "estimatedDuration": 180,
+              "icon": "💻",
+              "iconType": "emoji",
+              "iconValue": "💻"
+            },
+            {
+              "name": "Battery Replacement",
+              "slug": "battery-replacement",
+              "description": "Mobile and laptop battery replacement services",
+              "basePrice": 800,
+              "estimatedDuration": 60,
+              "icon": "🔋",
+              "iconType": "emoji",
+              "iconValue": "🔋"
+            },
+            {
+              "name": "Charging Port Repair",
+              "slug": "charging-port-repair",
+              "description": "Mobile and laptop charging port repair",
+              "basePrice": 600,
+              "estimatedDuration": 75,
+              "icon": "🔌",
+              "iconType": "emoji",
+              "iconValue": "🔌"
+            }
+          ]
+        },
+        {
+          "name": "Computer Support",
+          "slug": "computer-support",
+          "icon": "💻",
+          "description": "Computer hardware and software support",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Virus Removal & Security",
+              "slug": "virus-removal-security",
+              "description": "Computer virus removal and security setup",
+              "basePrice": 500,
+              "estimatedDuration": 120,
+              "icon": "🛡️",
+              "iconType": "emoji",
+              "iconValue": "🛡️"
+            },
+            {
+              "name": "Data Recovery Service",
+              "slug": "data-recovery-service",
+              "description": "Hard drive data recovery and backup services",
+              "basePrice": 1200,
+              "estimatedDuration": 240,
+              "icon": "💽",
+              "iconType": "emoji",
+              "iconValue": "💽"
+            },
+            {
+              "name": "Software Installation",
+              "slug": "software-installation",
+              "description": "Operating system and software installation",
+              "basePrice": 400,
+              "estimatedDuration": 90,
+              "icon": "💿",
+              "iconType": "emoji",
+              "iconValue": "💿"
+            },
+            {
+              "name": "Hardware Upgrade",
+              "slug": "hardware-upgrade",
+              "description": "RAM, SSD and other hardware upgrades",
+              "basePrice": 800,
+              "estimatedDuration": 120,
+              "icon": "⚙️",
+              "iconType": "emoji",
+              "iconValue": "⚙️"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Beauty & Wellness",
+      "slug": "beauty-wellness",
+      "icon": "💅",
+      "description": "Professional beauty and wellness services at home",
+      "level": 0,
+      "sortOrder": 7,
+      "subcategories": [
+        {
+          "name": "Women's Beauty",
+          "slug": "womens-beauty",
+          "icon": "💄",
+          "description": "Beauty services for women",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Hair Cut & Styling",
+              "slug": "hair-cut-styling",
+              "description": "Professional hair cutting and styling at home",
+              "basePrice": 400,
+              "estimatedDuration": 90,
+              "icon": "✂️",
+              "iconType": "emoji",
+              "iconValue": "✂️"
+            },
+            {
+              "name": "Facial Treatment",
+              "slug": "facial-treatment",
+              "description": "Deep cleansing facial and skin treatment",
+              "basePrice": 800,
+              "estimatedDuration": 120,
+              "icon": "🧴",
+              "iconType": "emoji",
+              "iconValue": "🧴"
+            },
+            {
+              "name": "Manicure & Pedicure",
+              "slug": "manicure-pedicure",
+              "description": "Professional nail care and beauty treatment",
+              "basePrice": 600,
+              "estimatedDuration": 90,
+              "icon": "💅",
+              "iconType": "emoji",
+              "iconValue": "💅"
+            },
+            {
+              "name": "Waxing Service",
+              "slug": "waxing-service",
+              "description": "Full body waxing and hair removal services",
+              "basePrice": 500,
+              "estimatedDuration": 120,
+              "icon": "🪒",
+              "iconType": "emoji",
+              "iconValue": "🪒"
+            }
+          ]
+        },
+        {
+          "name": "Men's Grooming",
+          "slug": "mens-grooming",
+          "icon": "💇‍♂️",
+          "description": "Grooming services for men",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Men's Haircut",
+              "slug": "mens-haircut",
+              "description": "Professional men's haircut and styling",
+              "basePrice": 250,
+              "estimatedDuration": 60,
+              "icon": "✂️",
+              "iconType": "emoji",
+              "iconValue": "✂️"
+            },
+            {
+              "name": "Beard Grooming",
+              "slug": "beard-grooming",
+              "description": "Beard trimming and grooming services",
+              "basePrice": 200,
+              "estimatedDuration": 45,
+              "icon": "🧔",
+              "iconType": "emoji",
+              "iconValue": "🧔"
+            },
+            {
+              "name": "Face Massage",
+              "slug": "face-massage",
+              "description": "Relaxing face and head massage",
+              "basePrice": 300,
+              "estimatedDuration": 60,
+              "icon": "💆‍♂️",
+              "iconType": "emoji",
+              "iconValue": "💆‍♂️"
+            }
+          ]
+        },
+        {
+          "name": "Wellness & Massage",
+          "slug": "wellness-massage",
+          "icon": "💆",
+          "description": "Wellness and therapeutic massage services",
+          "level": 1,
+          "sortOrder": 3,
+          "services": [
+            {
+              "name": "Full Body Massage",
+              "slug": "full-body-massage",
+              "description": "Relaxing full body therapeutic massage",
+              "basePrice": 1200,
+              "estimatedDuration": 90,
+              "icon": "💆",
+              "iconType": "emoji",
+              "iconValue": "💆"
+            },
+            {
+              "name": "Head & Shoulder Massage",
+              "slug": "head-shoulder-massage",
+              "description": "Stress relieving head and shoulder massage",
+              "basePrice": 500,
+              "estimatedDuration": 60,
+              "icon": "💆‍♀️",
+              "iconType": "emoji",
+              "iconValue": "💆‍♀️"
+            },
+            {
+              "name": "Foot Massage",
+              "slug": "foot-massage",
+              "description": "Therapeutic foot and leg massage",
+              "basePrice": 400,
+              "estimatedDuration": 45,
+              "icon": "🦶",
+              "iconType": "emoji",
+              "iconValue": "🦶"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Automotive",
+      "slug": "automotive",
+      "icon": "🚗",
+      "description": "Vehicle maintenance and repair services",
+      "level": 0,
+      "sortOrder": 8,
+      "subcategories": [
+        {
+          "name": "Car Service",
+          "slug": "car-service",
+          "icon": "🔧",
+          "description": "Regular car maintenance and servicing",
+          "level": 1,
+          "sortOrder": 1,
+          "services": [
+            {
+              "name": "Basic Car Service",
+              "slug": "basic-car-service",
+              "description": "Basic car servicing including oil change and checkup",
+              "basePrice": 1500,
+              "estimatedDuration": 180,
+              "icon": "🚗",
+              "iconType": "emoji",
+              "iconValue": "🚗"
+            },
+            {
+              "name": "Full Car Service",
+              "slug": "full-car-service",
+              "description": "Comprehensive car servicing and maintenance",
+              "basePrice": 3000,
+              "estimatedDuration": 360,
+              "icon": "🔧",
+              "iconType": "emoji",
+              "iconValue": "🔧"
+            },
+            {
+              "name": "Car Wash & Detailing",
+              "slug": "car-wash-detailing",
+              "description": "Professional car washing and interior detailing",
+              "basePrice": 500,
+              "estimatedDuration": 120,
+              "icon": "🚿",
+              "iconType": "emoji",
+              "iconValue": "🚿"
+            }
+          ]
+        },
+        {
+          "name": "Bike Service",
+          "slug": "bike-service",
+          "icon": "🏍️",
+          "description": "Motorcycle and bike maintenance services",
+          "level": 1,
+          "sortOrder": 2,
+          "services": [
+            {
+              "name": "Basic Bike Service",
+              "slug": "basic-bike-service",
+              "description": "Basic motorcycle servicing and maintenance",
+              "basePrice": 800,
+              "estimatedDuration": 120,
+              "icon": "🏍️",
+              "iconType": "emoji",
+              "iconValue": "🏍️"
+            },
+            {
+              "name": "Bike Repair",
+              "slug": "bike-repair",
+              "description": "Motorcycle repair and parts replacement",
+              "basePrice": 600,
+              "estimatedDuration": 90,
+              "icon": "🔧",
+              "iconType": "emoji",
+              "iconValue": "🔧"
+            },
+            {
+              "name": "Bike Wash & Polish",
+              "slug": "bike-wash-polish",
+              "description": "Professional bike washing and polishing",
+              "basePrice": 200,
+              "estimatedDuration": 60,
+              "icon": "✨",
+              "iconType": "emoji",
+              "iconValue": "✨"
+            }
+          ]
+        },
+        {
+          "name": "Emergency Roadside",
+          "slug": "emergency-roadside",
+          "icon": "🆘",
+          "description": "Emergency roadside assistance services",
+          "level": 1,
+          "sortOrder": 3,
+          "services": [
+            {
+              "name": "Battery Jump Start",
+              "slug": "battery-jump-start",
+              "description": "Emergency car battery jump start service",
+              "basePrice": 400,
+              "estimatedDuration": 30,
+              "icon": "🔋",
+              "iconType": "emoji",
+              "iconValue": "🔋"
+            },
+            {
+              "name": "Flat Tire Change",
+              "slug": "flat-tire-change",
+              "description": "Emergency flat tire replacement service",
+              "basePrice": 300,
+              "estimatedDuration": 45,
+              "icon": "🛞",
+              "iconType": "emoji",
+              "iconValue": "🛞"
+            },
+            {
+              "name": "Vehicle Towing",
+              "slug": "vehicle-towing",
+              "description": "Emergency vehicle towing and recovery",
+              "basePrice": 1200,
+              "estimatedDuration": 60,
+              "icon": "🚛",
+              "iconType": "emoji",
+              "iconValue": "🚛"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

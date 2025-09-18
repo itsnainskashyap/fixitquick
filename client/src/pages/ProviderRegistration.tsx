@@ -256,23 +256,14 @@ export default function ProviderRegistration() {
   // Fetch services for selected categories
   const { data: services, isLoading: servicesLoading } = useQuery({
     queryKey: ['/api/v1/services'],
-    select: (data: any) => data?.services || [],
+    select: (data: any) => Array.isArray(data) ? data : [],
   });
 
   // Document upload handlers - connect to real API
   const handleDocumentUpload = async (newDocuments: UploadedDocument[]) => {
     try {
-      // Upload each document to the backend
-      for (const doc of newDocuments) {
-        if (doc.file) {
-          await uploadDocumentMutation.mutateAsync({
-            file: doc.file,
-            documentType: doc.documentType,
-          });
-        }
-      }
-      
-      // Update local state after successful uploads
+      // Documents are already uploaded by the DocumentUpload component
+      // Just update local state with the uploaded documents
       setUploadedDocuments(prev => {
         const filtered = prev.filter(doc => 
           !newDocuments.some(newDoc => newDoc.documentType === doc.documentType)
@@ -282,7 +273,6 @@ export default function ProviderRegistration() {
       
     } catch (error) {
       console.error('Document upload error:', error);
-      // Error handling is already done in mutation
     }
   };
 
@@ -888,9 +878,9 @@ export default function ProviderRegistration() {
                       </h3>
                       <div className="bg-muted p-4 rounded-lg space-y-2">
                         <div><strong>Business Name:</strong> {personalForm.getValues('businessName')}</div>
-                        <div><strong>Contact Person:</strong> {personalForm.getValues('contactPerson')}</div>
-                        <div><strong>Email:</strong> {personalForm.getValues('email')}</div>
-                        <div><strong>Phone:</strong> {personalForm.getValues('phone')}</div>
+                        <div><strong>Contact Person:</strong> {user?.firstName} {user?.lastName}</div>
+                        <div><strong>Email:</strong> {user?.email}</div>
+                        <div><strong>Phone:</strong> {user?.phone}</div>
                         <div><strong>Business Type:</strong> {personalForm.getValues('businessType')}</div>
                       </div>
                     </div>
@@ -902,11 +892,8 @@ export default function ProviderRegistration() {
                         Business Information
                       </h3>
                       <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div><strong>Experience:</strong> {businessForm.getValues('experience')} years</div>
+                        <div><strong>Experience:</strong> {businessForm.getValues('experienceYears')} years</div>
                         <div><strong>Service Radius:</strong> {businessForm.getValues('serviceRadius')} km</div>
-                        <div><strong>Price Range:</strong> {businessForm.getValues('priceRange')}</div>
-                        <div><strong>Emergency Services:</strong> {businessForm.getValues('emergencyServices') ? 'Yes' : 'No'}</div>
-                        <div><strong>Description:</strong> {businessForm.getValues('description').substring(0, 100)}...</div>
                       </div>
                     </div>
 
@@ -917,11 +904,8 @@ export default function ProviderRegistration() {
                         Services & Skills
                       </h3>
                       <div className="bg-muted p-4 rounded-lg space-y-2">
-                        <div><strong>Categories:</strong> {servicesForm.getValues('selectedCategories').length} selected</div>
-                        <div><strong>Skills:</strong> {servicesForm.getValues('skills').join(', ')}</div>
-                        {servicesForm.getValues('specializations').length > 0 && (
-                          <div><strong>Specializations:</strong> {servicesForm.getValues('specializations').join(', ')}</div>
-                        )}
+                        <div><strong>Services:</strong> {servicesForm.getValues('serviceIds').length} selected</div>
+                        <div><strong>Skills:</strong> {Array.isArray(servicesForm.getValues('skills')) ? servicesForm.getValues('skills').join(', ') : 'None specified'}</div>
                       </div>
                     </div>
 
