@@ -3675,10 +3675,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/services - Create new service (admin only)
   app.post('/api/v1/services',
     adminSessionMiddleware,
-    validateBody(insertServiceSchema),
     async (req: AuthenticatedRequest, res: Response) => {
       try {
-        const serviceData = req.body;
+        console.log('🔍 Service Creation Request:', {
+          method: req.method,
+          url: req.url,
+          body: req.body,
+          bodyKeys: Object.keys(req.body || {}),
+          userId: req.user?.id
+        });
+        
+        // Manual validation with detailed logging
+        const validationResult = insertServiceSchema.safeParse(req.body);
+        if (!validationResult.success) {
+          console.log('❌ Service validation failed:', {
+            errors: validationResult.error.errors,
+            receivedData: req.body,
+            expectedFields: Object.keys(insertServiceSchema.shape)
+          });
+          return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: validationResult.error.errors.map(err => ({
+              field: err.path.join('.'),
+              message: err.message,
+              received: err.code === 'invalid_type' ? `${typeof req.body[err.path[0]]}` : 'invalid'
+            }))
+          });
+        }
+        
+        const serviceData = validationResult.data;
+        console.log('✅ Service validation passed:', serviceData);
 
         // Validate that category exists
         if (serviceData.categoryId) {

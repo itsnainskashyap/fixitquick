@@ -5155,6 +5155,29 @@ export default function Admin() {
       
       resetServiceForm();
     },
+    onError: (error: any) => {
+      console.log('❌ Frontend Service Creation Error:', error);
+      
+      // Parse backend validation errors
+      const errorData = error?.response?.data;
+      if (errorData?.errors && Array.isArray(errorData.errors)) {
+        const validationMessages = errorData.errors.map((err: any) => 
+          `${err.field}: ${err.message}`
+        ).join(', ');
+        
+        toast({
+          title: "Service Creation Failed",
+          description: `Validation errors: ${validationMessages}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Service Creation Failed",
+          description: errorData?.message || error?.message || "An unexpected error occurred. Please try again.",
+          variant: "destructive",
+        });
+      }
+    }
   });
 
   const updateServiceMutation = useMutation({
