@@ -13,25 +13,24 @@ import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { CheckCircle, Send, Lightbulb } from 'lucide-react';
+import { insertServiceRequestSchema, type InsertServiceRequest } from '@shared/schema';
 
-const serviceRequestSchema = z.object({
+// Extend the shared schema with UI-specific validation
+const serviceRequestFormSchema = insertServiceRequestSchema.extend({
   name: z.string().min(1, 'Service name is required').max(100, 'Service name cannot exceed 100 characters'),
   description: z.string().min(10, 'Please provide at least 10 characters description').max(500, 'Description cannot exceed 500 characters'),
   categoryId: z.string().min(1, 'Please select a category'),
-  estimatedPrice: z.string().optional(),
-  urgency: z.enum(['low', 'medium', 'high']).default('medium'),
   contactInfo: z.string().min(1, 'Contact information is required').max(100, 'Contact info cannot exceed 100 characters'),
-  location: z.string().optional()
 });
 
-type ServiceRequestData = z.infer<typeof serviceRequestSchema>;
+type ServiceRequestData = z.infer<typeof serviceRequestFormSchema>;
 
 export default function ServiceRequest() {
   const [submitted, setSubmitted] = useState(false);
   const { toast } = useToast();
 
   const form = useForm<ServiceRequestData>({
-    resolver: zodResolver(serviceRequestSchema),
+    resolver: zodResolver(serviceRequestFormSchema),
     defaultValues: {
       name: '',
       description: '',
@@ -45,8 +44,7 @@ export default function ServiceRequest() {
 
   // Fetch categories for the dropdown
   const { data: categories } = useQuery({
-    queryKey: ['/api/v1/service-categories'],
-    queryFn: () => fetch('/api/v1/service-categories').then(res => res.json())
+    queryKey: ['/api/v1/service-categories']
   });
 
   const submitRequestMutation = useMutation({
@@ -82,10 +80,10 @@ export default function ServiceRequest() {
               <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
                 <CheckCircle className="w-10 h-10 text-green-600 dark:text-green-400" />
               </div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4" data-testid="text-success-title">
                 Request Submitted Successfully!
               </h1>
-              <p className="text-gray-600 dark:text-gray-300 mb-8 text-lg leading-relaxed">
+              <p className="text-gray-600 dark:text-gray-300 mb-8 text-lg leading-relaxed" data-testid="text-success-message">
                 Thank you for your service suggestion! Our team will review your request and contact you within 2-3 business days.
               </p>
               <div className="space-y-4">
@@ -118,10 +116,10 @@ export default function ServiceRequest() {
           <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
             <Lightbulb className="w-8 h-8 text-blue-600 dark:text-blue-400" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2" data-testid="text-page-title">
             Request a New Service
           </h1>
-          <p className="text-gray-600 dark:text-gray-300 text-lg">
+          <p className="text-gray-600 dark:text-gray-300 text-lg" data-testid="text-page-description">
             Can't find the service you need? Let us know and we'll work to add it to our platform!
           </p>
         </div>
@@ -172,7 +170,7 @@ export default function ServiceRequest() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {categories?.filter((cat: any) => cat.level === 0).map((category: any) => (
+                          {categories?.data?.filter((cat: any) => cat.level === 0).map((category: any) => (
                             <SelectItem key={category.id} value={category.id}>
                               {category.name}
                             </SelectItem>
