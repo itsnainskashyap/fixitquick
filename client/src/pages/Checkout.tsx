@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { nanoid } from 'nanoid';
@@ -30,6 +30,22 @@ import {
   CheckCircle
 } from 'lucide-react';
 
+// OnionPay widget interface
+declare global {
+  interface Window {
+    OnionPay?: {
+      init: (config: { apiBase: string }) => void;
+      createPayment: (config: {
+        sessionToken: string;
+        amount: number;
+        description: string;
+        onSuccess: (data: any) => void;
+        onError: (error: any) => void;
+      }) => void;
+    };
+  }
+}
+
 export default function Checkout() {
   const [, setLocation] = useLocation();
   const { cart, clearCart, getItemCount } = useCart();
@@ -42,6 +58,14 @@ export default function Checkout() {
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('wallet');
+  const [onionPaySession, setOnionPaySession] = useState<{
+    sessionId: string;
+    sessionToken: string;
+    amount: number;
+    currency: string;
+  } | null>(null);
+  const [onionPayLoaded, setOnionPayLoaded] = useState(false);
+  const onionPayButtonRef = useRef<HTMLDivElement>(null);
   const [deliveryAddress, setDeliveryAddress] = useState({
     fullName: user?.displayName || '',
     phone: '',
@@ -55,6 +79,38 @@ export default function Checkout() {
     timeSlot: '',
     notes: ''
   });
+
+  // Load OnionPay widget script
+  useEffect(() => {
+    const loadOnionPayScript = () => {
+      if (window.OnionPay || onionPayLoaded) {
+        setOnionPayLoaded(true);
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://onionpays.replit.app/widget/onionpay.js';
+      script.async = true;
+      script.onload = () => {
+        setOnionPayLoaded(true);
+        if (window.OnionPay) {
+          window.OnionPay.init({ apiBase: 'https://onionpays.replit.app' });
+        }
+      };
+      script.onerror = () => {
+        console.error('Failed to load OnionPay script');
+        toast({
+          title: 'Payment System Error',
+          description: 'Failed to load payment system. Please try again later.',
+          variant: 'destructive',
+        });
+      };
+      
+      document.head.appendChild(script);
+    };
+
+    loadOnionPayScript();
+  }, [toast]);
 
   // Fetch wallet balance
   const { data: walletData, isLoading: walletLoading } = useQuery({
@@ -77,7 +133,7 @@ export default function Checkout() {
     },
   });
 
-  // SECURE: Pay for order mutation (server validates everything)
+  // SECURE: Pay for order mutation (wallet payments - server validates everything)
   const payOrderMutation = useMutation({
     mutationFn: async (orderId: string) => {
       return await apiRequest('POST', `/api/v1/orders/${orderId}/pay`, {});
@@ -97,6 +153,40 @@ export default function Checkout() {
       toast({
         title: 'Payment Failed',
         description: error.message || 'Payment processing failed.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // OnionPay session creation mutation
+  const createOnionPaySessionMutation = useMutation({
+    mutationFn: async (params: { orderId: string; amount: number; description: string }) => {
+      return await apiRequest('POST', '/api/v1/payment-intents', {
+        orderId: params.orderId,
+        amount: params.amount,
+        currency: 'INR',
+        description: params.description,
+        metadata: {
+          source: 'checkout',
+          paymentMethod: 'onionpay',
+        },
+      });
+    },
+    onSuccess: (data) => {
+      if (data.success && data.paymentIntent) {
+        setOnionPaySession({
+          sessionId: data.paymentIntent.sessionId,
+          sessionToken: data.paymentIntent.sessionToken,
+          amount: parseFloat(data.paymentIntent.amount),
+          currency: data.paymentIntent.currency,
+        });
+      }
+    },
+    onError: (error: any) => {
+      console.error('OnionPay session creation error:', error);
+      toast({
+        title: 'Payment Setup Failed',
+        description: error.message || 'Failed to initialize payment system.',
         variant: 'destructive',
       });
     },
@@ -158,7 +248,7 @@ export default function Checkout() {
 
     setIsProcessing(true);
     try {
-      // SECURE FLOW: Create order first, then pay for it
+      // SECURE FLOW: Create order first, then handle payment based on method
       const orderData = {
         type: serviceItems.length > 0 ? 'service' : 'parts',
         items: items.map(item => ({

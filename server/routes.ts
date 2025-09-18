@@ -14,7 +14,7 @@ import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { openRouterService } from "./services/openrouter";
-import { stripePaymentService } from "./services/stripe";
+import { onionPayService } from "./services/onionpay";
 import { notificationService } from "./services/notifications";
 import WebSocketManager from "./services/websocket";
 
@@ -7065,15 +7065,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.json({
           success: true,
           paymentMethods: [],
-          message: 'Stripe not configured - demo mode'
+          message: 'OnionPay not configured - demo mode'
         });
       }
 
-      const { paymentMethods } = await stripePaymentService.getUserPaymentMethods(userId);
+      const { paymentMethods } = await onionPayService.getUserPaymentMethods(userId);
       
       res.json({
         success: true,
@@ -7109,20 +7109,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.status(503).json({ 
           success: false, 
-          message: 'Payment service not available - configure Stripe API keys' 
+          message: 'Payment service not available - configure OnionPay API keys' 
         });
       }
 
-      const { stripePaymentMethodId, nickname, setAsDefault } = req.body;
+      const { paymentMethodId, type, nickname, setAsDefault, cardDetails, upiId } = req.body;
 
-      const paymentMethod = await stripePaymentService.savePaymentMethod({
+      const paymentMethod = await onionPayService.savePaymentMethod({
         userId,
-        stripePaymentMethodId,
+        paymentMethodId,
+        type,
         nickname,
         setAsDefault,
+        cardDetails,
+        upiId,
       });
 
       res.json({
@@ -7157,7 +7160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.status(503).json({ 
           success: false, 
           message: 'Payment service not available' 
@@ -7165,7 +7168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { id } = req.params;
-      await stripePaymentService.deletePaymentMethod(userId, id);
+      await onionPayService.deletePaymentMethod(userId, id);
 
       res.json({
         success: true,
@@ -7181,10 +7184,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
-  // PAYMENT INTENTS ENDPOINTS
+  // ONIONPAY SESSION ENDPOINTS
   // ========================================
 
-  // Create payment intent for order
+  // Create OnionPay session for order (replaces Stripe payment intents)
   app.post('/api/v1/payment-intents', paymentLimiter, authMiddleware, validateBody(createPaymentIntentSchema), async (req, res) => {
     try {
       const userId = req.user?.id;
@@ -7192,10 +7195,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.status(503).json({ 
           success: false, 
-          message: 'Payment service not available - configure Stripe API keys' 
+          message: 'Payment service not available - configure OnionPay API keys' 
         });
       }
 
@@ -7212,8 +7215,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const idempotencyKey = orderId ? `intent_${orderId}_${userId}_${Date.now()}` : `intent_${userId}_${Date.now()}`;
-      const { paymentIntent, dbPaymentIntent } = await stripePaymentService.createPaymentIntent({
+      const idempotencyKey = orderId ? `session_${orderId}_${userId}_${Date.now()}` : `session_${userId}_${Date.now()}`;
+      const { session, dbPaymentIntent } = await onionPayService.createPaymentSession({
         userId,
         orderId,
         amount,
@@ -7227,23 +7230,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         paymentIntent: {
           id: dbPaymentIntent.id,
-          clientSecret: paymentIntent.client_secret,
+          sessionId: session.id,
+          sessionToken: session.session_token,
           amount: dbPaymentIntent.amount,
           currency: dbPaymentIntent.currency,
-          status: paymentIntent.status,
+          status: session.status,
         },
-        message: 'Payment intent created successfully'
+        message: 'OnionPay session created successfully'
       });
     } catch (error) {
-      console.error('Error creating payment intent:', error);
+      console.error('Error creating OnionPay session:', error);
       res.status(500).json({ 
         success: false, 
-        message: error instanceof Error ? error.message : 'Failed to create payment intent' 
+        message: error instanceof Error ? error.message : 'Failed to create payment session' 
       });
     }
   });
 
-  // Confirm payment intent
+  // Get OnionPay session status (replaces payment intent confirmation)
   app.post('/api/v1/payment-intents/:id/confirm', paymentLimiter, authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
@@ -7251,7 +7255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.status(503).json({ 
           success: false, 
           message: 'Payment service not available' 
@@ -7259,34 +7263,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { id } = req.params;
-      const { paymentMethodId } = req.body;
 
-      // Verify the payment intent belongs to the user
+      // Verify the session belongs to the user
       const dbPaymentIntent = await storage.getPaymentIntentByStripeId(id);
       if (!dbPaymentIntent || dbPaymentIntent.userId !== userId) {
         return res.status(404).json({ 
           success: false, 
-          message: 'Payment intent not found or access denied' 
+          message: 'Payment session not found or access denied' 
         });
       }
 
-      const paymentIntent = await stripePaymentService.confirmPaymentIntent(id, paymentMethodId);
+      // Get session status from OnionPay
+      const session = await onionPayService.getSession(id);
 
       res.json({
         success: true,
         paymentIntent: {
-          id: paymentIntent.id,
-          status: paymentIntent.status,
-          amount: paymentIntent.amount / 100, // Convert back from cents
-          currency: paymentIntent.currency,
+          id: session.id,
+          status: session.status,
+          amount: session.amount / 100, // Convert back from paisa
+          currency: session.currency,
         },
-        message: 'Payment intent confirmed'
+        message: 'Session status retrieved'
       });
     } catch (error) {
-      console.error('Error confirming payment intent:', error);
+      console.error('Error getting session status:', error);
       res.status(500).json({ 
         success: false, 
-        message: error instanceof Error ? error.message : 'Failed to confirm payment intent' 
+        message: error instanceof Error ? error.message : 'Failed to get session status' 
       });
     }
   });
@@ -7295,23 +7299,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // PAYMENT PROCESSING ENDPOINTS
   // ========================================
 
-  // Process payment for order using Stripe
-  app.post('/api/v1/orders/:orderId/pay-stripe', authMiddleware, async (req, res) => {
+  // Process payment for order using OnionPay
+  app.post('/api/v1/orders/:orderId/pay-onionpay', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ message: 'Unauthorized' });
       }
 
-      if (!stripePaymentService.isReady()) {
+      if (!onionPayService.isReady()) {
         return res.status(503).json({ 
           success: false, 
-          message: 'Stripe payment not available - configure API keys' 
+          message: 'OnionPay not available - configure API keys' 
         });
       }
 
       const { orderId } = req.params;
-      const { paymentMethodId } = req.body;
 
       // Get and validate order
       const order = await storage.getOrder(orderId);
@@ -7327,9 +7330,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ success: false, message: 'Order already paid' });
       }
 
-      // Create payment intent for the order
+      // Create OnionPay session for the order
       const idempotencyKey = `order_payment_${orderId}_${userId}_${Date.now()}`;
-      const { paymentIntent } = await stripePaymentService.createPaymentIntent({
+      const { session, dbPaymentIntent } = await onionPayService.createPaymentSession({
         userId,
         orderId,
         amount: parseFloat(order.totalAmount),
@@ -7342,52 +7345,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
-      // If payment method is provided, confirm the payment intent
-      if (paymentMethodId) {
-        const confirmedIntent = await stripePaymentService.confirmPaymentIntent(
-          paymentIntent.id, 
-          paymentMethodId
-        );
-
-        if (confirmedIntent.status === 'succeeded') {
-          // Handle successful payment
-          const result = await stripePaymentService.handlePaymentSuccess(paymentIntent.id);
-          
-          res.json({
-            success: true,
-            order: result.order,
-            paymentIntent: {
-              id: confirmedIntent.id,
-              status: confirmedIntent.status,
-            },
-            message: 'Payment successful'
-          });
-        } else {
-          res.json({
-            success: false,
-            paymentIntent: {
-              id: confirmedIntent.id,
-              status: confirmedIntent.status,
-            },
-            message: 'Payment requires additional action'
-          });
-        }
-      } else {
-        // Return payment intent for client-side confirmation
-        res.json({
-          success: true,
-          paymentIntent: {
-            id: paymentIntent.id,
-            clientSecret: paymentIntent.client_secret,
-            amount: paymentIntent.amount / 100,
-            currency: paymentIntent.currency,
-          },
-          message: 'Payment intent created'
-        });
-      }
+      // Return OnionPay session for client-side widget integration
+      res.json({
+        success: true,
+        paymentSession: {
+          id: session.id,
+          sessionToken: session.session_token,
+          amount: session.amount / 100, // Convert back from paisa
+          currency: session.currency,
+          status: session.status,
+        },
+        message: 'OnionPay session created - use widget to complete payment'
+      });
 
     } catch (error) {
-      console.error('Error processing Stripe payment:', error);
+      console.error('Error processing OnionPay payment:', error);
       res.status(500).json({ 
         success: false, 
         message: error instanceof Error ? error.message : 'Payment processing failed' 
@@ -10650,17 +10622,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // END ADMIN SERVICES MANAGEMENT ENDPOINTS
   // ============================================================================
 
-  // Stripe webhook endpoint with proper signature verification
-  app.post('/api/v1/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  // OnionPay webhook endpoint with proper signature verification
+  app.post('/api/v1/webhooks/onionpay', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
-      if (!stripePaymentService.isReady()) {
-        console.warn('Stripe webhook received but service not configured');
-        return res.status(503).json({ message: 'Stripe service not configured' });
+      if (!onionPayService.isReady()) {
+        console.warn('OnionPay webhook received but service not configured');
+        return res.status(503).json({ message: 'OnionPay service not configured' });
       }
 
-      const signature = req.headers['stripe-signature'] as string;
+      const signature = req.headers['x-onionpay-signature'] as string;
       if (!signature) {
-        console.error('Missing Stripe signature header');
+        console.error('Missing OnionPay signature header');
         return res.status(400).json({ message: 'Missing signature header' });
       }
 
@@ -10668,10 +10640,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rawBody = req.body.toString();
       
       // Verify webhook signature first (security critical)
-      const isValid = stripePaymentService.verifyWebhookSignature(rawBody, signature);
+      const isValid = onionPayService.verifyWebhookSignature(rawBody, signature);
       
       if (!isValid) {
-        console.error('Invalid Stripe webhook signature - potential security issue');
+        console.error('Invalid OnionPay webhook signature - potential security issue');
         return res.status(400).json({ message: 'Invalid signature' });
       }
       
@@ -10685,17 +10657,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Process webhook event
-      const result = await stripePaymentService.processWebhook(event);
+      const result = await onionPayService.processWebhook(event);
       
       if (result.success) {
-        console.log(`✅ Webhook processed: ${event.type}`);
-        res.json({ received: true, message: result.message, eventType: event.type });
+        console.log(`✅ OnionPay webhook processed: ${event.event_type}`);
+        res.json({ received: true, message: result.message, eventType: event.event_type });
       } else {
-        console.error(`❌ Webhook processing failed: ${result.message}`);
-        res.status(400).json({ received: false, message: result.message, eventType: event.type });
+        console.error(`❌ OnionPay webhook processing failed: ${result.message}`);
+        res.status(400).json({ received: false, message: result.message, eventType: event.event_type });
       }
     } catch (error) {
-      console.error('Stripe webhook critical error:', error);
+      console.error('OnionPay webhook critical error:', error);
       res.status(500).json({ message: 'Webhook processing failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
