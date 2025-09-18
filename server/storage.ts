@@ -7603,6 +7603,7 @@ export class PostgresStorage implements IStorage {
       currentLocation: serviceProviders.currentLocation,
       lastKnownLocation: serviceProviders.lastKnownLocation,
       isOnline: serviceProviders.isOnline,
+      isAvailable: serviceProviders.isAvailable,
       avgRating: serviceProviders.avgRating,
       totalJobs: serviceProviders.totalJobs,
       completionRate: serviceProviders.completionRate,
@@ -7619,7 +7620,7 @@ export class PostgresStorage implements IStorage {
       eq(serviceProviders.isActive, true),
       eq(serviceProviders.isVerified, true),
       eq(users.isActive, true),
-      sql`${serviceProviders.skills} && ARRAY[${service.categoryId}]`, // PostgreSQL array overlap operator
+      sql`${serviceProviders.skills}::jsonb ? ${service.categoryId}`, // Check if skills array contains categoryId
     ));
 
     // Filter by distance and other criteria
@@ -7627,6 +7628,11 @@ export class PostgresStorage implements IStorage {
       .filter(provider => {
         // Check if provider is online for instant bookings
         if (criteria.bookingType === 'instant' && !provider.isOnline) {
+          return false;
+        }
+
+        // Check if provider is available
+        if (!provider.isAvailable) {
           return false;
         }
 

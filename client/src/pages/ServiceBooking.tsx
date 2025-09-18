@@ -923,7 +923,7 @@ export default function ServiceBooking() {
         {/* Automatic Provider Assignment Status - No manual selection needed */}
         {/* Provider matching is handled automatically on the server side */}
 
-        {/* Step 2: Review booking details */}
+        {/* Step 2: Scheduled booking date/time selection OR instant booking provider search */}
         {step === 2 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -932,10 +932,11 @@ export default function ServiceBooking() {
           >
             <Form {...form}>
               <div className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Select Date & Time</CardTitle>
-                  </CardHeader>
+                {bookingType === 'scheduled' ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Select Date & Time</CardTitle>
+                    </CardHeader>
                   <CardContent className="space-y-6">
                     {/* Date Selection */}
                     <FormField
@@ -1125,6 +1126,78 @@ export default function ServiceBooking() {
                     </div>
                   </CardContent>
                 </Card>
+                ) : (
+                  // Instant booking - Start immediate provider matching
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center space-x-2">
+                        <Zap className="w-5 h-5 text-orange-500" />
+                        <span>Finding Available Providers</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="text-center space-y-4">
+                        <div className="w-16 h-16 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center mx-auto">
+                          <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            Searching for nearby providers...
+                          </h3>
+                          <p className="text-gray-600 dark:text-gray-300">
+                            We're finding the best available providers in your area for immediate service.
+                          </p>
+                        </div>
+                        
+                        {providers && providers.length > 0 ? (
+                          <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                            <div className="flex items-center space-x-2 text-green-800 dark:text-green-300">
+                              <CheckCircle className="w-5 h-5" />
+                              <span className="font-medium">
+                                Found {providers.length} available provider{providers.length !== 1 ? 's' : ''}!
+                              </span>
+                            </div>
+                            <p className="text-green-600 dark:text-green-400 text-sm mt-1">
+                              Ready to provide immediate service in your area.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg border border-amber-200 dark:border-amber-800">
+                            <div className="flex items-center space-x-2 text-amber-800 dark:text-amber-300">
+                              <AlertTriangle className="w-5 h-5" />
+                              <span className="font-medium">Still searching...</span>
+                            </div>
+                            <p className="text-amber-600 dark:text-amber-400 text-sm mt-1">
+                              Expanding search radius to find available providers.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Continue button for instant booking */}
+                      <div className="flex justify-between">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setStep(1)}
+                          data-testid="back-button"
+                        >
+                          <ArrowLeft className="w-4 h-4 mr-2" />
+                          Back
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => setStep(3)}
+                          disabled={!providers || providers.length === 0}
+                          data-testid="continue-instant-button"
+                        >
+                          Continue to Booking
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </Form>
           </motion.div>
