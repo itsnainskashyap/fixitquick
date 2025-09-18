@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Layout } from '@/components/Layout';
 import AvatarUpload from '@/components/AvatarUpload';
 // Language and Region components - controlled by VITE_I18N_ENABLED feature flag
 import { RegionSelector } from '@/components/RegionSelector';
@@ -251,8 +252,8 @@ export default function Account() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <main className="px-4 py-6">
+    <Layout showHeader={true} showBottomNav={true}>
+      <div className="space-y-6">
         {/* Profile Header Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -760,7 +761,7 @@ export default function Account() {
             FixitQuick v1.0.0 - Made with ❤️ in India
           </p>
         </motion.div>
-      </main>
-    </div>
+      </div>
+    </Layout>
   );
 }
