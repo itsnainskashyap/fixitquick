@@ -30,15 +30,20 @@ export default function PartsProviderLogin() {
     if (isAuthenticated && user) {
       // Redirect based on user role
       if (user.role === 'parts_provider') {
+        // Check if verified parts provider - go to dashboard
         setLocation('/parts-provider-dashboard');
       } else if (user.role === 'admin') {
         setLocation('/admin');
       } else {
-        // If not a parts provider, redirect to regular home
-        setLocation('/');
+        // If authenticated but not a parts provider, redirect to registration
+        toast({
+          title: "Registration Required",
+          description: "Please complete your parts provider registration to continue.",
+        });
+        setLocation('/parts-provider/register');
       }
     }
-  }, [isAuthenticated, user, setLocation]);
+  }, [isAuthenticated, user, setLocation, toast]);
 
   const handleGoogleSignIn = async () => {
     try {

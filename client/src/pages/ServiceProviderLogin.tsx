@@ -30,15 +30,20 @@ export default function ServiceProviderLogin() {
     if (isAuthenticated && user) {
       // Redirect based on user role
       if (user.role === 'service_provider') {
+        // Check if verified service provider - go to dashboard
         setLocation('/service-provider-dashboard');
       } else if (user.role === 'admin') {
         setLocation('/admin');
       } else {
-        // If not a service provider, redirect to regular home
-        setLocation('/');
+        // If authenticated but not a service provider, redirect to registration
+        toast({
+          title: "Registration Required",
+          description: "Please complete your service provider registration to continue.",
+        });
+        setLocation('/provider/register');
       }
     }
-  }, [isAuthenticated, user, setLocation]);
+  }, [isAuthenticated, user, setLocation, toast]);
 
   const handleGoogleSignIn = async () => {
     try {
