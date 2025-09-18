@@ -429,7 +429,7 @@ export default function ProviderRegistration() {
   }
 
   if (user.role === 'service_provider') {
-    setLocation('/provider');
+    setLocation('/provider-pending');
     return null;
   }
 
