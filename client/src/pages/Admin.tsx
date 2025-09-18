@@ -1030,7 +1030,7 @@ const TaxManagementSystem = () => {
   const { data: mainCategories = [], isLoading: mainCategoriesLoading } = useQuery({
     queryKey: ['admin-main-categories'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/service-categories?level=0&activeOnly=false');
+      return await apiRequest('GET', '/api/v1/service-categories?level=0&activeOnly=false');
     },
     select: (response) => response.data || []
   });
@@ -1218,7 +1218,7 @@ const TaxManagementSystem = () => {
   // Query for subcategories when a main category is selected
   const subCategoriesQuery = useQuery({
     queryKey: ['admin-sub-categories', selectedMainCategory?.id],
-    queryFn: () => apiRequest('GET', `/api/v1/admin/service-categories?parentId=${selectedMainCategory?.id}&activeOnly=false`),
+    queryFn: () => apiRequest('GET', `/api/v1/service-categories?parentId=${selectedMainCategory?.id}&activeOnly=false`),
     enabled: !!selectedMainCategory?.id,
     select: (response) => response.data || []
   });
@@ -4479,7 +4479,7 @@ export default function Admin() {
   // Query for subcategories in service creation
   const serviceSubCategoriesQuery = useQuery({
     queryKey: ['service-sub-categories', selectedServiceMainCategory?.id],
-    queryFn: () => apiRequest('GET', `/api/v1/admin/service-categories?parentId=${selectedServiceMainCategory?.id}&activeOnly=false`),
+    queryFn: () => apiRequest('GET', `/api/v1/service-categories?parentId=${selectedServiceMainCategory?.id}&activeOnly=false`),
     enabled: !!selectedServiceMainCategory?.id,
     select: (response) => response.data || []
   });
@@ -5132,7 +5132,8 @@ export default function Admin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/services'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/service-categories'] }); // Refresh categories
+      queryClient.invalidateQueries({ queryKey: ['admin-main-categories'] }); // Refresh categories
+      queryClient.invalidateQueries({ queryKey: ['admin-sub-categories'] }); // Refresh subcategories
       setIsCreateServiceOpen(false);
       
       // Show success message with category context
@@ -7938,7 +7939,7 @@ const AddSubCategoryForm = ({
 
   const createSubCategoryMutation = useMutation({
     mutationFn: async (data: Partial<InsertServiceCategory>) => {
-      return await apiRequest('POST', '/api/v1/admin/categories', data);
+      return await apiRequest('POST', '/api/v1/service-categories', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-categories'] });
