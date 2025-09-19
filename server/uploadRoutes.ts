@@ -51,7 +51,7 @@ export async function setupUploadRoutes(app: Express) {
 
       // Generate JWT token for admin - simple development token
       const jwt = await import('jsonwebtoken');
-      const accessToken = jwt.sign(
+      const accessToken = jwt.default.sign(
         { userId: admin.id, role: admin.role, type: 'admin-login' },
         'dev-jwt-secret-key',
         { expiresIn: '24h' }
@@ -210,7 +210,7 @@ export async function setupUploadRoutes(app: Express) {
   });
 
   // Provider profile endpoint to check application status
-  app.get('/api/v1/providers/profile', authMiddleware, async (req, res) => {
+  app.get('/api/v1/parts-provider/profile', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
