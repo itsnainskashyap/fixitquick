@@ -343,7 +343,7 @@ export default function DocumentUpload({
                       <div>
                         <div className="font-medium">{docType?.name || doc.documentType}</div>
                         <div className="text-sm text-muted-foreground">
-                          {doc.filename} • {Math.round(doc.size / 1024)}KB
+                          {doc.filename} • {doc.size ? Math.round(doc.size / 1024) : 0}KB
                         </div>
                       </div>
                     </div>

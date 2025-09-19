@@ -119,6 +119,84 @@ export async function setupUploadRoutes(app: Express) {
     }
   });
 
+  // Parts provider registration endpoint
+  app.post('/api/v1/providers/register', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
+      }
+
+      const {
+        businessName,
+        businessType,
+        contactPerson,
+        businessPhone,
+        businessEmail,
+        businessAddress,
+        experienceYears,
+        serviceRadius,
+        serviceIds,
+        skills,
+        gstNumber,
+        panNumber,
+        bankAccountNumber,
+        bankIFSC,
+        bankAccountName
+      } = req.body;
+
+      console.log('📝 Parts provider registration request:', { userId, businessName, businessType });
+
+      // Create or update the parts provider business info
+      const businessInfo = await storage.createPartsProviderBusinessInfo({
+        userId,
+        businessName,
+        businessType,
+        contactPerson,
+        businessPhone,
+        businessEmail,
+        businessAddress,
+        experienceYears: parseInt(experienceYears) || 0,
+        serviceRadius: parseInt(serviceRadius) || 25,
+        serviceCategories: serviceIds || [],
+        skills: skills || [],
+        gstNumber,
+        panNumber,
+        bankAccountNumber,
+        bankIFSC,
+        bankAccountName,
+        isVerified: false,
+        verificationStatus: 'under_review',
+        isActive: true,
+        totalRevenue: '0.00',
+        totalOrders: 0,
+        averageRating: '0.00',
+        totalProducts: 0,
+        minOrderValue: 100,
+        processingTime: 24,
+        shippingAreas: [],
+        paymentTerms: 'immediate',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      console.log('✅ Parts provider registration successful:', businessInfo.id);
+
+      return res.json({
+        success: true,
+        message: 'Registration submitted successfully',
+        businessInfo: businessInfo
+      });
+
+    } catch (error) {
+      console.error('❌ Provider registration error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Registration failed. Please try again.'
+      });
+    }
+  });
+
   app.get('/api/v1/services/categories', async (req, res) => {
     try {
       const categories = await storage.getServiceCategories();
