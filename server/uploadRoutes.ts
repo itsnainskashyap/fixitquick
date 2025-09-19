@@ -10,6 +10,71 @@ export async function setupUploadRoutes(app: Express) {
   await setupAuth(app);
   console.log('✅ Authentication routes registered');
 
+  // Admin login endpoint
+  app.post('/api/admin/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email and password are required'
+        });
+      }
+
+      // Check admin credentials
+      const admin = await storage.getAdminByEmail(email);
+      if (!admin || !admin.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
+      // Verify password
+      const bcrypt = await import('bcryptjs');
+      const isValidPassword = await bcrypt.compare(password, admin.password);
+      if (!isValidPassword) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
+      // Generate JWT token for admin
+      const jwtService = await import('../services/jwtService');
+      const accessToken = await jwtService.default.generateAccessToken(admin.id, admin.role, 'admin-login');
+
+      // Set secure httpOnly cookie for admin
+      res.cookie('adminToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        path: '/'
+      });
+
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        user: {
+          id: admin.id,
+          email: admin.email,
+          role: admin.role,
+          firstName: admin.firstName,
+          lastName: admin.lastName
+        }
+      });
+
+    } catch (error) {
+      console.error('Admin login error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  });
+
   // Essential auth endpoint - check user authentication status
   app.get('/api/auth/user', async (req: any, res) => {
     try {
