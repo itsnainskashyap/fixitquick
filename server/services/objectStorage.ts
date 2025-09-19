@@ -7,6 +7,14 @@ import { nanoid } from 'nanoid';
  * Object Storage Service for Replit Object Storage
  * Handles file uploads, validation, and management
  */
+// In-memory storage for development mode
+const devFileStorage = new Map<string, { buffer: Buffer; contentType: string; metadata: any }>();
+
+// Export function to access stored files for development serving
+export const getStoredFile = (filename: string) => {
+  return devFileStorage.get(filename);
+};
+
 export class ObjectStorageService {
   private bucketId: string;
   private publicDir: string;
@@ -135,8 +143,23 @@ export class ObjectStorageService {
         documentType
       });
 
-      // Simulate successful upload
-      const mockUrl = `https://objectstorage.replit.com/${this.bucketId}/${filename}`;
+      // In development mode, store file content in memory for serving
+      devFileStorage.set(filename, {
+        buffer: file.buffer,
+        contentType: file.mimetype,
+        metadata: {
+          originalName: file.originalname,
+          size: file.size,
+          documentType,
+          userId,
+          uploadedAt: new Date().toISOString(),
+          path: fullPath
+        }
+      });
+
+      // In development, create a development-accessible URL
+      // In production, this would be the actual object storage URL
+      const developmentUrl = `/api/v1/uploads/files/${encodeURIComponent(filename)}`;
       
       const metadata = {
         originalName: file.originalname,
@@ -145,12 +168,13 @@ export class ObjectStorageService {
         documentType,
         userId,
         uploadedAt: new Date().toISOString(),
-        path: fullPath
+        path: fullPath,
+        filename: filename
       };
 
       return {
         success: true,
-        url: mockUrl,
+        url: developmentUrl,
         metadata
       };
     } catch (error) {

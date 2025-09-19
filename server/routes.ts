@@ -95,7 +95,7 @@ function transformServicesForFrontend(services: any[]) {
 }
 import multer from "multer";
 import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
-import { objectStorageService } from "./services/objectStorage";
+import { objectStorageService, getStoredFile } from "./services/objectStorage";
 import { 
   handleMultipleImageUpload,
   handleAvatarUpload,
@@ -11981,6 +11981,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Upload configuration endpoint
   app.get('/api/v1/upload/config', getUploadConfig);
+
+  // Development file serving endpoint (for simulated uploads)
+  app.get('/api/v1/uploads/files/:filename', async (req: Request, res: Response) => {
+    try {
+      const { filename } = req.params;
+      
+      // In development mode, serve the actual uploaded file content from memory
+      if (process.env.NODE_ENV === 'development') {
+        const storedFile = getStoredFile(decodeURIComponent(filename));
+        
+        if (storedFile) {
+          // Serve the actual uploaded file content
+          res.setHeader('Content-Type', storedFile.contentType);
+          res.setHeader('Content-Length', storedFile.buffer.length);
+          res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+          res.end(storedFile.buffer);
+          return;
+        }
+        
+        // Fallback to placeholder if file not found in memory
+        const placeholderUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(filename.slice(0, 2))}&background=007bff&color=ffffff&size=200`;
+        res.redirect(placeholderUrl);
+        return;
+      }
+      
+      // In production, this would fetch from actual object storage
+      res.status(404).json({
+        success: false,
+        message: 'File not found',
+        error: 'FILE_NOT_FOUND'
+      });
+    } catch (error) {
+      console.error('Error serving uploaded file:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to serve file',
+        error: 'INTERNAL_ERROR'
+      });
+    }
+  });
 
   // Enhanced image upload endpoints
   app.post('/api/v1/upload/images', uploadLimiter, authMiddleware, handleMultipleImageUpload);
