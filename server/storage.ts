@@ -2462,9 +2462,9 @@ export class PostgresStorage implements IStorage {
         specialRequirements: Array.isArray(order.meta.specialRequirements) ? order.meta.specialRequirements : typeof order.meta.specialRequirements === 'string' ? [order.meta.specialRequirements] : [],
         urgencyLevel: (order.meta.urgencyLevel === 'normal' || order.meta.urgencyLevel === 'urgent') ? order.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
         paymentMethod: (order.meta.paymentMethod === 'online' || order.meta.paymentMethod === 'cod' || order.meta.paymentMethod === 'wallet') ? order.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
-        paymentStatus: typeof order.meta.paymentStatus === 'string' ? order.meta.paymentStatus : String(order.meta.paymentStatus || ''),
+        paymentStatus: (order.meta.paymentStatus === 'pending' || order.meta.paymentStatus === 'paid' || order.meta.paymentStatus === 'failed' || order.meta.paymentStatus === 'refunded') ? order.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
         estimatedDuration: typeof order.meta.estimatedDuration === 'number' ? order.meta.estimatedDuration : Number(order.meta.estimatedDuration) || 0,
-        location: order.meta.location || null
+        location: order.meta.location && typeof order.meta.location === 'object' && 'address' in order.meta.location ? order.meta.location : undefined
       } : order.meta
     };
     const result = await db.insert(orders).values([orderData]).returning();
@@ -2503,9 +2503,9 @@ export class PostgresStorage implements IStorage {
             specialRequirements: Array.isArray(orderData.meta.specialRequirements) ? orderData.meta.specialRequirements : typeof orderData.meta.specialRequirements === 'string' ? [orderData.meta.specialRequirements] : [],
             urgencyLevel: (orderData.meta.urgencyLevel === 'normal' || orderData.meta.urgencyLevel === 'urgent') ? orderData.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
             paymentMethod: (orderData.meta.paymentMethod === 'online' || orderData.meta.paymentMethod === 'cod' || orderData.meta.paymentMethod === 'wallet') ? orderData.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
-            paymentStatus: typeof orderData.meta.paymentStatus === 'string' ? orderData.meta.paymentStatus : String(orderData.meta.paymentStatus || ''),
+            paymentStatus: (orderData.meta.paymentStatus === 'pending' || orderData.meta.paymentStatus === 'paid' || orderData.meta.paymentStatus === 'failed' || orderData.meta.paymentStatus === 'refunded') ? orderData.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
             estimatedDuration: typeof orderData.meta.estimatedDuration === 'number' ? orderData.meta.estimatedDuration : Number(orderData.meta.estimatedDuration) || 0,
-            location: orderData.meta.location || null
+            location: orderData.meta.location && typeof orderData.meta.location === 'object' && 'address' in orderData.meta.location ? orderData.meta.location : undefined
           } : orderData.meta
         };
 
@@ -2513,7 +2513,7 @@ export class PostgresStorage implements IStorage {
         const createdOrder = orderResult[0];
         details.push(`Order created with ID: ${createdOrder.id}`);
 
-        let couponUsage: CouponUsage | null = null;
+        let couponUsageRecord: CouponUsage | null = null;
 
         // Step 2: Apply coupon if provided
         if (couponCode && couponDiscount > 0) {
@@ -2530,11 +2530,11 @@ export class PostgresStorage implements IStorage {
             userId: orderData.userId || '',
             orderId: createdOrder.id,
             discountAmount: couponDiscount.toString(),
-            orderValue: (orderData.totalAmount || 0).toString()
+            orderValue: (typeof processedOrderData.totalAmount === 'string' ? processedOrderData.totalAmount : String(processedOrderData.totalAmount || '0'))
           };
 
           const couponUsageResult = await trx.insert(couponUsage).values([couponUsageData]).returning();
-          couponUsage = couponUsageResult[0];
+          couponUsageRecord = couponUsageResult[0];
 
           // Update coupon statistics
           await trx.update(coupons)
@@ -2585,7 +2585,7 @@ export class PostgresStorage implements IStorage {
         return {
           success: true,
           order: createdOrder,
-          couponUsage,
+          couponUsage: couponUsageRecord,
           details
         };
       });
@@ -2615,9 +2615,9 @@ export class PostgresStorage implements IStorage {
         specialRequirements: Array.isArray(data.meta.specialRequirements) ? data.meta.specialRequirements : typeof data.meta.specialRequirements === 'string' ? [data.meta.specialRequirements] : [],
         urgencyLevel: (data.meta.urgencyLevel === 'normal' || data.meta.urgencyLevel === 'urgent') ? data.meta.urgencyLevel as 'normal' | 'urgent' : 'normal' as const,
         paymentMethod: (data.meta.paymentMethod === 'online' || data.meta.paymentMethod === 'cod' || data.meta.paymentMethod === 'wallet') ? data.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
-        paymentStatus: typeof data.meta.paymentStatus === 'string' ? data.meta.paymentStatus : String(data.meta.paymentStatus || ''),
+        paymentStatus: (data.meta.paymentStatus === 'pending' || data.meta.paymentStatus === 'paid' || data.meta.paymentStatus === 'failed' || data.meta.paymentStatus === 'refunded') ? data.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
         estimatedDuration: typeof data.meta.estimatedDuration === 'number' ? data.meta.estimatedDuration : Number(data.meta.estimatedDuration) || 0,
-        location: data.meta.location || null
+        location: data.meta.location && typeof data.meta.location === 'object' && 'address' in data.meta.location ? data.meta.location : undefined
       } : data.meta
     };
     const result = await db.update(orders)
@@ -2948,8 +2948,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const partData = {
       ...part,
-      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags as string[] : [part.tags as string]) : null,
-      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications as string[] : [part.specifications as string]) : null
+      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags : [String(part.tags)]) : null,
+      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications : [String(part.specifications)]) : null
     };
     const result = await db.insert(parts).values([partData]).returning();
     return result[0];
@@ -2959,8 +2959,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const updateData = {
       ...data,
-      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags as string[] : [data.tags as string]) : undefined,
-      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications as string[] : [data.specifications as string]) : undefined
+      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags : [String(data.tags)]) : undefined,
+      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications : [String(data.specifications)]) : undefined
     };
     const result = await db.update(parts)
       .set(updateData)
@@ -3201,9 +3201,9 @@ export class PostgresStorage implements IStorage {
           status: 'completed' as const,
           reference: idempotencyKey,
           metadata: {
-            paymentGateway: 'wallet' as string,
-            notes: `Wallet payment for order ${orderId}` as string
-          } as Record<string, any>
+            paymentGateway: 'wallet',
+            notes: `Wallet payment for order ${orderId}`
+          }
         };
         
         const transactionResults = await trx.insert(walletTransactions).values([transactionData]).returning();
@@ -3293,7 +3293,7 @@ export class PostgresStorage implements IStorage {
       ...provider,
       skills: provider.skills && provider.skills !== null ? (Array.isArray(provider.skills) ? provider.skills as string[] : [provider.skills as string]) : null,
       serviceIds: provider.serviceIds && provider.serviceIds !== null ? (Array.isArray(provider.serviceIds) ? provider.serviceIds as string[] : [provider.serviceIds as string]) : null,
-      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas as string[] : [provider.serviceAreas as string]) : null
+      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas : [{ name: String(provider.serviceAreas), coordinates: [], cities: [] }]) : null
     };
     const result = await db.insert(serviceProviders).values([providerData]).returning();
     return result[0];
@@ -3305,7 +3305,7 @@ export class PostgresStorage implements IStorage {
       ...data,
       skills: data.skills !== undefined && data.skills !== null ? (Array.isArray(data.skills) ? data.skills as string[] : [data.skills as string]) : undefined,
       serviceIds: data.serviceIds !== undefined && data.serviceIds !== null ? (Array.isArray(data.serviceIds) ? data.serviceIds as string[] : [data.serviceIds as string]) : undefined,
-      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas as string[] : [data.serviceAreas as string]) : undefined
+      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas : [{ name: String(data.serviceAreas), coordinates: [], cities: [] }]) : undefined
     };
     const result = await db.update(serviceProviders)
       .set(updateData)
