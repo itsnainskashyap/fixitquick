@@ -147,11 +147,14 @@ export class BackgroundMatcher {
       if (expansionResult.success) {
         // Emit WebSocket event for radius expansion
         if (this.webSocketManager) {
-          this.webSocketManager.emitToUser(booking.userId, 'order.radius_expanded', {
-            bookingId: booking.id,
-            newRadius: expansionResult.newRadius,
-            searchWave: expansionResult.newWave,
-            message: expansionResult.message,
+          this.webSocketManager.sendToUser(booking.userId, {
+            type: 'order.radius_expanded',
+            data: {
+              bookingId: booking.id,
+              newRadius: expansionResult.newRadius,
+              searchWave: expansionResult.newWave,
+              message: expansionResult.message,
+            }
           });
         }
 
@@ -216,31 +219,37 @@ export class BackgroundMatcher {
 
           // Emit WebSocket event for job offer
           if (this.webSocketManager) {
-            this.webSocketManager.emitToUser(provider.userId, 'job.offer_sent', {
-              jobRequest: {
-                ...jobRequest,
-                remainingSeconds: 300, // 5 minutes
-                bookingDetails: {
-                  id: booking.id,
-                  serviceTitle: booking.serviceTitle,
-                  serviceLocation: booking.serviceLocation,
-                  scheduledAt: booking.scheduledAt,
-                  urgency: booking.urgency,
-                  estimatedPrice: booking.totalAmount,
-                },
-                customerInfo: {
-                  name: booking.customerName,
-                  rating: booking.customerRating || 5.0,
-                },
+            this.webSocketManager.sendToUser(provider.userId, {
+              type: 'job.offer_sent',
+              data: {
+                jobRequest: {
+                  ...jobRequest,
+                  remainingSeconds: 300, // 5 minutes
+                  bookingDetails: {
+                    id: booking.id,
+                    serviceTitle: booking.serviceTitle,
+                    serviceLocation: booking.serviceLocation,
+                    scheduledAt: booking.scheduledAt,
+                    urgency: booking.urgency,
+                    estimatedPrice: booking.totalAmount,
+                  },
+                  customerInfo: {
+                    name: booking.customerName,
+                    rating: booking.customerRating || 5.0,
+                  },
+                }
               }
             });
 
             // Also emit to customer about offers sent
-            this.webSocketManager.emitToUser(booking.userId, 'order.offers_sent', {
-              bookingId: booking.id,
-              providersCount: matchingProviders.length,
-              currentRadius,
-              searchWave: booking.searchWave || 1,
+            this.webSocketManager.sendToUser(booking.userId, {
+              type: 'order.offers_sent',
+              data: {
+                bookingId: booking.id,
+                providersCount: matchingProviders.length,
+                currentRadius,
+                searchWave: booking.searchWave || 1,
+              }
             });
           }
 
@@ -386,11 +395,14 @@ export class BackgroundMatcher {
 
       // Emit WebSocket event for matching started
       if (this.webSocketManager) {
-        this.webSocketManager.emitToUser(booking.userId, 'order.matching_started', {
-          bookingId: booking.id,
-          searchRadius: initialRadius,
-          searchWave: 1,
-          timeLimit: 300, // 5 minutes in seconds
+        this.webSocketManager.sendToUser(booking.userId, {
+          type: 'order.matching_started',
+          data: {
+            bookingId: booking.id,
+            searchRadius: initialRadius,
+            searchWave: 1,
+            timeLimit: 300, // 5 minutes in seconds
+          }
         });
       }
 
@@ -426,15 +438,18 @@ export class BackgroundMatcher {
       // Emit WebSocket events for expiry
       if (this.webSocketManager) {
         // Notify customer that matching has expired
-        this.webSocketManager.emitToUser(userId, 'order.matching_expired', {
-          bookingId,
-          status: 'no_providers_found',
-          message: 'No providers were found within the time limit. Please try again or contact support.',
-          nextSteps: [
-            'Try again with a different time',
-            'Contact customer support',
-            'Consider scheduling for later'
-          ],
+        this.webSocketManager.sendToUser(userId, {
+          type: 'order.matching_expired',
+          data: {
+            bookingId,
+            status: 'no_providers_found',
+            message: 'No providers were found within the time limit. Please try again or contact support.',
+            nextSteps: [
+              'Try again with a different time',
+              'Contact customer support',
+              'Consider scheduling for later'
+            ],
+          }
         });
 
         // Emit expired events to any providers with pending offers
@@ -442,11 +457,14 @@ export class BackgroundMatcher {
         const expiredRequests = activeRequests.filter(req => req.orderId === bookingId && req.isExpired);
         
         for (const request of expiredRequests) {
-          this.webSocketManager.emitToUser(request.providerId, 'job.expired', {
-            jobRequestId: request.id,
-            bookingId,
-            reason: 'timeout',
-            message: 'This job request has expired',
+          this.webSocketManager.sendToUser(request.providerId, {
+            type: 'job.expired',
+            data: {
+              jobRequestId: request.id,
+              bookingId,
+              reason: 'timeout',
+              message: 'This job request has expired',
+            }
           });
         }
       }
