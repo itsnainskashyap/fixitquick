@@ -2464,7 +2464,12 @@ export class PostgresStorage implements IStorage {
         paymentMethod: (order.meta.paymentMethod === 'online' || order.meta.paymentMethod === 'cod' || order.meta.paymentMethod === 'wallet') ? order.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
         paymentStatus: (order.meta.paymentStatus === 'pending' || order.meta.paymentStatus === 'paid' || order.meta.paymentStatus === 'failed' || order.meta.paymentStatus === 'refunded') ? order.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
         estimatedDuration: typeof order.meta.estimatedDuration === 'number' ? order.meta.estimatedDuration : Number(order.meta.estimatedDuration) || 0,
-        location: order.meta.location && typeof order.meta.location === 'object' && 'address' in order.meta.location ? order.meta.location : undefined
+        location: order.meta.location && typeof order.meta.location === 'object' && 'address' in order.meta.location && 'latitude' in order.meta.location && 'longitude' in order.meta.location ? order.meta.location as {
+          address: string;
+          latitude: number;
+          longitude: number;
+          instructions?: string;
+        } : undefined
       } : order.meta
     };
     const result = await db.insert(orders).values([orderData]).returning();
@@ -2505,7 +2510,12 @@ export class PostgresStorage implements IStorage {
             paymentMethod: (orderData.meta.paymentMethod === 'online' || orderData.meta.paymentMethod === 'cod' || orderData.meta.paymentMethod === 'wallet') ? orderData.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
             paymentStatus: (orderData.meta.paymentStatus === 'pending' || orderData.meta.paymentStatus === 'paid' || orderData.meta.paymentStatus === 'failed' || orderData.meta.paymentStatus === 'refunded') ? orderData.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
             estimatedDuration: typeof orderData.meta.estimatedDuration === 'number' ? orderData.meta.estimatedDuration : Number(orderData.meta.estimatedDuration) || 0,
-            location: orderData.meta.location && typeof orderData.meta.location === 'object' && 'address' in orderData.meta.location ? orderData.meta.location : undefined
+            location: orderData.meta.location && typeof orderData.meta.location === 'object' && 'address' in orderData.meta.location && 'latitude' in orderData.meta.location && 'longitude' in orderData.meta.location ? orderData.meta.location as {
+              address: string;
+              latitude: number;
+              longitude: number;
+              instructions?: string;
+            } : undefined
           } : orderData.meta
         };
 
@@ -2530,7 +2540,7 @@ export class PostgresStorage implements IStorage {
             userId: orderData.userId || '',
             orderId: createdOrder.id,
             discountAmount: couponDiscount.toString(),
-            orderValue: (typeof processedOrderData.totalAmount === 'string' ? processedOrderData.totalAmount : String(processedOrderData.totalAmount || '0'))
+            orderValue: (typeof processedOrderData.meta?.totalAmount === 'number' ? String(processedOrderData.meta.totalAmount) : '0')
           };
 
           const couponUsageResult = await trx.insert(couponUsage).values([couponUsageData]).returning();
@@ -2617,7 +2627,12 @@ export class PostgresStorage implements IStorage {
         paymentMethod: (data.meta.paymentMethod === 'online' || data.meta.paymentMethod === 'cod' || data.meta.paymentMethod === 'wallet') ? data.meta.paymentMethod as 'online' | 'cod' | 'wallet' : undefined,
         paymentStatus: (data.meta.paymentStatus === 'pending' || data.meta.paymentStatus === 'paid' || data.meta.paymentStatus === 'failed' || data.meta.paymentStatus === 'refunded') ? data.meta.paymentStatus as 'pending' | 'paid' | 'failed' | 'refunded' : 'pending' as const,
         estimatedDuration: typeof data.meta.estimatedDuration === 'number' ? data.meta.estimatedDuration : Number(data.meta.estimatedDuration) || 0,
-        location: data.meta.location && typeof data.meta.location === 'object' && 'address' in data.meta.location ? data.meta.location : undefined
+        location: data.meta.location && typeof data.meta.location === 'object' && 'address' in data.meta.location && 'latitude' in data.meta.location && 'longitude' in data.meta.location ? data.meta.location as {
+          address: string;
+          latitude: number;
+          longitude: number;
+          instructions?: string;
+        } : undefined
       } : data.meta
     };
     const result = await db.update(orders)
@@ -2948,8 +2963,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const partData = {
       ...part,
-      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags : [String(part.tags)]) : null,
-      specifications: part.specifications && part.specifications !== null ? (Array.isArray(part.specifications) ? part.specifications : [String(part.specifications)]) : null
+      tags: part.tags && part.tags !== null ? (Array.isArray(part.tags) ? part.tags.filter(Boolean).map(String) : [String(part.tags)]) : null,
+      specifications: part.specifications && part.specifications !== null && typeof part.specifications === 'object' ? part.specifications as Record<string, any> : null
     };
     const result = await db.insert(parts).values([partData]).returning();
     return result[0];
@@ -2959,8 +2974,8 @@ export class PostgresStorage implements IStorage {
     // Ensure array fields are properly typed
     const updateData = {
       ...data,
-      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags : [String(data.tags)]) : undefined,
-      specifications: data.specifications !== undefined && data.specifications !== null ? (Array.isArray(data.specifications) ? data.specifications : [String(data.specifications)]) : undefined
+      tags: data.tags !== undefined && data.tags !== null ? (Array.isArray(data.tags) ? data.tags.filter(Boolean).map(String) : [String(data.tags)]) : undefined,
+      specifications: data.specifications !== undefined && data.specifications !== null && typeof data.specifications === 'object' ? data.specifications as Record<string, any> : undefined
     };
     const result = await db.update(parts)
       .set(updateData)
@@ -3201,8 +3216,13 @@ export class PostgresStorage implements IStorage {
           status: 'completed' as const,
           reference: idempotencyKey,
           metadata: {
-            paymentGateway: 'wallet',
-            notes: `Wallet payment for order ${orderId}`
+            paymentGateway: 'wallet' as string,
+            gatewayTransactionId: undefined,
+            failureReason: undefined,
+            refundReason: undefined,
+            commissionRate: undefined,
+            bonusType: undefined,
+            notes: `Wallet payment for order ${orderId}` as string
           }
         };
         
@@ -3293,7 +3313,7 @@ export class PostgresStorage implements IStorage {
       ...provider,
       skills: provider.skills && provider.skills !== null ? (Array.isArray(provider.skills) ? provider.skills as string[] : [provider.skills as string]) : null,
       serviceIds: provider.serviceIds && provider.serviceIds !== null ? (Array.isArray(provider.serviceIds) ? provider.serviceIds as string[] : [provider.serviceIds as string]) : null,
-      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas : [{ name: String(provider.serviceAreas), coordinates: [], cities: [] }]) : null
+      serviceAreas: provider.serviceAreas && provider.serviceAreas !== null ? (Array.isArray(provider.serviceAreas) ? provider.serviceAreas as { name: string; coordinates: { lat: number; lng: number }[]; cities: string[] }[] : [{ name: String(provider.serviceAreas), coordinates: [] as { lat: number; lng: number }[], cities: [] as string[] }]) : null
     };
     const result = await db.insert(serviceProviders).values([providerData]).returning();
     return result[0];
@@ -3305,7 +3325,7 @@ export class PostgresStorage implements IStorage {
       ...data,
       skills: data.skills !== undefined && data.skills !== null ? (Array.isArray(data.skills) ? data.skills as string[] : [data.skills as string]) : undefined,
       serviceIds: data.serviceIds !== undefined && data.serviceIds !== null ? (Array.isArray(data.serviceIds) ? data.serviceIds as string[] : [data.serviceIds as string]) : undefined,
-      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas : [{ name: String(data.serviceAreas), coordinates: [], cities: [] }]) : undefined
+      serviceAreas: data.serviceAreas !== undefined && data.serviceAreas !== null ? (Array.isArray(data.serviceAreas) ? data.serviceAreas as { name: string; coordinates: { lat: number; lng: number }[]; cities: string[] }[] : [{ name: String(data.serviceAreas), coordinates: [] as { lat: number; lng: number }[], cities: [] as string[] }]) : undefined
     };
     const result = await db.update(serviceProviders)
       .set(updateData)
@@ -3380,12 +3400,12 @@ export class PostgresStorage implements IStorage {
       verificationNotes: params.verificationNotes,
       rejectionReason: params.rejectionReason,
       resubmissionReason: params.resubmissionReason,
-      updatedAt: sql`NOW()`,
+      updatedAt: new Date(),
     };
 
     // Set verification date and verifiedBy only for final states
     if (params.verificationStatus === 'approved' || params.verificationStatus === 'rejected') {
-      updateData.verificationDate = sql`NOW()`;
+      updateData.verificationDate = new Date();
       updateData.verifiedBy = params.verifiedBy;
       updateData.isVerified = params.verificationStatus === 'approved';
       
@@ -3804,7 +3824,7 @@ export class PostgresStorage implements IStorage {
       // Update provider with new documents
       await this.updateServiceProvider(userId, {
         documents: updatedDocs,
-        updatedAt: sql`NOW()`,
+        updatedAt: new Date(),
       });
 
       return { success: true, url: documentData.url };
@@ -3822,7 +3842,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
-    const result = await db.insert(chatMessages).values(message).returning();
+    const result = await db.insert(chatMessages).values([message]).returning();
     return result[0];
   }
 
@@ -3923,7 +3943,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createReview(review: InsertReview): Promise<Review> {
-    const result = await db.insert(reviews).values(review).returning();
+    const result = await db.insert(reviews).values([review]).returning();
     return result[0];
   }
 

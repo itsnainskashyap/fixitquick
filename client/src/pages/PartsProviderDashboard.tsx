@@ -105,6 +105,7 @@ interface PartData {
   supplier: string;
   model: string;
   brand: string;
+  specifications?: string;
 }
 
 export default function PartsProviderDashboard() {
@@ -427,7 +428,7 @@ export default function PartsProviderDashboard() {
                       id="stock"
                       type="number"
                       value={newPart.stock}
-                      onChange={(e) => setNewPart({ ...newPart, stock: e.target.value })}
+                      onChange={(e) => setNewPart({ ...newPart, stock: parseInt(e.target.value) || 0 })}
                       placeholder="0"
                       data-testid="input-part-stock"
                     />
@@ -441,7 +442,7 @@ export default function PartsProviderDashboard() {
                       id="lowStockThreshold"
                       type="number"
                       value={newPart.lowStockThreshold}
-                      onChange={(e) => setNewPart({ ...newPart, lowStockThreshold: e.target.value })}
+                      onChange={(e) => setNewPart({ ...newPart, lowStockThreshold: parseInt(e.target.value) || 10 })}
                       placeholder="5"
                       data-testid="input-part-threshold"
                     />
@@ -952,10 +953,15 @@ function InventoryManagement({ dashboardData, isLoading, user, queryClient, toas
   // Stock update mutation with proper API integration
   const updateStockMutation = useMutation({
     mutationFn: async ({ partId, stock }: { partId: string; stock: number }) => {
-      return await apiRequest(`/api/v1/parts-provider/parts/${partId}/stock`, {
+      const response = await fetch(`/api/v1/parts-provider/parts/${partId}/stock`, {
         method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
+        },
         body: JSON.stringify({ stock }),
       });
+      return response.json();
     },
     onSuccess: () => {
       toast({

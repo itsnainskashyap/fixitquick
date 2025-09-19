@@ -1164,7 +1164,7 @@ export default function ServiceBooking() {
                         {providers && providers.length > 0 ? (
                           <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
                             <div className="flex items-center space-x-2 text-green-800 dark:text-green-300">
-                              <CheckCircle className="w-5 h-5" />
+                              <CheckCircle2 className="w-5 h-5" />
                               <span className="font-medium">
                                 Found {providers.length} available provider{providers.length !== 1 ? 's' : ''}!
                               </span>

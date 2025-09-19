@@ -4476,6 +4476,9 @@ export default function Admin() {
   // State for service creation hierarchical category selection
   const [selectedServiceMainCategory, setSelectedServiceMainCategory] = useState<ServiceCategory | null>(null);
   
+  // State for category management
+  const [selectedMainCategory, setSelectedMainCategory] = useState<ServiceCategory | null>(null);
+  
   // Query for subcategories in service creation
   const serviceSubCategoriesQuery = useQuery({
     queryKey: ['service-sub-categories', selectedServiceMainCategory?.id],
@@ -4891,6 +4894,32 @@ export default function Admin() {
       });
     },
   });
+
+  // Enhanced function to handle category deletion with better UX
+  const handleDeleteCategory = (category: ServiceCategory) => {
+    const isMainCategory = category.level === 0;
+    const categoryType = isMainCategory ? 'main category' : 'subcategory';
+    
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the ${categoryType} "${category.name}"?\n\n` +
+      `This action cannot be undone. If this ${categoryType} has subcategories or services, ` +
+      `you will need to move them first.`
+    );
+    
+    if (confirmed) {
+      // Store category info for success message since mutation can't access it
+      const categoryInfo = { name: category.name, type: categoryType };
+      
+      deleteCategoryMutation.mutate(category.id, {
+        onSuccess: () => {
+          toast({
+            title: `${categoryInfo.type} deleted successfully`,
+            description: `"${categoryInfo.name}" has been removed.`,
+          });
+        }
+      });
+    }
+  };
 
   // Category image upload mutations
   const uploadCategoryImageMutation = useMutation({
