@@ -665,6 +665,105 @@ export default function PartProviderRegistration() {
                 <CardContent>
                   <Form {...businessForm}>
                     <form onSubmit={businessForm.handleSubmit(handleBusinessDetailsSubmit)} className="space-y-6">
+                      {/* Business Address Section */}
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-medium">Business Address</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-2">
+                            <FormField
+                              control={businessForm.control}
+                              name="businessAddress.street"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Street Address *</FormLabel>
+                                  <FormControl>
+                                    <Input 
+                                      placeholder="Enter your business street address" 
+                                      {...field} 
+                                      data-testid="input-street"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                          
+                          <FormField
+                            control={businessForm.control}
+                            name="businessAddress.city"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>City *</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    placeholder="Enter city" 
+                                    {...field} 
+                                    data-testid="input-city"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          
+                          <FormField
+                            control={businessForm.control}
+                            name="businessAddress.state"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>State *</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    placeholder="Enter state" 
+                                    {...field} 
+                                    data-testid="input-state"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          
+                          <FormField
+                            control={businessForm.control}
+                            name="businessAddress.pincode"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Pincode *</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    placeholder="6-digit pincode" 
+                                    maxLength={6}
+                                    {...field} 
+                                    data-testid="input-pincode"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          
+                          <FormField
+                            control={businessForm.control}
+                            name="businessAddress.country"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Country</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    {...field} 
+                                    disabled
+                                    data-testid="input-country"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <FormField
                           control={businessForm.control}
