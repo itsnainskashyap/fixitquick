@@ -171,7 +171,11 @@ export async function setupUploadRoutes(app: Express) {
   });
 
   // Parts provider document upload endpoint - Fix field name issue  
-  app.post('/api/v1/providers/documents/upload', authMiddleware, uploadDocument, async (req, res) => {
+  // Use multer.any() to accept any field name
+  const multer = (await import('multer')).default;
+  const upload = multer({ storage: multer.memoryStorage() });
+  
+  app.post('/api/v1/providers/documents/upload', authMiddleware, upload.any(), async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -179,11 +183,13 @@ export async function setupUploadRoutes(app: Express) {
       }
 
       const { documentType } = req.body;
-      const file = req.file;
+      const files = (req as any).files;
 
-      if (!file) {
+      if (!files || files.length === 0) {
         return res.status(400).json({ success: false, message: 'No file uploaded' });
       }
+
+      const file = files[0]; // Get the first uploaded file
 
       console.log(`📁 Parts provider document upload: ${documentType} for user ${userId}`);
 
