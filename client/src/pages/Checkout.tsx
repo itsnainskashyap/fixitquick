@@ -30,6 +30,57 @@ import {
   CheckCircle
 } from 'lucide-react';
 
+// UTILITY: Get user location coordinates with fallback to city-based defaults
+const getUserLocationCoordinate = async (coord: 'latitude' | 'longitude', cityName: string): Promise<number> => {
+  // City-based coordinate defaults for major Indian cities
+  const cityCoordinates: Record<string, { latitude: number; longitude: number }> = {
+    'delhi': { latitude: 28.6139, longitude: 77.2090 },
+    'mumbai': { latitude: 19.0760, longitude: 72.8777 },
+    'bangalore': { latitude: 12.9716, longitude: 77.5946 },
+    'bengaluru': { latitude: 12.9716, longitude: 77.5946 },
+    'hyderabad': { latitude: 17.3850, longitude: 78.4867 },
+    'pune': { latitude: 18.5204, longitude: 73.8567 },
+    'kolkata': { latitude: 22.5726, longitude: 88.3639 },
+    'chennai': { latitude: 13.0827, longitude: 80.2707 },
+    'ahmedabad': { latitude: 23.0225, longitude: 72.5714 },
+    'gurgaon': { latitude: 28.4595, longitude: 77.0266 },
+    'noida': { latitude: 28.5355, longitude: 77.3910 },
+    'jaipur': { latitude: 26.9124, longitude: 75.7873 },
+  };
+  
+  // Try browser geolocation first (with timeout)
+  try {
+    if (navigator.geolocation) {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { 
+          timeout: 3000,
+          enableHighAccuracy: false,
+          maximumAge: 300000 // Cache for 5 minutes
+        });
+      });
+      
+      console.log(`📍 Using browser geolocation: ${coord} = ${position.coords[coord]}`);
+      return position.coords[coord];
+    }
+  } catch (error) {
+    console.warn('🌍 Browser geolocation failed, using city fallback:', error);
+  }
+  
+  // Fallback to city-based coordinates
+  const normalizedCity = cityName.toLowerCase().trim();
+  const cityCoords = cityCoordinates[normalizedCity];
+  
+  if (cityCoords) {
+    console.log(`🏙️  Using city coordinates for ${cityName}: ${coord} = ${cityCoords[coord]}`);
+    return cityCoords[coord];
+  }
+  
+  // Final fallback to Delhi coordinates
+  const defaultCoords = cityCoordinates['delhi'];
+  console.log(`🏛️  Using default Delhi coordinates: ${coord} = ${defaultCoords[coord]}`);
+  return defaultCoords[coord];
+};
+
 // OnionPay widget interface
 declare global {
   interface Window {
@@ -264,8 +315,8 @@ export default function Checkout() {
         totalAmount: total.toString(),
         location: {
           address: `${deliveryAddress.address}, ${deliveryAddress.city}`,
-          latitude: 0, // TODO: Get actual coordinates
-          longitude: 0,
+          latitude: await getUserLocationCoordinate('latitude', deliveryAddress.city),
+          longitude: await getUserLocationCoordinate('longitude', deliveryAddress.city),
           instructions: deliveryAddress.landmark
         },
         scheduledAt: serviceItems.length > 0 && serviceSchedule.date ? 
