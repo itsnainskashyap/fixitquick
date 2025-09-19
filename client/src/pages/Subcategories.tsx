@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
 import { ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 
 interface ServiceCategory {
@@ -36,13 +37,21 @@ export default function Subcategories() {
 
   // Fetch subcategories for the main category
   const { data: subcategories = [], isLoading: loadingSubcategories } = useQuery<ServiceCategory[]>({
-    queryKey: ['/api/v1/services/categories', categoryId, 'subcategories'],
+    queryKey: ['/api/v1/services/categories/subcategories', categoryId],
+    queryFn: async () => {
+      if (!categoryId) return [];
+      return await apiRequest('GET', `/api/v1/services/categories/${categoryId}/subcategories`);
+    },
     enabled: !!categoryId,
   });
 
   // Fetch main category details to show in breadcrumb
   const { data: mainCategory, isLoading: loadingMainCategory } = useQuery<ServiceCategory>({
-    queryKey: ['/api/v1/services/categories', categoryId],
+    queryKey: ['/api/v1/services/categories/detail', categoryId],
+    queryFn: async () => {
+      if (!categoryId) return null;
+      return await apiRequest('GET', `/api/v1/services/categories/${categoryId}`);
+    },
     enabled: !!categoryId,
   });
 
