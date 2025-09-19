@@ -349,6 +349,146 @@ export default function PartsProviderDashboard() {
                 Add Part
               </Button>
             </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Part</DialogTitle>
+                <DialogDescription>
+                  Add a new part to your inventory. Fill in the details below.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Part Name *</Label>
+                    <Input
+                      id="name"
+                      value={newPart.name}
+                      onChange={(e) => setNewPart({ ...newPart, name: e.target.value })}
+                      placeholder="Enter part name"
+                      data-testid="input-part-name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sku">SKU *</Label>
+                    <Input
+                      id="sku"
+                      value={newPart.sku}
+                      onChange={(e) => setNewPart({ ...newPart, sku: e.target.value })}
+                      placeholder="Enter SKU"
+                      data-testid="input-part-sku"
+                    />
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Input
+                    id="description"
+                    value={newPart.description}
+                    onChange={(e) => setNewPart({ ...newPart, description: e.target.value })}
+                    placeholder="Enter part description"
+                    data-testid="input-part-description"
+                  />
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Category *</Label>
+                    <select
+                      id="category"
+                      value={newPart.category}
+                      onChange={(e) => setNewPart({ ...newPart, category: e.target.value })}
+                      className="w-full p-2 border rounded-md bg-background"
+                      data-testid="select-part-category"
+                    >
+                      <option value="">Select category</option>
+                      <option value="electrical">Electrical</option>
+                      <option value="plumbing">Plumbing</option>
+                      <option value="hardware">Hardware</option>
+                      <option value="tools">Tools</option>
+                      <option value="automotive">Automotive</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="price">Price (₹) *</Label>
+                    <Input
+                      id="price"
+                      type="number"
+                      value={newPart.price}
+                      onChange={(e) => setNewPart({ ...newPart, price: e.target.value })}
+                      placeholder="0.00"
+                      data-testid="input-part-price"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="stock">Stock *</Label>
+                    <Input
+                      id="stock"
+                      type="number"
+                      value={newPart.stock}
+                      onChange={(e) => setNewPart({ ...newPart, stock: e.target.value })}
+                      placeholder="0"
+                      data-testid="input-part-stock"
+                    />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="lowStockThreshold">Low Stock Alert</Label>
+                    <Input
+                      id="lowStockThreshold"
+                      type="number"
+                      value={newPart.lowStockThreshold}
+                      onChange={(e) => setNewPart({ ...newPart, lowStockThreshold: e.target.value })}
+                      placeholder="5"
+                      data-testid="input-part-threshold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="supplier">Supplier</Label>
+                    <Input
+                      id="supplier"
+                      value={newPart.supplier}
+                      onChange={(e) => setNewPart({ ...newPart, supplier: e.target.value })}
+                      placeholder="Supplier name"
+                      data-testid="input-part-supplier"
+                    />
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="specifications">Specifications/Notes</Label>
+                  <Input
+                    id="specifications"
+                    value={newPart.specifications}
+                    onChange={(e) => setNewPart({ ...newPart, specifications: e.target.value })}
+                    placeholder="Technical specifications or additional notes"
+                    data-testid="input-part-specifications"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setIsAddPartOpen(false)}
+                  data-testid="button-cancel-add-part"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleAddPart}
+                  disabled={addPartMutation.isPending || !newPart.name || !newPart.sku || !newPart.category || !newPart.price || !newPart.stock}
+                  data-testid="button-save-part"
+                >
+                  {addPartMutation.isPending && (
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  Add Part
+                </Button>
+              </div>
+            </DialogContent>
           </Dialog>
           <Button
             variant="outline"
@@ -614,142 +754,6 @@ export default function PartsProviderDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* Add Part Dialog */}
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add New Part</DialogTitle>
-          <DialogDescription>
-            Add a new part to your inventory. Fill in the details below.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Part Name *</Label>
-              <Input
-                id="name"
-                value={newPart.name}
-                onChange={(e) => setNewPart({ ...newPart, name: e.target.value })}
-                placeholder="Enter part name"
-                data-testid="input-part-name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sku">SKU *</Label>
-              <Input
-                id="sku"
-                value={newPart.sku}
-                onChange={(e) => setNewPart({ ...newPart, sku: e.target.value })}
-                placeholder="Enter SKU"
-                data-testid="input-part-sku"
-              />
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Input
-              id="description"
-              value={newPart.description}
-              onChange={(e) => setNewPart({ ...newPart, description: e.target.value })}
-              placeholder="Enter part description"
-              data-testid="input-part-description"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="price">Price *</Label>
-              <Input
-                id="price"
-                type="number"
-                value={newPart.price}
-                onChange={(e) => setNewPart({ ...newPart, price: e.target.value })}
-                placeholder="0.00"
-                data-testid="input-part-price"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cost">Cost</Label>
-              <Input
-                id="cost"
-                type="number"
-                value={newPart.cost}
-                onChange={(e) => setNewPart({ ...newPart, cost: e.target.value })}
-                placeholder="0.00"
-                data-testid="input-part-cost"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="stock">Initial Stock</Label>
-              <Input
-                id="stock"
-                type="number"
-                value={newPart.stock}
-                onChange={(e) => setNewPart({ ...newPart, stock: parseInt(e.target.value) || 0 })}
-                placeholder="0"
-                data-testid="input-part-stock"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="lowStockThreshold">Low Stock Threshold</Label>
-              <Input
-                id="lowStockThreshold"
-                type="number"
-                value={newPart.lowStockThreshold}
-                onChange={(e) => setNewPart({ ...newPart, lowStockThreshold: parseInt(e.target.value) || 10 })}
-                placeholder="10"
-                data-testid="input-part-threshold"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="brand">Brand</Label>
-              <Input
-                id="brand"
-                value={newPart.brand}
-                onChange={(e) => setNewPart({ ...newPart, brand: e.target.value })}
-                placeholder="Enter brand"
-                data-testid="input-part-brand"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="category">Category</Label>
-              <Input
-                id="category"
-                value={newPart.category}
-                onChange={(e) => setNewPart({ ...newPart, category: e.target.value })}
-                placeholder="Enter category"
-                data-testid="input-part-category"
-              />
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end space-x-2">
-          <Button variant="outline" onClick={() => setIsAddPartOpen(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleAddPart} 
-            disabled={addPartMutation.isPending}
-            data-testid="button-save-part"
-          >
-            {addPartMutation.isPending ? (
-              <>
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                Adding...
-              </>
-            ) : (
-              'Add Part'
-            )}
-          </Button>
-        </div>
-      </DialogContent>
     </div>
   );
 }
