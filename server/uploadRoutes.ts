@@ -49,9 +49,13 @@ export async function setupUploadRoutes(app: Express) {
         });
       }
 
-      // Generate JWT token for admin
-      const jwtService = await import('../services/jwtService');
-      const accessToken = await jwtService.default.generateAccessToken(admin.id, admin.role, 'admin-login');
+      // Generate JWT token for admin - simple development token
+      const jwt = await import('jsonwebtoken');
+      const accessToken = jwt.sign(
+        { userId: admin.id, role: admin.role, type: 'admin-login' },
+        'dev-jwt-secret-key',
+        { expiresIn: '24h' }
+      );
 
       // Set secure httpOnly cookie for admin
       res.cookie('adminToken', accessToken, {
@@ -201,6 +205,49 @@ export async function setupUploadRoutes(app: Express) {
       return res.status(500).json({
         success: false,
         message: 'Registration failed. Please try again.'
+      });
+    }
+  });
+
+  // Provider profile endpoint to check application status
+  app.get('/api/v1/providers/profile', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
+      }
+
+      // Get the provider's business info
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      
+      if (!businessInfo) {
+        return res.json({
+          success: true,
+          hasApplication: false,
+          message: 'No application found'
+        });
+      }
+
+      return res.json({
+        success: true,
+        hasApplication: true,
+        application: {
+          id: businessInfo.id,
+          businessName: businessInfo.businessName,
+          businessType: businessInfo.businessType,
+          verificationStatus: businessInfo.verificationStatus,
+          isVerified: businessInfo.isVerified,
+          isActive: businessInfo.isActive,
+          createdAt: businessInfo.createdAt,
+          updatedAt: businessInfo.updatedAt
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching provider profile:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch profile'
       });
     }
   });
