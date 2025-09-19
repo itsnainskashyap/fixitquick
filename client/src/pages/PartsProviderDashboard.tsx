@@ -4,6 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePWANotifications } from '@/hooks/usePWANotifications';
+import { useNotificationFallback } from '@/hooks/useNotificationFallback';
+import PWANotificationManager from '@/components/PWANotificationManager';
 import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -78,6 +81,23 @@ export default function PartsProviderDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [selectedTab, setSelectedTab] = useState('overview');
   const [isAddPartOpen, setIsAddPartOpen] = useState(false);
+  
+  // PWA Notification System Integration
+  const {
+    permissionState,
+    preferences,
+    isEnabled: pwaEnabled,
+    requestNotificationPermission,
+    testNotification
+  } = usePWANotifications();
+  
+  const {
+    fallbackNotifications,
+    connectionStats,
+    shouldUseFallback,
+    unreadCount: fallbackUnreadCount,
+    hasEmergencyNotifications
+  } = useNotificationFallback();
   
   // Enhanced state management for inventory features
   const [inventoryFilter, setInventoryFilter] = useState('all'); // 'all', 'low_stock', 'out_of_stock', 'top_selling'

@@ -1,6 +1,7 @@
 import { storage } from '../storage';
 import WebSocketManager from './websocket';
 import { phoneNotificationService } from './phoneNotifications';
+import { notificationService } from './notifications';
 
 /**
  * Background Matcher Service
@@ -217,6 +218,9 @@ export class BackgroundMatcher {
             expiresAt: new Date(Date.now() + 5 * 60 * 1000),
           });
 
+          // Send PWA push notification for job offer (high priority)
+          await this.sendPWANotificationToProvider(provider, booking, jobRequest);
+
           // Emit WebSocket event for job offer
           if (this.webSocketManager) {
             this.webSocketManager.sendToUser(provider.userId, {
@@ -365,6 +369,160 @@ export class BackgroundMatcher {
       } catch (updateError) {
         console.error(`❌ BackgroundMatcher: Error updating job request with phone notification error:`, updateError);
       }
+    }
+  }
+
+  /**
+   * Send PWA push notification to provider about new job offer
+   */
+  private async sendPWANotificationToProvider(provider: any, booking: any, jobRequest: any): Promise<void> {
+    try {
+      console.log(`🔔 BackgroundMatcher: Sending PWA notification to provider ${provider.userId} for booking ${booking.id}`);
+
+      // Determine notification type based on urgency
+      let notificationType = 'new_job_request';
+      if (booking.urgency === 'urgent' || booking.urgency === 'emergency') {
+        notificationType = 'emergency_request';
+      }
+
+      // Build comprehensive notification payload
+      const notificationPayload = {
+        title: booking.urgency === 'urgent' || booking.urgency === 'emergency' 
+          ? '🚨 EMERGENCY JOB REQUEST' 
+          : '🔧 New Job Request Available',
+        body: `${booking.serviceTitle} needed in ${booking.serviceLocation?.area || 'your area'}. Estimated: ₹${booking.totalAmount}`,
+        data: {
+          type: notificationType,
+          providerType: 'service_provider',
+          orderId: booking.id,
+          jobId: jobRequest.id,
+          bookingId: booking.id,
+          urgency: booking.urgency || 'normal',
+          serviceTitle: booking.serviceTitle,
+          customerName: booking.customerName,
+          estimatedPrice: booking.totalAmount,
+          location: booking.serviceLocation,
+          scheduledAt: booking.scheduledAt,
+          expiresAt: jobRequest.expiresAt,
+          remainingSeconds: 300, // 5 minutes
+          link: `/provider/dashboard?jobId=${jobRequest.id}`,
+          // Additional context for action handling
+          acceptEndpoint: `/api/v1/orders/${booking.id}/accept`,
+          declineEndpoint: `/api/v1/orders/${booking.id}/decline`,
+        },
+        imageUrl: '/icons/job-notification.png', // Optional image
+      };
+
+      // Send PWA notification with high priority
+      const result = await notificationService.sendPushNotification(
+        provider.userId, 
+        notificationPayload
+      );
+
+      if (result.success) {
+        console.log(`✅ BackgroundMatcher: PWA notification sent to provider ${provider.userId}, delivery count: ${result.successCount}`);
+        
+        // Update job request with PWA notification info
+        await storage.updateProviderJobRequest(jobRequest.id, {
+          pwaNotificationSent: true,
+          pwaNotificationTimestamp: new Date(),
+          pwaNotificationDelivered: result.successCount > 0
+        });
+      } else {
+        console.log(`⚠️ BackgroundMatcher: Failed to send PWA notification to provider ${provider.userId}: ${result.reason || 'Unknown error'}`);
+        
+        // Record failed PWA notification attempt
+        await storage.updateProviderJobRequest(jobRequest.id, {
+          pwaNotificationSent: false,
+          pwaNotificationError: result.reason || 'Failed to send PWA notification',
+          pwaNotificationTimestamp: new Date()
+        });
+      }
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error sending PWA notification to provider ${provider.userId}:`, error);
+      
+      // Record error in job request
+      try {
+        await storage.updateProviderJobRequest(jobRequest.id, {
+          pwaNotificationSent: false,
+          pwaNotificationError: error instanceof Error ? error.message : 'Unknown PWA notification error',
+          pwaNotificationTimestamp: new Date()
+        });
+      } catch (updateError) {
+        console.error(`❌ BackgroundMatcher: Error updating job request with PWA notification error:`, updateError);
+      }
+    }
+  }
+
+  /**
+   * Send PWA notification for parts provider orders
+   */
+  async sendPWANotificationToPartsProvider(
+    providerId: string, 
+    orderId: string, 
+    orderDetails: any
+  ): Promise<void> {
+    try {
+      console.log(`📦 BackgroundMatcher: Sending PWA notification to parts provider ${providerId} for order ${orderId}`);
+
+      const notificationPayload = {
+        title: '📦 New Parts Order',
+        body: `New order for ${orderDetails.itemCount || 'multiple'} items. Total: ₹${orderDetails.totalAmount}`,
+        data: {
+          type: 'new_order',
+          providerType: 'parts_provider',
+          orderId: orderId,
+          itemCount: orderDetails.itemCount,
+          totalAmount: orderDetails.totalAmount,
+          customerName: orderDetails.customerName,
+          urgency: orderDetails.urgency || 'normal',
+          estimatedDelivery: orderDetails.estimatedDelivery,
+          link: `/parts-provider/dashboard?orderId=${orderId}`,
+          acceptEndpoint: `/api/v1/parts-provider/orders/${orderId}/accept`,
+        },
+      };
+
+      const result = await notificationService.sendPushNotification(
+        providerId, 
+        notificationPayload
+      );
+
+      if (result.success) {
+        console.log(`✅ BackgroundMatcher: PWA notification sent to parts provider ${providerId}`);
+      } else {
+        console.log(`⚠️ BackgroundMatcher: Failed to send PWA notification to parts provider ${providerId}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error sending PWA notification to parts provider ${providerId}:`, error);
+    }
+  }
+
+  /**
+   * Send PWA notification for low stock alerts
+   */
+  async sendLowStockPWANotification(providerId: string, stockData: any): Promise<void> {
+    try {
+      const notificationPayload = {
+        title: '⚠️ Low Stock Alert',
+        body: `${stockData.itemName} is running low (${stockData.currentStock} remaining)`,
+        data: {
+          type: 'low_stock_alert',
+          providerType: 'parts_provider',
+          partId: stockData.partId,
+          itemName: stockData.itemName,
+          currentStock: stockData.currentStock,
+          threshold: stockData.threshold,
+          link: `/parts-provider/dashboard?tab=inventory&highlight=${stockData.partId}`,
+        },
+      };
+
+      await notificationService.sendPushNotification(providerId, notificationPayload);
+      console.log(`📊 BackgroundMatcher: Low stock PWA notification sent to parts provider ${providerId}`);
+
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error sending low stock PWA notification:`, error);
     }
   }
 

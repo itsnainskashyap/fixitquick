@@ -4,6 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/hooks/use-toast';
+import { usePWANotifications } from '@/hooks/usePWANotifications';
+import { useNotificationFallback } from '@/hooks/useNotificationFallback';
+import PWANotificationManager from '@/components/PWANotificationManager';
 import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -83,6 +86,23 @@ export default function ServiceProviderDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  
+  // PWA Notification System Integration
+  const {
+    permissionState,
+    preferences,
+    isEnabled: pwaEnabled,
+    requestNotificationPermission,
+    testNotification
+  } = usePWANotifications();
+  
+  const {
+    fallbackNotifications,
+    connectionStats,
+    shouldUseFallback,
+    unreadCount: fallbackUnreadCount,
+    hasEmergencyNotifications
+  } = useNotificationFallback();
   
   // Enhanced state management
   const [jobFilter, setJobFilter] = useState('all'); // 'all', 'urgent', 'nearby', 'high-paying'
@@ -224,7 +244,7 @@ export default function ServiceProviderDashboard() {
   useEffect(() => {
     if (!isConnected) return;
 
-    const handleJobOffer = (data: any) => {
+    const handleJobOffer = async (data: any) => {
       console.log('🔔 New job offer received:', data);
       
       // Add to notifications
@@ -235,22 +255,76 @@ export default function ServiceProviderDashboard() {
         message: `${data.booking?.serviceType} - ₹${data.booking?.totalAmount}`,
         timestamp: new Date(),
         data: data,
-        read: false
+        read: false,
+        urgency: data.booking?.urgency || 'normal',
+        actions: ['accept', 'decline']
       };
       setNotifications(prev => [newNotification, ...prev.slice(0, 9)]);
       
-      // Play notification sound
+      // Enhanced audio alerts with urgency support
       try {
-        const audio = new Audio('/notification-sound.mp3');
-        audio.play().catch(console.error);
+        const soundFile = data.booking?.urgency === 'urgent' || data.booking?.urgency === 'emergency' 
+          ? '/notification-urgent.mp3' 
+          : '/notification-sound.mp3';
+        const audio = new Audio(soundFile);
+        audio.volume = 0.8;
+        
+        // Play multiple times for urgent jobs
+        if (data.booking?.urgency === 'urgent' || data.booking?.urgency === 'emergency') {
+          audio.play().catch(console.error);
+          setTimeout(() => audio.play().catch(console.error), 1000);
+          setTimeout(() => audio.play().catch(console.error), 2000);
+        } else {
+          audio.play().catch(console.error);
+        }
       } catch (e) {
         console.log('Notification sound not available');
       }
       
+      // Show browser notification if PWA notifications enabled
+      if (pwaEnabled && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          const notificationTitle = data.booking?.urgency === 'urgent' || data.booking?.urgency === 'emergency' 
+            ? '🚨 URGENT JOB REQUEST' 
+            : '🔧 New Job Request';
+          
+          const notification = new Notification(notificationTitle, {
+            body: `${data.booking?.serviceType} needed. Estimated: ₹${data.booking?.totalAmount}`,
+            icon: '/icons/job-notification.png',
+            badge: '/icons/notification-badge.png',
+            tag: `job-${data.booking?.id}`,
+            requireInteraction: true,
+            actions: [
+              { action: 'accept', title: 'Accept Job', icon: '/icons/accept.png' },
+              { action: 'decline', title: 'Decline', icon: '/icons/decline.png' },
+              { action: 'view', title: 'View Details', icon: '/icons/view.png' }
+            ],
+            data: {
+              type: 'job_offer',
+              jobId: data.jobRequest?.id,
+              bookingId: data.booking?.id,
+              url: `/provider/dashboard?jobId=${data.jobRequest?.id}`
+            }
+          });
+          
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+          
+          // Auto-close after 5 minutes (job expiry)
+          setTimeout(() => notification.close(), 5 * 60 * 1000);
+        } catch (error) {
+          console.error('Failed to show browser notification:', error);
+        }
+      }
+      
       toast({
-        title: "🔔 New Job Offer!",
+        title: data.booking?.urgency === 'urgent' || data.booking?.urgency === 'emergency' 
+          ? "🚨 URGENT JOB OFFER!" 
+          : "🔔 New Job Offer!",
         description: `${data.booking?.serviceType} - ₹${data.booking?.totalAmount}`,
-        duration: 5000,
+        duration: data.booking?.urgency === 'urgent' ? 10000 : 5000,
       });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] });
     };
@@ -397,7 +471,26 @@ export default function ServiceProviderDashboard() {
         </div>
         
         <div className="flex items-center space-x-4">
-          {/* Notification Center */}
+          {/* PWA Notification Status Indicator */}
+          <div className="flex items-center space-x-2">
+            {!pwaEnabled && permissionState === 'denied' && (
+              <Badge variant="destructive" className="text-xs">
+                🔕 Notifications Blocked
+              </Badge>
+            )}
+            {shouldUseFallback && (
+              <Badge variant="secondary" className="text-xs">
+                📡 Backup Mode
+              </Badge>
+            )}
+            {hasEmergencyNotifications && (
+              <Badge variant="destructive" className="text-xs animate-pulse">
+                🚨 Emergency Alert
+              </Badge>
+            )}
+          </div>
+
+          {/* Enhanced Notification Center */}
           <div className="relative">
             <Button
               variant="outline"
@@ -410,15 +503,16 @@ export default function ServiceProviderDashboard() {
                 }
               }}
               data-testid="button-notifications"
+              className={`${hasEmergencyNotifications ? 'border-red-500 bg-red-50' : ''}`}
             >
-              {notifications.filter(n => !n.read).length > 0 ? (
-                <BellRing className="h-4 w-4 text-blue-500" />
+              {notifications.filter(n => !n.read).length > 0 || fallbackUnreadCount > 0 ? (
+                <BellRing className={`h-4 w-4 ${hasEmergencyNotifications ? 'text-red-500 animate-pulse' : 'text-blue-500'}`} />
               ) : (
                 <Bell className="h-4 w-4" />
               )}
-              {notifications.filter(n => !n.read).length > 0 && (
-                <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 text-xs bg-red-500">
-                  {notifications.filter(n => !n.read).length}
+              {(notifications.filter(n => !n.read).length + fallbackUnreadCount) > 0 && (
+                <Badge className={`absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 text-xs ${hasEmergencyNotifications ? 'bg-red-500 animate-pulse' : 'bg-red-500'}`}>
+                  {notifications.filter(n => !n.read).length + fallbackUnreadCount}
                 </Badge>
               )}
             </Button>
@@ -558,10 +652,19 @@ export default function ServiceProviderDashboard() {
         </motion.div>
       </div>
 
+      {/* PWA Notification Manager Component */}
+      <PWANotificationManager 
+        userId={user?.id || ''}
+        userType="service_provider"
+        onNotificationReceived={(notification) => {
+          setNotifications(prev => [notification, ...prev.slice(0, 9)]);
+        }}
+      />
+
       {/* Enhanced Navigation Tabs */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
         <div className="flex items-center justify-between">
-          <TabsList className="grid grid-cols-6 bg-white dark:bg-gray-800 border">
+          <TabsList className="grid grid-cols-7 bg-white dark:bg-gray-800 border">
             <TabsTrigger value="overview" data-testid="tab-overview" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
               <BarChart3 className="h-4 w-4 mr-2" />
               Overview
@@ -714,6 +817,143 @@ export default function ServiceProviderDashboard() {
               <JobHistoryCard key={job.id} job={job} />
             ))
           )}
+        </TabsContent>
+
+        {/* PWA Notifications Tab */}
+        <TabsContent value="notifications" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Bell className="h-5 w-5" />
+                <span>PWA Notification Center</span>
+                {!pwaEnabled && (
+                  <Badge variant="destructive">Setup Required</Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Manage your push notifications and ensure you never miss important job alerts
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Permission Status */}
+              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                <div className="space-y-1">
+                  <h4 className="font-medium">Push Notification Status</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {permissionState === 'granted' ? 'Enabled and working' : 
+                     permissionState === 'denied' ? 'Blocked by browser' : 
+                     'Not configured'}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Badge variant={permissionState === 'granted' ? 'default' : 'destructive'}>
+                    {permissionState === 'granted' ? '✅ Active' : 
+                     permissionState === 'denied' ? '🔕 Blocked' : 
+                     '⚠️ Setup'}
+                  </Badge>
+                  {permissionState !== 'granted' && (
+                    <Button 
+                      size="sm" 
+                      onClick={requestNotificationPermission}
+                      data-testid="button-enable-notifications"
+                    >
+                      Enable Notifications
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Connection Status */}
+              <div className="grid grid-cols-2 gap-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center space-x-2">
+                      <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="text-sm font-medium">
+                        WebSocket: {isConnected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center space-x-2">
+                      <div className={`w-3 h-3 rounded-full ${shouldUseFallback ? 'bg-orange-500' : 'bg-green-500'}`} />
+                      <span className="text-sm font-medium">
+                        Backup: {shouldUseFallback ? 'Active' : 'Standby'}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Test Notification */}
+              <div className="flex justify-between items-center p-4 border rounded-lg">
+                <div>
+                  <h4 className="font-medium">Test Notifications</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Send a test notification to verify your setup
+                  </p>
+                </div>
+                <Button 
+                  variant="outline" 
+                  onClick={testNotification}
+                  disabled={!pwaEnabled}
+                  data-testid="button-test-notification"
+                >
+                  <Zap className="h-4 w-4 mr-2" />
+                  Test Alert
+                </Button>
+              </div>
+
+              {/* Recent Notifications from Fallback System */}
+              {fallbackNotifications && fallbackNotifications.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium flex items-center">
+                    <Clock className="h-4 w-4 mr-2" />
+                    Recent Notifications ({fallbackNotifications.length})
+                  </h4>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {fallbackNotifications.slice(0, 5).map((notification, index) => (
+                      <div key={index} className="p-3 bg-gray-50 dark:bg-gray-800 rounded border-l-4 border-blue-500">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h5 className="font-medium text-sm">{notification.title}</h5>
+                            <p className="text-xs text-muted-foreground">{notification.body}</p>
+                          </div>
+                          <Badge variant="secondary" className="text-xs">
+                            {notification.urgency || 'normal'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {new Date(notification.timestamp).toLocaleString()}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Notification Preferences */}
+              <div className="space-y-3">
+                <h4 className="font-medium">Notification Preferences</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="job-alerts">Job Request Alerts</Label>
+                    <Switch id="job-alerts" checked={preferences?.jobAlerts !== false} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="urgent-alerts">Emergency Job Alerts (Audio)</Label>
+                    <Switch id="urgent-alerts" checked={preferences?.urgentAlerts !== false} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="customer-messages">Customer Message Alerts</Label>
+                    <Switch id="customer-messages" checked={preferences?.customerMessages !== false} />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
