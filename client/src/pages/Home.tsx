@@ -52,6 +52,23 @@ export default function Home() {
   // Fetch main categories (level 0) from backend for home page
   const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/services/categories/main'],
+    select: (data: any) => {
+      // Handle different response formats
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (data && Array.isArray(data.data)) {
+        return data.data;
+      }
+      if (data && typeof data === 'object') {
+        // If it's an object with numeric keys, convert to array
+        const values = Object.values(data);
+        if (values.length > 0 && typeof values[0] === 'object') {
+          return values;
+        }
+      }
+      return [];
+    },
   });
 
   // Fetch suggested services
