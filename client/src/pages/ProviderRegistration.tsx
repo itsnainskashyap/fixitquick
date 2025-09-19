@@ -256,7 +256,23 @@ export default function ProviderRegistration() {
   // Fetch services for selected categories
   const { data: services, isLoading: servicesLoading } = useQuery({
     queryKey: ['/api/v1/services'],
-    select: (data: any) => Array.isArray(data) ? data : [],
+    select: (data: any) => {
+      // Handle different response formats
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (data && Array.isArray(data.data)) {
+        return data.data;
+      }
+      if (data && typeof data === 'object') {
+        // If it's an object with numeric keys, convert to array
+        const values = Object.values(data);
+        if (values.length > 0 && typeof values[0] === 'object') {
+          return values;
+        }
+      }
+      return [];
+    },
   });
 
   // Document upload handlers - connect to real API
