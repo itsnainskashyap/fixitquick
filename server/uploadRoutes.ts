@@ -105,8 +105,8 @@ export async function setupUploadRoutes(app: Express) {
     res.json([]);
   });
 
-  // Parts provider document upload endpoint - Fix field name issue
-  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadDocument, async (req, res) => {
+  // Parts provider document upload endpoint - Fix field name issue  
+  app.post('/api/v1/providers/documents/upload', authMiddleware, uploadDocument, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
