@@ -35,10 +35,10 @@ class JWTService {
   private readonly REFRESH_TOKEN_EXPIRY = 30 * 24 * 60 * 60; // 30 days in seconds
   
   private get SECRET(): string {
-    const secret = process.env.SESSION_SECRET || process.env.JWT_SECRET || 'development-secret-key-change-in-production';
+    const secret = process.env.JWT_SECRET_KEY || process.env.SESSION_SECRET || process.env.JWT_SECRET || 'dev-jwt-secret-key';
     if (!secret || secret.length < 32) {
       console.warn('JWT SECRET is not set or too short. Using development fallback.');
-      return 'development-secret-key-change-in-production-please-set-proper-jwt-secret';
+      return 'dev-jwt-secret-key';
     }
     return secret;
   }

@@ -49,12 +49,19 @@ export async function setupUploadRoutes(app: Express) {
         });
       }
 
-      // Generate JWT token for admin - simple development token
+      // Generate JWT token for admin using same secret as the auth middleware
       const jwt = await import('jsonwebtoken');
+      const secret = process.env.JWT_SECRET_KEY || process.env.SESSION_SECRET || process.env.JWT_SECRET || 'dev-jwt-secret-key';
       const accessToken = jwt.default.sign(
-        { userId: admin.id, role: admin.role, type: 'admin-login' },
-        'dev-jwt-secret-key',
-        { expiresIn: '24h' }
+        { 
+          userId: admin.id, 
+          phone: '', // Admin users don't need phone
+          role: admin.role, 
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + (2 * 60 * 60) // 2 hours
+        },
+        secret,
+        { algorithm: 'HS256' }
       );
 
       // Set secure httpOnly cookie for admin
@@ -194,6 +201,10 @@ export async function setupUploadRoutes(app: Express) {
 
       console.log('✅ Parts provider registration successful:', businessInfo.id);
 
+      // Update user role to parts_provider after successful registration
+      await storage.updateUser(userId, { role: 'parts_provider' });
+      console.log(`✅ Updated user ${userId} role to parts_provider`);
+
       return res.json({
         success: true,
         message: 'Registration submitted successfully',
@@ -211,6 +222,49 @@ export async function setupUploadRoutes(app: Express) {
 
   // Provider profile endpoint to check application status
   app.get('/api/v1/parts-provider/profile', authMiddleware, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
+      }
+
+      // Get the provider's business info
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      
+      if (!businessInfo) {
+        return res.json({
+          success: true,
+          hasApplication: false,
+          message: 'No application found'
+        });
+      }
+
+      return res.json({
+        success: true,
+        hasApplication: true,
+        application: {
+          id: businessInfo.id,
+          businessName: businessInfo.businessName,
+          businessType: businessInfo.businessType,
+          verificationStatus: businessInfo.verificationStatus,
+          isVerified: businessInfo.isVerified,
+          isActive: businessInfo.isActive,
+          createdAt: businessInfo.createdAt,
+          updatedAt: businessInfo.updatedAt
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching provider profile:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch profile'
+      });
+    }
+  });
+
+  // Add alias for profile endpoint to fix frontend compatibility
+  app.get('/api/v1/providers/profile', authMiddleware, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
