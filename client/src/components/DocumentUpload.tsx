@@ -483,7 +483,7 @@ function DocumentTypeContent({
           </div>
 
           <div className="flex items-center gap-4">
-            {existingDocument.mimeType.includes('pdf') ? (
+            {existingDocument.mimeType?.includes('pdf') ? (
               <div className="w-16 h-16 rounded bg-red-50 dark:bg-red-950 flex items-center justify-center">
                 <FileText className="h-8 w-8 text-red-600" />
               </div>
