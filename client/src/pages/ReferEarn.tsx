@@ -34,6 +34,7 @@ import {
   TrendingUp,
   Calendar
 } from 'lucide-react';
+import { BottomNavigation } from '@/components/BottomNavigation';
 
 interface ReferralData {
   referralCode: string;
