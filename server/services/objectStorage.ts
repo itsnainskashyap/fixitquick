@@ -13,12 +13,13 @@ export class ObjectStorageService {
   private privateDir: string;
 
   constructor() {
-    this.bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID || '';
-    this.publicDir = process.env.PUBLIC_OBJECT_SEARCH_PATHS || '';
-    this.privateDir = process.env.PRIVATE_OBJECT_DIR || '';
+    // Use development defaults if environment variables are not set
+    this.bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID || 'fixitquick-dev-bucket';
+    this.publicDir = process.env.PUBLIC_OBJECT_SEARCH_PATHS || '/public';
+    this.privateDir = process.env.PRIVATE_OBJECT_DIR || '/private';
     
-    if (!this.bucketId) {
-      console.warn('⚠️ Object storage not configured - file uploads will be disabled');
+    if (!process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
+      console.log('🔧 Development mode: Using simulated object storage - uploads will be mocked');
     }
   }
 
