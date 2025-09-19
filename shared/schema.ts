@@ -1763,6 +1763,88 @@ export const orderCreateApiSchema = z.object({
 // Export the type for TypeScript usage
 export type OrderCreateApiData = z.infer<typeof orderCreateApiSchema>;
 
+// Parts Provider Dashboard Types
+export const PartsProviderStatsSchema = z.object({
+  totalProducts: z.number(),
+  activeProducts: z.number(),
+  totalOrders: z.number(),
+  pendingOrders: z.number(),
+  completedOrders: z.number(),
+  totalRevenue: z.string(),
+  lowStockAlerts: z.number(),
+  outOfStockItems: z.number(),
+  totalSuppliers: z.number(),
+  averageRating: z.string(),
+});
+
+export const PartsProviderOrderSchema = z.object({
+  id: z.string(),
+  customerName: z.string(),
+  totalAmount: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  items: z.array(z.object({
+    name: z.string(),
+    quantity: z.number(),
+    price: z.string(),
+  })),
+});
+
+export const PartsProviderLowStockAlertSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  sku: z.string(),
+  currentStock: z.number(),
+  lowStockThreshold: z.number(),
+  price: z.string(),
+});
+
+export const PartsProviderTopProductSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  sku: z.string(),
+  totalSold: z.number(),
+  price: z.string(),
+  stock: z.number(),
+  rating: z.string(),
+});
+
+export const PartsProviderRecentActivitySchema = z.object({
+  id: z.string(),
+  partId: z.string(),
+  movementType: z.string(),
+  quantity: z.number(),
+  reason: z.string(),
+  createdAt: z.string(),
+});
+
+export const PartsProviderBusinessInfoSchema = z.object({
+  businessName: z.string(),
+  verificationStatus: z.string(),
+  isVerified: z.boolean(),
+  totalRevenue: z.string(),
+  totalOrders: z.number(),
+  averageRating: z.string(),
+}).nullable();
+
+export const PartsProviderDashboardDataSchema = z.object({
+  stats: PartsProviderStatsSchema,
+  recentOrders: z.array(PartsProviderOrderSchema),
+  lowStockAlerts: z.array(PartsProviderLowStockAlertSchema),
+  topProducts: z.array(PartsProviderTopProductSchema),
+  recentActivity: z.array(PartsProviderRecentActivitySchema),
+  businessInfo: PartsProviderBusinessInfoSchema,
+});
+
+// Export types for TypeScript usage
+export type PartsProviderStats = z.infer<typeof PartsProviderStatsSchema>;
+export type PartsProviderOrder = z.infer<typeof PartsProviderOrderSchema>;
+export type PartsProviderLowStockAlert = z.infer<typeof PartsProviderLowStockAlertSchema>;
+export type PartsProviderTopProduct = z.infer<typeof PartsProviderTopProductSchema>;
+export type PartsProviderRecentActivity = z.infer<typeof PartsProviderRecentActivitySchema>;
+export type PartsProviderBusinessInfo = z.infer<typeof PartsProviderBusinessInfoSchema>;
+export type PartsProviderDashboardData = z.infer<typeof PartsProviderDashboardDataSchema>;
+
 export const insertPartSchema = createInsertSchema(parts).omit({ id: true, createdAt: true });
 export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({ id: true, createdAt: true, updatedAt: true, completedAt: true });
 export const insertCouponSchema = createInsertSchema(coupons).omit({ 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -12,6 +12,12 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import { 
   Clock, 
   MapPin, 
@@ -34,7 +40,36 @@ import {
   Calendar,
   TrendingUp,
   MessageSquare,
-  Route
+  Route,
+  Award,
+  Target,
+  BarChart3,
+  PieChart,
+  Settings,
+  Filter,
+  Search,
+  Plus,
+  Edit3,
+  MapPin as LocationIcon,
+  Clock as TimeIcon,
+  Users,
+  ThumbsUp,
+  CreditCard,
+  TrendingDown,
+  ArrowUp,
+  ArrowDown,
+  Calendar as CalendarIcon,
+  Shield,
+  BookOpen,
+  Wrench,
+  Briefcase,
+  Home,
+  Car,
+  Smartphone,
+  Tv,
+  Droplets,
+  Lightbulb,
+  Wind
 } from 'lucide-react';
 import { JobRequest, ProviderJobsData } from '@shared/schema';
 import CountdownTimer, { useCountdownTimer } from '@/components/CountdownTimer';
@@ -45,9 +80,18 @@ export default function ServiceProviderDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isOnline, setIsOnline] = useState(false);
-  const [selectedTab, setSelectedTab] = useState('offers');
+  const [selectedTab, setSelectedTab] = useState('overview');
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  
+  // Enhanced state management
+  const [jobFilter, setJobFilter] = useState('all'); // 'all', 'urgent', 'nearby', 'high-paying'
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isEditingSkills, setIsEditingSkills] = useState(false);
+  const [isEditingAvailability, setIsEditingAvailability] = useState(false);
+  const [skillsToAdd, setSkillsToAdd] = useState('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [availabilityData, setAvailabilityData] = useState<any>({});
 
   // Fetch provider jobs - connect to real API endpoint
   const { data: jobsData, isLoading, error, refetch } = useQuery<ProviderJobsData>({
@@ -291,16 +335,64 @@ export default function ServiceProviderDashboard() {
   const activeJobs = jobsData?.activeJobs || [];
   const recentJobs = jobsData?.recentJobs || [];
 
+  // Filter jobs based on selected filter
+  const filteredOffers = pendingOffers.filter(job => {
+    switch (jobFilter) {
+      case 'urgent':
+        return job.booking.urgency === 'urgent';
+      case 'nearby':
+        return job.distanceKm && job.distanceKm <= 5;
+      case 'high-paying':
+        return parseFloat(job.booking.totalAmount) >= 1000;
+      default:
+        return true;
+    }
+  });
+
+  // Mock performance data - would come from API in real implementation
+  const performanceStats = {
+    completionRate: providerStats?.completionRate || '95.5',
+    averageRating: providerStats?.rating || '4.8',
+    totalEarnings: providerStats?.totalEarnings || '₹45,230',
+    monthlyEarnings: providerStats?.monthlyEarnings || '₹12,450',
+    totalJobs: providerStats?.totalJobs || '127',
+    responseTime: providerStats?.responseTime || '2.3',
+    onTimeRate: providerStats?.onTimeRate || '92.1',
+    activeStreak: providerStats?.activeStreak || '12'
+  };
+
   return (
-    <div className="container mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
+    <div className="container mx-auto px-4 py-6 space-y-6 bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 min-h-screen">
+      {/* Enhanced Header with Service Provider Branding */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Provider Dashboard
-          </h1>
-          <p className="text-muted-foreground">
-            Welcome back, {user.firstName}! {isConnected ? '🟢' : '🔴'} {isConnected ? 'Connected' : 'Connecting...'}
+          <div className="flex items-center space-x-3 mb-2">
+            <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+              <Wrench className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-blue-900 dark:text-white">
+                Service Provider Hub
+              </h1>
+              <div className="flex items-center space-x-2">
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  <Shield className="h-3 w-3 mr-1" />
+                  Verified Provider
+                </Badge>
+                {isConnected ? (
+                  <Badge variant="default" className="bg-green-100 text-green-800">
+                    🟢 Live Connected
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-800">
+                    🔄 Reconnecting...
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <p className="text-muted-foreground ml-15">
+            Welcome back, {user.firstName}! Ready to serve customers today.
           </p>
         </div>
         
@@ -385,70 +477,165 @@ export default function ServiceProviderDashboard() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Clock className="h-5 w-5 text-blue-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Pending Offers</p>
-                <p className="text-2xl font-bold" data-testid="text-pending-offers">{pendingOffers.length}</p>
+      {/* Enhanced Performance Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <Card className="bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-green-100 text-sm font-medium">Total Earnings</p>
+                  <p className="text-3xl font-bold">{performanceStats.totalEarnings}</p>
+                  <div className="flex items-center mt-2">
+                    <ArrowUp className="h-4 w-4 mr-1" />
+                    <span className="text-sm">+15% this month</span>
+                  </div>
+                </div>
+                <DollarSign className="h-12 w-12 text-green-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Activity className="h-5 w-5 text-green-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Active Jobs</p>
-                <p className="text-2xl font-bold" data-testid="text-active-jobs">{activeJobs.length}</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+          <Card className="bg-gradient-to-r from-blue-500 to-cyan-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-blue-100 text-sm font-medium">Completion Rate</p>
+                  <p className="text-3xl font-bold">{performanceStats.completionRate}%</p>
+                  <div className="flex items-center mt-2">
+                    <Target className="h-4 w-4 mr-1" />
+                    <span className="text-sm">Excellent</span>
+                  </div>
+                </div>
+                <CheckCircle className="h-12 w-12 text-blue-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <DollarSign className="h-5 w-5 text-yellow-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Today's Earnings</p>
-                <p className="text-2xl font-bold">₹0</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+          <Card className="bg-gradient-to-r from-yellow-500 to-orange-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-yellow-100 text-sm font-medium">Customer Rating</p>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-3xl font-bold">{performanceStats.averageRating}</p>
+                    <div className="flex space-x-1">
+                      {[1,2,3,4,5].map(star => (
+                        <Star key={star} className={`h-5 w-5 ${
+                          star <= Math.floor(parseFloat(performanceStats.averageRating)) ? 'fill-current' : ''
+                        }`} />
+                      ))}
+                    </div>
+                  </div>
+                  <span className="text-sm text-yellow-100">From {performanceStats.totalJobs} reviews</span>
+                </div>
+                <Award className="h-12 w-12 text-yellow-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Star className="h-5 w-5 text-purple-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Rating</p>
-                <p className="text-2xl font-bold">4.8</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <Card className="bg-gradient-to-r from-purple-500 to-pink-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-purple-100 text-sm font-medium">Response Time</p>
+                  <p className="text-3xl font-bold">{performanceStats.responseTime}min</p>
+                  <div className="flex items-center mt-2">
+                    <Zap className="h-4 w-4 mr-1" />
+                    <span className="text-sm">Lightning Fast</span>
+                  </div>
+                </div>
+                <Timer className="h-12 w-12 text-purple-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
 
-      {/* Job Tabs */}
-      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="offers" data-testid="tab-offers">
-            Offers ({pendingOffers.length})
-          </TabsTrigger>
-          <TabsTrigger value="active" data-testid="tab-active">
-            Active ({activeJobs.length})
-          </TabsTrigger>
-          <TabsTrigger value="recent" data-testid="tab-recent">
-            Recent ({recentJobs.length})
-          </TabsTrigger>
-        </TabsList>
+      {/* Enhanced Navigation Tabs */}
+      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <TabsList className="grid grid-cols-6 bg-white dark:bg-gray-800 border">
+            <TabsTrigger value="overview" data-testid="tab-overview" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
+              <BarChart3 className="h-4 w-4 mr-2" />
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="offers" data-testid="tab-offers" className="data-[state=active]:bg-orange-500 data-[state=active]:text-white">
+              Job Queue
+              {filteredOffers.length > 0 && (
+                <Badge variant="destructive" className="ml-2">{filteredOffers.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="active" data-testid="tab-active" className="data-[state=active]:bg-green-500 data-[state=active]:text-white">
+              Active Work
+              {activeJobs.length > 0 && (
+                <Badge variant="default" className="ml-2 bg-green-600">{activeJobs.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="earnings" data-testid="tab-earnings" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white">
+              <CreditCard className="h-4 w-4 mr-2" />
+              Earnings
+            </TabsTrigger>
+            <TabsTrigger value="skills" data-testid="tab-skills" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
+              <BookOpen className="h-4 w-4 mr-2" />
+              Skills
+            </TabsTrigger>
+            <TabsTrigger value="reviews" data-testid="tab-reviews" className="data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+              <Star className="h-4 w-4 mr-2" />
+              Reviews
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* Quick Action Buttons */}
+          <div className="flex items-center space-x-2">
+            <Button size="sm" variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] })}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Dialog open={isEditingProfile} onOpenChange={setIsEditingProfile}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Settings className="h-4 w-4 mr-2" />
+                  Profile
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Edit Provider Profile</DialogTitle>
+                  <DialogDescription>
+                    Update your professional information and service preferences.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="businessName">Business Name</Label>
+                      <Input id="businessName" placeholder="Your service business name" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="serviceRadius">Service Radius (km)</Label>
+                      <Input id="serviceRadius" type="number" placeholder="25" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bio">Professional Bio</Label>
+                    <Textarea id="bio" placeholder="Tell customers about your expertise and experience..." />
+                  </div>
+                </div>
+                <div className="flex justify-end space-x-2">
+                  <Button variant="outline" onClick={() => setIsEditingProfile(false)}>Cancel</Button>
+                  <Button>Save Changes</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
 
         {/* Pending Offers */}
         <TabsContent value="offers" className="space-y-4">

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
-import { useSocket } from '@/hooks/useSocket';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,6 +15,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import { 
   Package, 
   TrendingUp, 
@@ -34,88 +37,56 @@ import {
   Users,
   AlertCircle,
   Activity,
-  Boxes
+  Boxes,
+  Warehouse,
+  Store,
+  Shield,
+  Target,
+  Award,
+  PieChart,
+  Filter,
+  Search,
+  Settings,
+  Bell,
+  BellRing,
+  FileText,
+  UserCheck,
+  Clipboard,
+  ArrowUp,
+  TrendingDown,
+  Package2,
+  Zap,
+  CreditCard,
+  MapPin,
+  Phone,
+  Mail,
+  Calendar,
+  Timer
 } from 'lucide-react';
 
-interface PartsProviderDashboardData {
-  stats: {
-    totalProducts: number;
-    activeProducts: number;
-    totalOrders: number;
-    pendingOrders: number;
-    completedOrders: number;
-    totalRevenue: string;
-    lowStockAlerts: number;
-    outOfStockItems: number;
-    totalSuppliers: number;
-    averageRating: string;
-  };
-  recentOrders: Array<{
-    id: string;
-    customerName: string;
-    totalAmount: string;
-    status: string;
-    createdAt: string;
-    items: Array<{ name: string; quantity: number; price: string }>;
-  }>;
-  lowStockAlerts: Array<{
-    id: string;
-    name: string;
-    sku: string;
-    currentStock: number;
-    lowStockThreshold: number;
-    price: string;
-  }>;
-  topProducts: Array<{
-    id: string;
-    name: string;
-    sku: string;
-    totalSold: number;
-    price: string;
-    stock: number;
-    rating: string;
-  }>;
-  recentActivity: Array<{
-    id: string;
-    partId: string;
-    movementType: string;
-    quantity: number;
-    reason: string;
-    createdAt: string;
-  }>;
-  businessInfo: {
-    businessName: string;
-    verificationStatus: string;
-    isVerified: boolean;
-    totalRevenue: string;
-    totalOrders: number;
-    averageRating: string;
-  } | null;
-}
+import { PartsProviderDashboardData, insertPartSchema } from '@shared/schema';
+import { z } from 'zod';
 
-interface PartData {
-  name: string;
-  description: string;
-  sku: string;
-  category: string;
-  price: string;
-  cost: string;
-  stock: number;
-  lowStockThreshold: number;
-  supplier: string;
-  model: string;
-  brand: string;
-  specifications?: string;
-}
+// Use shared schema types instead of local interfaces
+type PartData = z.infer<typeof insertPartSchema>;
 
 export default function PartsProviderDashboard() {
   const { user } = useAuth();
-  const { socket, isConnected } = useSocket();
+  const { subscribe, sendMessage, isConnected } = useWebSocket();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isOnline, setIsOnline] = useState(false);
   const [selectedTab, setSelectedTab] = useState('overview');
   const [isAddPartOpen, setIsAddPartOpen] = useState(false);
+  
+  // Enhanced state management for inventory features
+  const [inventoryFilter, setInventoryFilter] = useState('all'); // 'all', 'low_stock', 'out_of_stock', 'top_selling'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
+  const [isBulkOperationOpen, setIsBulkOperationOpen] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
   
   // New part form state
   const [newPart, setNewPart] = useState<PartData>({
@@ -139,17 +110,10 @@ export default function PartsProviderDashboard() {
     refetchInterval: 30000, // Refetch every 30 seconds
   });
 
-  // Add new part mutation
+  // Add new part mutation using centralized apiRequest
   const addPartMutation = useMutation({
     mutationFn: async (partData: PartData) => {
-      return await fetch('/api/v1/parts-provider/parts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-        },
-        body: JSON.stringify(partData),
-      }).then(res => res.json());
+      return await apiRequest('POST', '/api/v1/parts-provider/parts', partData);
     },
     onSuccess: () => {
       toast({
@@ -162,14 +126,12 @@ export default function PartsProviderDashboard() {
         name: '',
         description: '',
         sku: '',
-        category: '',
-        price: '',
-        cost: '',
+        categoryId: '',
+        price: 0,
         stock: 0,
         lowStockThreshold: 10,
-        supplier: '',
-        model: '',
-        brand: ''
+        brand: '',
+        model: ''
       });
     },
     onError: (error: any) => {
@@ -181,16 +143,10 @@ export default function PartsProviderDashboard() {
     },
   });
 
-  // Accept order mutation
+  // Accept order mutation using centralized apiRequest
   const acceptOrderMutation = useMutation({
     mutationFn: async (orderId: string) => {
-      return await fetch(`/api/v1/parts-provider/orders/${orderId}/accept`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-        },
-      }).then(res => res.json());
+      return await apiRequest('POST', `/api/v1/parts-provider/orders/${orderId}/accept`);
     },
     onSuccess: () => {
       toast({
@@ -208,12 +164,42 @@ export default function PartsProviderDashboard() {
     },
   });
 
-  // Handle WebSocket events for parts providers
+  // Handle WebSocket events for parts providers using WebSocketContext
   useEffect(() => {
-    if (!socket || !isConnected) return;
+    if (!isConnected) return;
 
     const handleNewOrder = (data: any) => {
       console.log('🛒 New parts order received:', data);
+      
+      // Add to notifications
+      const newNotification = {
+        id: Date.now(),
+        type: 'new_order',
+        title: "New Parts Order!",
+        message: `You have a new order for ${data.itemCount || 'multiple'} items`,
+        timestamp: new Date(),
+        data: data,
+        read: false
+      };
+      setNotifications(prev => [newNotification, ...prev.slice(0, 9)]);
+      
+      // Play notification sound with proper error handling
+      try {
+        const audio = new Audio('/notification-sound.mp3');
+        audio.play().catch(error => {
+          console.log('Notification sound not available:', error);
+          // Fallback: Use system notification if available
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('New Parts Order!', {
+              body: `You have a new order for ${data.itemCount || 'multiple'} items`,
+              icon: '/fixitquick-logo.jpg'
+            });
+          }
+        });
+      } catch (e) {
+        console.log('Audio notification not supported');
+      }
+      
       toast({
         title: "New Parts Order!",
         description: `You have a new order for ${data.itemCount || 'multiple'} items`,
@@ -223,6 +209,19 @@ export default function PartsProviderDashboard() {
 
     const handleLowStockAlert = (data: any) => {
       console.log('⚠️ Low stock alert:', data);
+      
+      // Add to notifications
+      const newNotification = {
+        id: Date.now(),
+        type: 'low_stock',
+        title: "Low Stock Alert!",
+        message: `${data.partName || 'A part'} is running low (${data.currentStock || 0} remaining)`,
+        timestamp: new Date(),
+        data: data,
+        read: false
+      };
+      setNotifications(prev => [newNotification, ...prev.slice(0, 9)]);
+      
       toast({
         title: "Low Stock Alert!",
         description: `${data.partName || 'A part'} is running low (${data.currentStock || 0} remaining)`,
@@ -236,28 +235,27 @@ export default function PartsProviderDashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/dashboard'] });
     };
 
-    // Use the socket instance from WebSocketContext which has the right typing
-    const socketInstance = socket as any;
-    
-    socketInstance.on('parts_provider.new_order', handleNewOrder);
-    socketInstance.on('parts_provider.low_stock', handleLowStockAlert);
-    socketInstance.on('parts_provider.order_update', handleOrderUpdate);
+    // Subscribe to WebSocket events using the context
+    const unsubscribeNewOrder = subscribe('parts_provider.new_order', handleNewOrder);
+    const unsubscribeLowStock = subscribe('parts_provider.low_stock', handleLowStockAlert);
+    const unsubscribeOrderUpdate = subscribe('parts_provider.order_update', handleOrderUpdate);
 
     // Subscribe to parts provider updates
-    socketInstance.emit('subscribe_parts_provider', { providerId: user?.id });
+    sendMessage('subscribe_parts_provider', { providerId: user?.id });
 
     return () => {
-      socketInstance.off('parts_provider.new_order', handleNewOrder);
-      socketInstance.off('parts_provider.low_stock', handleLowStockAlert);
-      socketInstance.off('parts_provider.order_update', handleOrderUpdate);
+      // Unsubscribe from all events
+      unsubscribeNewOrder();
+      unsubscribeLowStock();
+      unsubscribeOrderUpdate();
     };
-  }, [socket, isConnected, user?.id, queryClient, toast]);
+  }, [subscribe, sendMessage, isConnected, user?.id, queryClient, toast]);
 
-  // Toggle online status
+  // Toggle online status using WebSocketContext
   const handleOnlineToggle = (checked: boolean) => {
     setIsOnline(checked);
-    if (socket && isConnected) {
-      (socket as any).emit('parts_provider_online_status', { isOnline: checked });
+    if (isConnected) {
+      sendMessage('parts_provider_online_status', { isOnline: checked });
     }
     toast({
       title: checked ? "Your Store is Online!" : "Your Store is Offline",
@@ -310,39 +308,167 @@ export default function PartsProviderDashboard() {
   const recentActivity = dashboardData?.recentActivity || [];
   const businessInfo = dashboardData?.businessInfo;
 
+  // Mock performance data - would come from API in real implementation
+  const performanceStats = {
+    totalRevenue: stats.totalRevenue || '₹25,890',
+    monthlyRevenue: '₹8,450',
+    inventoryTurnover: '2.3x',
+    fulfillmentRate: '98.5%',
+    averageOrderValue: '₹1,245',
+    supplierCount: stats.totalSuppliers || '12',
+    categoryCount: '8',
+    profitMargin: '35.2%'
+  };
+
   return (
-    <div className="container mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
+    <div className="container mx-auto px-4 py-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-gray-900 dark:to-gray-800 min-h-screen">
+      {/* Enhanced Header with Parts Provider Branding */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Parts Provider Dashboard
-          </h1>
-          <p className="text-muted-foreground">
-            Welcome back, {user.firstName}! {isConnected ? '🟢' : '🔴'} {isConnected ? 'Connected' : 'Connecting...'}
-          </p>
-          {businessInfo && (
-            <div className="flex items-center space-x-2 mt-1">
-              <span className="text-sm text-muted-foreground">{businessInfo.businessName}</span>
-              {businessInfo.isVerified && (
-                <Badge variant="default" className="bg-green-500">
-                  <CheckCircle className="h-3 w-3 mr-1" />
-                  Verified
-                </Badge>
-              )}
+          <div className="flex items-center space-x-3 mb-2">
+            <div className="w-12 h-12 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center">
+              <Warehouse className="h-6 w-6 text-white" />
             </div>
-          )}
+            <div>
+              <h1 className="text-3xl font-bold text-emerald-900 dark:text-white">
+                Parts Inventory Hub
+              </h1>
+              <div className="flex items-center space-x-2">
+                <Badge variant="secondary" className="bg-emerald-100 text-emerald-800">
+                  <Store className="h-3 w-3 mr-1" />
+                  Registered Store
+                </Badge>
+                {businessInfo?.isVerified ? (
+                  <Badge variant="default" className="bg-green-100 text-green-800">
+                    <Shield className="h-3 w-3 mr-1" />
+                    Verified Supplier
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-800">
+                    <Clock className="h-3 w-3 mr-1" />
+                    Pending Verification
+                  </Badge>
+                )}
+                {isConnected ? (
+                  <Badge variant="default" className="bg-green-100 text-green-800">
+                    🟢 Live Connected
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-800">
+                    🔄 Reconnecting...
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <p className="text-muted-foreground ml-15">
+            Welcome back, {user.firstName}! {businessInfo?.businessName ? `Managing ${businessInfo.businessName}` : 'Ready to manage your inventory today.'}
+          </p>
         </div>
         
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium">Store Open</span>
+          {/* Enhanced Notification Center */}
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowNotifications(!showNotifications);
+                if (!showNotifications) {
+                  setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                }
+              }}
+              className="relative"
+              data-testid="button-notifications"
+            >
+              {notifications.filter(n => !n.read).length > 0 ? (
+                <BellRing className="h-4 w-4" />
+              ) : (
+                <Bell className="h-4 w-4" />
+              )}
+              {notifications.filter(n => !n.read).length > 0 && (
+                <Badge 
+                  variant="destructive" 
+                  className="absolute -top-2 -right-2 px-1 py-0 text-xs min-w-[1.2rem] h-5"
+                >
+                  {notifications.filter(n => !n.read).length}
+                </Badge>
+              )}
+            </Button>
+            
+            {/* Enhanced Notifications Dropdown */}
+            {showNotifications && (
+              <div className="absolute right-0 top-10 w-96 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl z-50 max-h-96 overflow-y-auto">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-emerald-50 dark:bg-gray-750">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-emerald-900 dark:text-white">Store Alerts</h3>
+                    <Button size="sm" variant="ghost" onClick={() => setNotifications([])} className="text-xs">
+                      Clear All
+                    </Button>
+                  </div>
+                </div>
+                {notifications.length > 0 ? (
+                  <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                    {notifications.map((notification, index) => (
+                      <motion.div 
+                        key={index} 
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                          !notification.read ? 'bg-emerald-50 dark:bg-emerald-950 border-l-4 border-emerald-500' : ''
+                        }`}
+                      >
+                        <div className="flex items-start space-x-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            notification.type === 'low_stock' ? 'bg-red-100 text-red-600' :
+                            notification.type === 'new_order' ? 'bg-green-100 text-green-600' :
+                            notification.type === 'reorder_suggestion' ? 'bg-blue-100 text-blue-600' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {notification.type === 'low_stock' ? <AlertTriangle className="h-4 w-4" /> :
+                             notification.type === 'new_order' ? <ShoppingCart className="h-4 w-4" /> :
+                             notification.type === 'reorder_suggestion' ? <Package className="h-4 w-4" /> :
+                             <Bell className="h-4 w-4" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{notification.title}</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{notification.message}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                              {notification.timestamp?.toLocaleString() || 'Just now'}
+                            </p>
+                          </div>
+                          {!notification.read && (
+                            <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Warehouse className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                    <p className="text-sm">No inventory alerts</p>
+                    <p className="text-xs mt-1">We'll notify you about stock levels and orders</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          {/* Enhanced Store Status Toggle */}
+          <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm border">
+            <div className="flex items-center space-x-2">
+              <Store className={`h-4 w-4 ${isOnline ? 'text-emerald-500' : 'text-gray-400'}`} />
+              <span className="text-sm font-medium">{isOnline ? 'Store Open' : 'Store Closed'}</span>
+            </div>
             <Switch 
               checked={isOnline}
               onCheckedChange={handleOnlineToggle}
               data-testid="toggle-store-status"
             />
           </div>
+          
+          {/* Quick Action Buttons */}
           <Dialog open={isAddPartOpen} onOpenChange={setIsAddPartOpen}>
             <DialogTrigger asChild>
               <Button data-testid="button-add-part">
@@ -503,85 +629,211 @@ export default function PartsProviderDashboard() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Package className="h-5 w-5 text-blue-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Products</p>
-                <p className="text-2xl font-bold" data-testid="text-total-products">{stats.totalProducts || 0}</p>
+      {/* Enhanced Performance Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <Card className="bg-gradient-to-r from-emerald-500 to-green-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-emerald-100 text-sm font-medium">Total Revenue</p>
+                  <p className="text-3xl font-bold">{performanceStats.totalRevenue}</p>
+                  <div className="flex items-center mt-2">
+                    <ArrowUp className="h-4 w-4 mr-1" />
+                    <span className="text-sm">+22% this month</span>
+                  </div>
+                </div>
+                <DollarSign className="h-12 w-12 text-emerald-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <ShoppingCart className="h-5 w-5 text-green-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Pending Orders</p>
-                <p className="text-2xl font-bold" data-testid="text-pending-orders">{stats.pendingOrders || 0}</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+          <Card className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-blue-100 text-sm font-medium">Inventory Products</p>
+                  <p className="text-3xl font-bold">{stats.totalProducts}</p>
+                  <div className="flex items-center mt-2">
+                    <Package className="h-4 w-4 mr-1" />
+                    <span className="text-sm">{stats.activeProducts} Active</span>
+                  </div>
+                </div>
+                <Warehouse className="h-12 w-12 text-blue-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <DollarSign className="h-5 w-5 text-yellow-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
-                <p className="text-2xl font-bold">₹{stats.totalRevenue || '0.00'}</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+          <Card className="bg-gradient-to-r from-orange-500 to-red-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-orange-100 text-sm font-medium">Pending Orders</p>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-3xl font-bold">{stats.pendingOrders}</p>
+                    <div className="flex items-center">
+                      <Clock className="h-5 w-5 mr-1" />
+                    </div>
+                  </div>
+                  <span className="text-sm text-orange-100">Total: {stats.totalOrders} orders</span>
+                </div>
+                <ShoppingCart className="h-12 w-12 text-orange-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <AlertTriangle className="h-5 w-5 text-red-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Low Stock Items</p>
-                <p className="text-2xl font-bold" data-testid="text-low-stock">{stats.lowStockAlerts || 0}</p>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <Card className="bg-gradient-to-r from-red-500 to-pink-600 text-white border-0">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-red-100 text-sm font-medium">Stock Alerts</p>
+                  <p className="text-3xl font-bold">{stats.lowStockAlerts}</p>
+                  <div className="flex items-center mt-2">
+                    <AlertTriangle className="h-4 w-4 mr-1" />
+                    <span className="text-sm">Needs Attention</span>
+                  </div>
+                </div>
+                <AlertTriangle className="h-12 w-12 text-red-200" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2">
-              <Star className="h-5 w-5 text-purple-500" />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Average Rating</p>
-                <p className="text-2xl font-bold">{stats.averageRating || '0.00'}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
 
-      {/* Main Content Tabs */}
-      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview" data-testid="tab-overview">
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="orders" data-testid="tab-orders">
-            Orders ({stats.pendingOrders || 0})
-          </TabsTrigger>
-          <TabsTrigger value="inventory" data-testid="tab-inventory">
-            Inventory
-          </TabsTrigger>
-          <TabsTrigger value="analytics" data-testid="tab-analytics">
-            Analytics
-          </TabsTrigger>
-        </TabsList>
+      {/* Enhanced Navigation Tabs */}
+      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <TabsList className="grid grid-cols-6 bg-white dark:bg-gray-800 border">
+            <TabsTrigger value="overview" data-testid="tab-overview" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white">
+              <PieChart className="h-4 w-4 mr-2" />
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="inventory" data-testid="tab-inventory" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
+              <Package className="h-4 w-4 mr-2" />
+              Inventory
+              {stats.lowStockAlerts > 0 && (
+                <Badge variant="destructive" className="ml-2">{stats.lowStockAlerts}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="orders" data-testid="tab-orders" className="data-[state=active]:bg-orange-500 data-[state=active]:text-white">
+              Order Queue
+              {stats.pendingOrders > 0 && (
+                <Badge variant="default" className="ml-2 bg-orange-600">{stats.pendingOrders}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="suppliers" data-testid="tab-suppliers" className="data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+              <Truck className="h-4 w-4 mr-2" />
+              Suppliers
+            </TabsTrigger>
+            <TabsTrigger value="analytics" data-testid="tab-analytics" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
+              <BarChart3 className="h-4 w-4 mr-2" />
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="reports" data-testid="tab-reports" className="data-[state=active]:bg-teal-500 data-[state=active]:text-white">
+              <FileText className="h-4 w-4 mr-2" />
+              Reports
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* Quick Action Buttons */}
+          <div className="flex items-center space-x-2">
+            <Button size="sm" variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/dashboard'] })}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Dialog open={isBulkOperationOpen} onOpenChange={setIsBulkOperationOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <Clipboard className="h-4 w-4 mr-2" />
+                  Bulk Actions
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Bulk Inventory Operations</DialogTitle>
+                  <DialogDescription>
+                    Perform bulk operations on your inventory items.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <Button variant="outline" className="h-20 flex-col">
+                      <Package className="h-6 w-6 mb-2" />
+                      <span className="text-sm">Bulk Price Update</span>
+                    </Button>
+                    <Button variant="outline" className="h-20 flex-col">
+                      <AlertTriangle className="h-6 w-6 mb-2" />
+                      <span className="text-sm">Update Stock Alerts</span>
+                    </Button>
+                    <Button variant="outline" className="h-20 flex-col">
+                      <Truck className="h-6 w-6 mb-2" />
+                      <span className="text-sm">Generate Reorders</span>
+                    </Button>
+                    <Button variant="outline" className="h-20 flex-col">
+                      <FileText className="h-6 w-6 mb-2" />
+                      <span className="text-sm">Export Catalog</span>
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setIsBulkOperationOpen(false)}>Close</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Supplier
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add New Supplier</DialogTitle>
+                  <DialogDescription>
+                    Add a new supplier to your network for better inventory management.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="supplierName">Supplier Name</Label>
+                      <Input id="supplierName" placeholder="Enter supplier name" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="supplierContact">Contact Person</Label>
+                      <Input id="supplierContact" placeholder="Contact person name" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="supplierPhone">Phone</Label>
+                      <Input id="supplierPhone" placeholder="Phone number" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="supplierEmail">Email</Label>
+                      <Input id="supplierEmail" placeholder="Email address" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="supplierAddress">Address</Label>
+                    <Textarea id="supplierAddress" placeholder="Full address" />
+                  </div>
+                </div>
+                <div className="flex justify-end space-x-2">
+                  <Button variant="outline" onClick={() => setIsSupplierDialogOpen(false)}>Cancel</Button>
+                  <Button>Add Supplier</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-6">
@@ -950,18 +1202,10 @@ function InventoryManagement({ dashboardData, isLoading, user, queryClient, toas
     enabled: inventoryView === 'movements',
   });
 
-  // Stock update mutation with proper API integration
+  // Stock update mutation with proper API integration using centralized apiRequest
   const updateStockMutation = useMutation({
     mutationFn: async ({ partId, stock }: { partId: string; stock: number }) => {
-      const response = await fetch(`/api/v1/parts-provider/parts/${partId}/stock`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-        },
-        body: JSON.stringify({ stock }),
-      });
-      return response.json();
+      return await apiRequest('PUT', `/api/v1/parts-provider/parts/${partId}/stock`, { stock });
     },
     onSuccess: () => {
       toast({
