@@ -665,51 +665,7 @@ export default function PartProviderRegistration() {
                 <CardContent>
                   <Form {...businessForm}>
                     <form onSubmit={businessForm.handleSubmit(handleBusinessDetailsSubmit)} className="space-y-6">
-                      <FormField
-                        control={businessForm.control}
-                        name="description"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Business Description *</FormLabel>
-                            <FormControl>
-                              <Textarea 
-                                placeholder="Describe your business, types of parts you deal with, and what makes you unique..." 
-                                className="min-h-[120px]"
-                                {...field} 
-                                data-testid="textarea-description"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Minimum 50 characters. This will be displayed on your profile.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <FormField
-                          control={businessForm.control}
-                          name="experience"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Years of Experience *</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  type="number"
-                                  min="0"
-                                  max="50"
-                                  placeholder="5" 
-                                  {...field}
-                                  onChange={(e) => field.onChange(Number(e.target.value))}
-                                  data-testid="input-experience"
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
                         <FormField
                           control={businessForm.control}
                           name="processingTime"
