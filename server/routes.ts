@@ -8479,7 +8479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload parts provider documents (DocumentUpload component endpoint)
-  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, requireRole(['parts_provider']), uploadLimiter, handleProviderDocumentUpload, async (req, res) => {
+  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, handleProviderDocumentUpload, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -8505,10 +8505,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const mappedDocumentType = documentTypeMap[documentType] || documentType;
 
-      // Update business info with document URLs
-      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      // Get or create business info for document uploads during registration
+      let businessInfo = await storage.getPartsProviderBusinessInfo(userId);
       if (!businessInfo) {
-        return res.status(404).json({ message: 'Parts provider profile not found' });
+        // Create a minimal business profile for document uploads during registration
+        businessInfo = await storage.createPartsProviderBusinessInfo({
+          userId,
+          businessName: 'Registration in Progress',
+          businessType: 'individual',
+          businessAddress: {
+            street: 'TBD',
+            city: 'TBD', 
+            state: 'TBD',
+            pincode: '000000',
+            country: 'India'
+          },
+          isVerified: false,
+          verificationStatus: 'documents_pending',
+          isActive: false,
+          totalRevenue: '0.00',
+          totalOrders: 0,
+          averageRating: '0.00',
+          totalProducts: 0,
+          minOrderValue: 0,
+          processingTime: 24,
+          shippingAreas: [],
+          paymentTerms: 'immediate',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
       }
 
       const documents = businessInfo.verificationDocuments || {};
