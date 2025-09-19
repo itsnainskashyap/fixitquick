@@ -241,91 +241,9 @@ export async function setupUploadRoutes(app: Express) {
     }
   });
 
-  // Provider profile endpoint to check application status
-  app.get('/api/v1/parts-provider/profile', authMiddleware, async (req, res) => {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: 'User not authenticated' });
-      }
+  // NOTE: Main /api/v1/parts-provider/profile endpoint is now in routes.ts with proper role validation
 
-      // Get the provider's business info
-      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
-      
-      if (!businessInfo) {
-        return res.json({
-          success: true,
-          hasApplication: false,
-          message: 'No application found'
-        });
-      }
-
-      return res.json({
-        success: true,
-        hasApplication: true,
-        application: {
-          id: businessInfo.id,
-          businessName: businessInfo.businessName,
-          businessType: businessInfo.businessType,
-          verificationStatus: businessInfo.verificationStatus,
-          isVerified: businessInfo.isVerified,
-          isActive: businessInfo.isActive,
-          createdAt: businessInfo.createdAt,
-          updatedAt: businessInfo.updatedAt
-        }
-      });
-
-    } catch (error) {
-      console.error('Error fetching provider profile:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch profile'
-      });
-    }
-  });
-
-  // Add alias for profile endpoint to fix frontend compatibility
-  app.get('/api/v1/providers/profile', authMiddleware, async (req, res) => {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: 'User not authenticated' });
-      }
-
-      // Get the provider's business info
-      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
-      
-      if (!businessInfo) {
-        return res.json({
-          success: true,
-          hasApplication: false,
-          message: 'No application found'
-        });
-      }
-
-      return res.json({
-        success: true,
-        hasApplication: true,
-        application: {
-          id: businessInfo.id,
-          businessName: businessInfo.businessName,
-          businessType: businessInfo.businessType,
-          verificationStatus: businessInfo.verificationStatus,
-          isVerified: businessInfo.isVerified,
-          isActive: businessInfo.isActive,
-          createdAt: businessInfo.createdAt,
-          updatedAt: businessInfo.updatedAt
-        }
-      });
-
-    } catch (error) {
-      console.error('Error fetching provider profile:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch profile'
-      });
-    }
-  });
+  // NOTE: Alias endpoint removed - frontend should use /api/v1/parts-provider/profile directly
 
   app.get('/api/v1/services/categories', async (req, res) => {
     try {

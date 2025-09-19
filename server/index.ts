@@ -213,8 +213,8 @@ app.use((req, res, next) => {
   // Run security validation before starting the server
   validateProductionSafety();
   
-  // TEMPORARILY BYPASS BROKEN ROUTES - Set up minimal server with just upload functionality
-  console.log('⚠️  Bypassing broken main routes - using minimal setup for upload functionality');
+  // ROUTES FIXED - Load main routes with parts provider profile endpoint
+  console.log('✅ Loading main routes with fixed parts provider endpoints');
   
   // Basic security and middleware
   const helmet = (await import('helmet')).default;
@@ -230,11 +230,15 @@ app.use((req, res, next) => {
     credentials: true,
   }));
   
-  // Setup clean upload routes
+  // Setup upload routes first
   setupUploadRoutes(app);
   console.log('✅ Upload routes registered successfully');
+
+  // Setup main routes with fixed parts provider endpoints  
+  registerRoutes(app);
+  console.log('✅ Main routes registered successfully');
   
-  // Create minimal server
+  // Create server
   const { createServer } = await import('http');
   const server = createServer(app);
   
