@@ -15,6 +15,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { aiService } from "./services/ai";
 import { openRouterService } from "./services/openrouter";
 import { onionPayService } from "./services/onionpay";
+import { paymentService } from "./services/payments";
 import { notificationService } from "./services/notifications";
 import WebSocketManager from "./services/websocket";
 
@@ -7587,6 +7588,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error processing order payment:', error);
       res.status(500).json({ message: 'Payment processing failed' });
+    }
+  });
+
+  // SECURE: Test payment for orders (development only)
+  app.post('/api/v1/orders/:orderId/pay-test', paymentLimiter, authMiddleware, async (req, res) => {
+    try {
+      // Only allow test payments in development
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({ 
+          success: false,
+          message: 'Test payments are not allowed in production' 
+        });
+      }
+
+      const userId = req.user?.id;
+      const { orderId } = req.params;
+      // Validate request body with Zod (ignore client-provided amount)
+      const testPaymentSchema = z.object({
+        idempotencyKey: z.string().optional(),
+        paymentMethod: z.literal('test').optional(),
+        amount: z.number().optional() // Ignored - server calculates from order
+      });
+      
+      const validatedBody = testPaymentSchema.parse(req.body);
+      const { idempotencyKey } = validatedBody;
+      
+      if (!userId) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      
+      // IDEMPOTENCY: Generate or use provided idempotency key
+      const finalIdempotencyKey = idempotencyKey || `test_pay_order_${userId}_${orderId}_${Date.now()}`;
+      
+      // Simple in-memory idempotency check for test payments
+      const idempotencyMapKey = `${finalIdempotencyKey}_${orderId}`;
+      if (global.testPaymentIdempotencyMap) {
+        if (global.testPaymentIdempotencyMap.has(idempotencyMapKey)) {
+          console.log(`⚠️ Idempotent test payment request detected: ${orderId}`);
+          const cachedResponse = global.testPaymentIdempotencyMap.get(idempotencyMapKey);
+          return res.json({
+            ...cachedResponse,
+            idempotent: true,
+            message: 'Test payment already processed (idempotent response)'
+          });
+        }
+      } else {
+        global.testPaymentIdempotencyMap = new Map();
+      }
+      
+      // Get and validate order
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      // Validate order ownership
+      if (order.userId !== userId) {
+        return res.status(403).json({ message: 'Access denied: not your order' });
+      }
+
+      // Validate order status
+      if (order.paymentStatus === 'paid') {
+        return res.status(400).json({ message: 'Order already paid' });
+      }
+
+      if (order.status === 'cancelled') {
+        return res.status(400).json({ message: 'Cannot pay for cancelled order' });
+      }
+
+      // SERVER CALCULATES AMOUNT (prevents client manipulation)
+      const orderAmount = parseFloat(order.meta?.totalAmount?.toString() || '0');
+      
+      if (orderAmount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid order amount'
+        });
+      }
+      
+      console.log(`🧪 Processing test payment for order ${orderId}, amount: ₹${orderAmount}`);
+      
+      // Use mock payment service
+      const paymentResult = await paymentService.handlePaymentSuccess({
+        paymentId: `test_pay_${Date.now()}`,
+        orderId,
+        amount: orderAmount,
+        userId,
+        paymentMethod: 'test'
+      });
+
+      if (!paymentResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test payment simulation failed',
+          error: paymentResult
+        });
+      }
+
+      // Update order payment status in meta field
+      const updatedMeta = {
+        ...order.meta,
+        paymentStatus: 'paid',
+        paymentMethod: 'test',
+        paidAt: new Date().toISOString()
+      };
+      
+      await storage.updateOrder(orderId, {
+        meta: updatedMeta
+      });
+
+      const updatedOrder = await storage.getOrder(orderId);
+      
+      const successResponse = {
+        success: true,
+        paymentId: paymentResult.paymentId,
+        order: updatedOrder,
+        message: 'Test payment processed successfully',
+        idempotencyKey: finalIdempotencyKey,
+        testMode: true
+      };
+      
+      // Cache successful response for idempotency
+      global.testPaymentIdempotencyMap.set(idempotencyMapKey, successResponse);
+      
+      res.json(successResponse);
+      
+      console.log(`✅ Test payment successful for order ${orderId}, paymentId: ${paymentResult.paymentId}`);
+    } catch (error) {
+      console.error('Error processing test payment:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Test payment processing failed' 
+      });
     }
   });
 

@@ -67,7 +67,7 @@ export default function Checkout() {
   const [onionPayLoaded, setOnionPayLoaded] = useState(false);
   const onionPayButtonRef = useRef<HTMLDivElement>(null);
   const [deliveryAddress, setDeliveryAddress] = useState({
-    fullName: user?.displayName || '',
+    fullName: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
     phone: '',
     address: '',
     city: '',
@@ -113,7 +113,7 @@ export default function Checkout() {
   }, [toast]);
 
   // Fetch wallet balance
-  const { data: walletData, isLoading: walletLoading } = useQuery({
+  const { data: walletData, isLoading: walletLoading } = useQuery<{ balance: string; fixiPoints: number }>({
     queryKey: ['/api/v1/wallet/balance'],
     enabled: !!user,
   });
@@ -285,6 +285,32 @@ export default function Checkout() {
       if (paymentMethod === 'wallet') {
         // Step 2: Pay for the order (server validates and calculates amount)
         await payOrderMutation.mutateAsync(orderId);
+      } else if (paymentMethod === 'test') {
+        // Step 2: Process test payment
+        try {
+          const testPaymentResponse = await apiRequest('POST', `/api/v1/orders/${orderId}/pay-test`, {
+            idempotencyKey,
+            amount: total,
+            paymentMethod: 'test'
+          });
+          
+          // Invalidate caches after successful test payment
+          queryClient.invalidateQueries({ queryKey: ['/api/v1/wallet/balance'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
+          
+          toast({
+            title: 'Test Payment Successful!',
+            description: `Your test order #${orderId.slice(-8)} has been confirmed. Payment ID: ${testPaymentResponse.paymentId}`,
+          });
+          setLocation(`/orders/${orderId}`);
+        } catch (testPaymentError) {
+          toast({
+            title: 'Test Payment Failed',
+            description: 'The test payment simulation failed. Please try again.',
+            variant: 'destructive',
+          });
+          throw testPaymentError;
+        }
       } else {
         // For other payment methods, implement payment gateway integration
         // For now, simulate successful payment
@@ -673,6 +699,20 @@ export default function Checkout() {
                         </div>
                       </Label>
                     </div>
+
+                    {/* Test Payment (Development Only) */}
+                    {import.meta.env.DEV && (
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="test" id="test" data-testid="payment-test" />
+                        <Label htmlFor="test" className="flex-1 cursor-pointer">
+                          <div className="flex items-center space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                            <span>Test Payment</span>
+                            <Badge variant="secondary" className="text-xs">Dev Only</Badge>
+                          </div>
+                        </Label>
+                      </div>
+                    )}
                   </RadioGroup>
                 </div>
 
