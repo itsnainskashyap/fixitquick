@@ -195,6 +195,19 @@ export async function setupAuth(app: Express) {
       });
     }
     
+    // Store the referrer URL to redirect back after OAuth
+    const referer = req.get('Referer') || req.headers.referer as string;
+    if (referer) {
+      // Store in session for callback redirect
+      (req.session as any).returnTo = referer;
+      try {
+        const returnUrl = new URL(referer);
+        console.log(`🔗 Storing return URL for post-OAuth redirect: ${returnUrl.pathname}`);
+      } catch {
+        console.log(`🔗 Storing return URL for post-OAuth redirect: [URL]`);
+      }
+    }
+    
     console.log(`🔐 Login attempt - hostname: ${hostname}, using strategy: ${matchingDomain}`);
     passport.authenticate(matchingDomain, {
       prompt: "login consent",
@@ -220,48 +233,43 @@ export async function setupAuth(app: Express) {
     console.log(`🔐 Callback attempt - hostname: ${hostname}, using strategy: ${matchingDomain}`);
     
     passport.authenticate(matchingDomain, {
-      successReturnToOrRedirect: "/",
-      failureRedirect: "/api/login",
-      failureFlash: false
+      failureRedirect: '/api/login?error=oauth_callback_failed'
     })(req, res, (err: any) => {
       if (err) {
         console.error(`❌ OAuth callback error for strategy ${matchingDomain}:`, err);
-        console.error('Full error details:', {
-          message: err.message,
-          stack: err.stack,
-          name: err.name,
-          cause: err.cause,
-          code: err.code,
-          // Try to capture OAuth-specific error details
-          error: err.error,
-          error_description: err.error_description,
-          error_uri: err.error_uri,
-          statusCode: err.statusCode,
-          response: err.response,
-          // Additional openid-client specific error fields
-          error_code: err.error_code,
-          error_details: err.error_details,
-          params: err.params
-        });
-        
-        // Log additional request context for debugging
-        console.error('Request context:', {
-          url: req.url,
-          query: req.query,
-          method: req.method,
-          hostname: req.hostname,
-          headers: {
-            host: req.headers.host,
-            'user-agent': req.headers['user-agent'],
-            referer: req.headers.referer,
-            'content-type': req.headers['content-type'],
-            authorization: req.headers.authorization ? '[REDACTED]' : undefined
-          }
-        });
-        
         return res.redirect('/api/login?error=oauth_callback_failed');
       }
-      console.log('✅ OAuth callback successful, redirecting to /');
+
+      // Get the stored return URL from session
+      const returnTo = (req.session as any)?.returnTo;
+      
+      // Determine smart redirect destination
+      let redirectPath = '/';
+      
+      if (returnTo) {
+        // Extract path and query string from full URL if it's from the same domain
+        try {
+          const returnUrl = new URL(returnTo);
+          const currentUrl = new URL(`${req.protocol}://${req.get('host')}`);
+          
+          if (returnUrl.hostname === currentUrl.hostname) {
+            redirectPath = returnUrl.pathname + returnUrl.search;
+            console.log(`🔗 OAuth success - redirecting back to original page: ${returnUrl.pathname}`);
+          } else {
+            console.log(`⚠️ OAuth success - returnTo URL from different domain, using default redirect`);
+          }
+        } catch (urlError) {
+          console.log(`⚠️ OAuth success - invalid returnTo URL, using default redirect`);
+        }
+        
+        // Clear the stored return URL
+        delete (req.session as any).returnTo;
+      } else {
+        console.log(`🔗 OAuth success - no return URL stored, redirecting to homepage`);
+      }
+      
+      res.redirect(redirectPath);
+      console.log(`✅ OAuth callback successful, redirecting to: ${redirectPath}`);
     });
   });
 
