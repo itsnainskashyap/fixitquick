@@ -5454,11 +5454,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Create service booking
+      // Create an order first (consistent with the order creation flow)
+      const orderData = {
+        userId,
+        type: 'service' as const,
+        serviceId: bookingData.serviceId,
+        items: [{
+          id: service.id,
+          name: service.name,
+          price: parseFloat(service.basePrice),
+          quantity: 1,
+          type: 'service' as const
+        }],
+        totalAmount: bookingData.serviceDetails?.basePrice || parseFloat(service.basePrice),
+        bookingType: bookingData.bookingType,
+        urgency: bookingData.urgency,
+        serviceLocation: bookingData.serviceLocation,
+        notes: bookingData.notes,
+        paymentMethod: bookingData.paymentMethod || 'online',
+        status: 'pending' as const,
+        paymentStatus: 'pending' as const,
+        ...(bookingData.scheduledAt && { scheduledAt: bookingData.scheduledAt })
+      };
+
+      const order = await storage.createOrder(orderData);
+
+      // Create service booking linked to the order
       const booking = await storage.createServiceBooking({
         ...bookingData,
         userId,
         status: 'pending',
+        orderId: order.id, // Link to the order
       });
 
       // For instant bookings, immediately start provider search
@@ -5468,10 +5494,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Send booking notifications
       if (booking.userId) {
-        await notificationService.notifyOrderUpdate(booking.userId, booking.id, booking.status);
+        await notificationService.notifyOrderUpdate(booking.userId, order.id, booking.status);
       }
 
-      res.status(201).json(booking);
+      // Broadcast order created event via WebSocket
+      if (webSocketManager) {
+        webSocketManager.broadcastToRoom(`user_${userId}`, {
+          type: 'order_created',
+          data: order
+        });
+      }
+
+      // Return order data so frontend can navigate to /orders/{orderId}
+      res.status(201).json({
+        ...order,
+        serviceBookingId: booking.id, // Include service booking ID for reference
+        bookingType: booking.bookingType,
+        urgency: booking.urgency
+      });
     } catch (error) {
       console.error('Error creating service booking:', error);
       res.status(500).json({ message: 'Failed to create service booking' });

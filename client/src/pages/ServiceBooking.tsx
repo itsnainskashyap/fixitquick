@@ -241,15 +241,16 @@ export default function ServiceBooking() {
   // Enhanced order creation mutation
   const createServiceBookingMutation = useMutation({
     mutationFn: async (bookingData: any) => {
-      return await apiRequest('POST', '/api/v1/orders', bookingData);
+      return await apiRequest('POST', '/api/v1/service-bookings', bookingData);
     },
-    onSuccess: (booking: ServiceBooking) => {
-      setCreatedBookingId(booking.id);
-      setCurrentBooking(booking);
+    onSuccess: (order: any) => {
+      setCreatedBookingId(order.id); // Now using order ID
+      setCurrentBooking(order);
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/service-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/orders'] });
       setStep(4); // Show assignment status
       
-      if (booking.bookingType === 'instant') {
+      if (order.bookingType === 'instant') {
         toast({
           title: 'Order Created!',
           description: 'Searching for available providers in your area...',
@@ -257,14 +258,14 @@ export default function ServiceBooking() {
         setBookingStatus('searching_providers');
         // Redirect to order tracking page
         setTimeout(() => {
-          setLocation(`/orders/${booking.id}`);
+          setLocation(`/orders/${order.id}`);
         }, 2000);
       } else {
         toast({
           title: 'Order Scheduled!',
           description: 'Your service has been scheduled successfully.',
         });
-        setLocation(`/orders/${booking.id}`);
+        setLocation(`/orders/${order.id}`);
       }
     },
     onError: (error: any) => {
@@ -322,12 +323,23 @@ export default function ServiceBooking() {
       serviceId: service.id,
       bookingType: data.bookingType,
       urgency: data.urgency,
-      serviceLocation: data.serviceLocation,
+      serviceLocation: {
+        type: 'current' as const,
+        address: data.serviceLocation.address,
+        latitude: data.serviceLocation.latitude,
+        longitude: data.serviceLocation.longitude,
+        instructions: '', // Optional field
+        landmarkDetails: '', // Optional field
+      },
+      serviceDetails: {
+        basePrice: parseFloat(service.basePrice),
+        estimatedDuration: service.estimatedDuration,
+        workflowSteps: [], // Will be populated from service data
+        specialRequirements: [], // Optional
+      },
       phone: data.phone,
       notes: data.notes,
       paymentMethod: data.paymentMethod,
-      totalAmount: parseFloat(service.basePrice),
-      estimatedDuration: service.estimatedDuration,
       ...(data.bookingType === 'scheduled' && {
         scheduledAt: new Date(`${format(data.scheduledDate!, 'yyyy-MM-dd')}T${data.scheduledTime}`).toISOString(),
       }),
