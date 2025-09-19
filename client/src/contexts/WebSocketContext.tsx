@@ -65,9 +65,10 @@ export function WebSocketProvider({
 
   const connect = () => {
     try {
+      // TEMPORARY: Allow connection without authentication to test infrastructure issue
       if (!isAuthenticated || !user) {
-        console.log('WebSocket: Not authenticated, skipping connection');
-        return;
+        console.log('WebSocket: Not authenticated, but attempting connection for infrastructure testing...');
+        // Don't return - continue with connection attempt
       }
 
       if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -136,19 +137,28 @@ export function WebSocketProvider({
   };
 
   const handleOpen = () => {
-    console.log('WebSocket: Connection established');
+    console.log('🎉 WebSocket: Connection established successfully! Infrastructure supports WebSocket.');
     setIsConnected(true);
     setConnectionError(null);
     reconnectAttemptsRef.current = 0;
     setLastConnected(new Date());
     setConnectionQuality('good');
     
-    // Send authentication message
-    if (user) {
+    // Send authentication message if user is authenticated
+    if (user && isAuthenticated) {
       sendAuthMessage().catch(error => {
         console.error('Failed to send auth message:', error);
         setConnectionError('Authentication failed');
       });
+    } else {
+      console.log('WebSocket: Connected without authentication - testing infrastructure only');
+      // Send a ping to test the connection
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'ping',
+          data: { timestamp: Date.now(), test: true }
+        }));
+      }
     }
     
     // Process queued messages
@@ -161,9 +171,9 @@ export function WebSocketProvider({
     startPingMonitoring();
     
     toast({
-      title: "Connected",
-      description: "Real-time features are now active",
-      duration: 2000,
+      title: "WebSocket Connected!",
+      description: "Real-time features are now active - infrastructure test successful",
+      duration: 3000,
     });
   };
 

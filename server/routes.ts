@@ -24,7 +24,9 @@ let webSocketManager: WebSocketManager | null = null;
 
 // Function to initialize WebSocket manager
 function initializeWebSocket(server: Server) {
+  console.log('🔌 Initializing WebSocket manager with HTTP server...');
   webSocketManager = new WebSocketManager(server);
+  console.log('✅ WebSocket manager initialized successfully');
   return webSocketManager;
 }
 
@@ -696,6 +698,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Create HTTP server and initialize WebSocket
   const server = createServer(app);
+  
+  // Add server-level debugging for upgrade requests
+  server.on('upgrade', (request, socket, head) => {
+    console.log('🔄 HTTP Server: WebSocket upgrade request received:', {
+      url: request.url,
+      origin: request.headers.origin,
+      method: request.method
+    });
+  });
+  
   initializeWebSocket(server);
   
   // Initialize essential data for production (categories and settings only)
@@ -15530,23 +15542,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // WebSocket setup with comprehensive real-time features
-  const httpServer = createServer(app);
-  const wsManager = new WebSocketManager(httpServer);
-  
-  // Store WebSocket manager instance globally for use in routes
-  (global as any).wsManager = wsManager;
-  
-  // Graceful shutdown
-  process.on('SIGTERM', () => {
-    console.log('Received SIGTERM, closing WebSocket connections...');
-    wsManager.cleanup();
-  });
-  
-  process.on('SIGINT', () => {
-    console.log('Received SIGINT, closing WebSocket connections...');
-    wsManager.cleanup();
-  });
-
-  return httpServer;
+  // Return the server that already has WebSocket initialized
+  return server;
 }

@@ -38,23 +38,49 @@ class WebSocketManager {
   private ipConnections = new Map<string, number>();
 
   constructor(server: Server) {
+    console.log('🚀 WebSocket: Initializing WebSocket server on path /ws');
     this.wss = new WebSocketServer({ server, path: '/ws' });
+    console.log('✅ WebSocket: WebSocket server created successfully');
     this.setupEventHandlers();
     this.startHeartbeat();
+    console.log('🎯 WebSocket: Server initialization complete, waiting for connections...');
   }
 
   private setupEventHandlers() {
     this.wss.on('connection', this.handleConnection.bind(this));
+    
+    // Add comprehensive WebSocket server debugging
+    this.wss.on('error', (error) => {
+      console.error('🚨 WebSocket Server Error:', error);
+    });
+    
+    this.wss.on('listening', () => {
+      console.log('🎧 WebSocket Server: Listening for connections on /ws');
+    });
+    
+    // Add debugging for the underlying server
+    this.wss.on('headers', (headers, request) => {
+      console.log('📋 WebSocket: Connection headers received:', {
+        origin: request.headers.origin,
+        userAgent: request.headers['user-agent']?.substring(0, 100),
+        upgrade: request.headers.upgrade,
+        connection: request.headers.connection
+      });
+    });
+
+    console.log('🔧 WebSocket: Event handlers configured, server ready to accept connections');
   }
 
   private handleConnection(ws: AuthenticatedWebSocket, req: any) {
     const connectionId = this.generateConnectionId();
     const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
     
+    console.log(`🔌 WebSocket: New connection attempt from ${clientIP}, assigned ID: ${connectionId}`);
+    
     // Rate limit connections per IP
     const currentConnections = this.ipConnections.get(clientIP) || 0;
     if (currentConnections >= this.rateLimitConfig.maxConnectionsPerIP) {
-      console.warn(`Rate limit exceeded for IP: ${clientIP}`);
+      console.warn(`❌ WebSocket: Rate limit exceeded for IP: ${clientIP} (${currentConnections}/${this.rateLimitConfig.maxConnectionsPerIP})`);
       ws.close(1008, 'Too many connections from this IP');
       return;
     }
@@ -66,7 +92,7 @@ class WebSocketManager {
     ws.connectionTime = Date.now();
     
     this.ipConnections.set(clientIP, currentConnections + 1);
-    console.log(`WebSocket connection established: ${connectionId} from IP: ${clientIP}`);
+    console.log(`✅ WebSocket: Connection established successfully - ID: ${connectionId}, IP: ${clientIP}, Total connections: ${this.connections.size + 1}`);
     this.connections.set(connectionId, ws);
 
     ws.on('message', (data) => this.handleMessage(connectionId, data));
@@ -146,8 +172,9 @@ class WebSocketManager {
         return;
       }
 
-      // Only allow auth messages for unauthenticated connections
+      // TEMPORARY: Allow ping messages for testing infrastructure
       if (!ws.isAuthenticated && message.type !== 'auth' && message.type !== 'ping') {
+        console.log(`⚠️ WebSocket: Unauthenticated message type '${message.type}' from connection ${connectionId}`);
         this.sendToConnection(connectionId, {
           type: 'error',
           data: { message: 'Authentication required' }
@@ -952,6 +979,11 @@ class WebSocketManager {
 
   private handleDisconnection(connectionId: string, clientIP?: string) {
     const ws = this.connections.get(connectionId);
+    const duration = ws?.connectionTime ? Math.round((Date.now() - ws.connectionTime) / 1000) : 0;
+    const wasAuthenticated = ws?.isAuthenticated || false;
+    
+    console.log(`🔌 WebSocket: Connection closed - ID: ${connectionId}, IP: ${clientIP || 'unknown'}, Duration: ${duration}s, Authenticated: ${wasAuthenticated}, Total remaining: ${this.connections.size - 1}`);
+    
     if (ws) {
       // Clean up user connection mapping
       if (ws.userId) {

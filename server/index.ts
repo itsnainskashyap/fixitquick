@@ -255,7 +255,20 @@ app.use((req, res, next) => {
       backgroundMatcher.start();
       console.log('✅ Background Matcher Service started successfully with WebSocket integration');
     } else {
-      console.warn('⚠️  WebSocket manager not available, starting Background Matcher without WebSocket integration');
+      console.warn('⚠️  WebSocket manager not available during first check, will retry after server startup...');
+      
+      // Retry after server is fully started
+      setTimeout(() => {
+        console.log('🔄 Background Matcher: Retrying WebSocket manager connection...');
+        const retryWebSocketManager = getWebSocketManager();
+        if (retryWebSocketManager) {
+          backgroundMatcher.setWebSocketManager(retryWebSocketManager);
+          console.log('✅ Background Matcher: WebSocket manager connected on retry!');
+        } else {
+          console.warn('⚠️  Background Matcher: WebSocket manager still not available, starting without integration');
+        }
+      }, 2000);
+      
       backgroundMatcher.start();
     }
   } catch (error) {
