@@ -9323,11 +9323,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'User not authenticated' });
       }
 
-      // Check if user is a service provider
+      // Allow document uploads during registration process
+      // Check if user is a service provider (for existing providers) or allow for registration
       const provider = await storage.getServiceProvider(userId);
-      if (!provider) {
-        return res.status(404).json({ message: 'Provider profile not found' });
-      }
+      const isRegistering = !provider; // User is in registration process if no provider profile exists
 
       const { documentType } = req.body;
       const file = req.file!; // File is validated by middleware
@@ -9375,8 +9374,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const docs = updatedProvider?.documents;
       const hasRequiredDocs = docs?.aadhar?.front && docs?.aadhar?.back && docs?.photo?.url;
 
-      // Auto-advance to under_review if all required docs are uploaded
-      if (hasRequiredDocs && provider.verificationStatus === 'pending') {
+      // Auto-advance to under_review if all required docs are uploaded (only for existing providers)
+      if (hasRequiredDocs && !isRegistering && updatedProvider?.verificationStatus === 'pending') {
         await storage.updateVerificationStatus(userId, {
           verificationStatus: 'under_review',
         });
@@ -9388,7 +9387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             storage.createNotification({
               userId: admin.id,
               title: 'Provider Application Complete',
-              body: `${provider.businessName || 'A provider'} has uploaded all required documents and is ready for verification.`,
+              body: `${updatedProvider.businessName || 'A provider'} has uploaded all required documents and is ready for verification.`,
               type: 'system',
               isRead: false,
             })
@@ -9401,7 +9400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         documentUrl: result.url,
         documentType,
         filename: file.originalname,
-        verificationStatus: hasRequiredDocs ? 'under_review' : 'pending',
+        verificationStatus: isRegistering ? 'uploading' : (hasRequiredDocs ? 'under_review' : 'pending'),
         message: 'Document uploaded successfully',
       });
     } catch (error) {
