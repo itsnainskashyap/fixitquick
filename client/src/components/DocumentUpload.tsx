@@ -334,7 +334,7 @@ export default function DocumentUpload({
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                        {doc.mimeType.includes('pdf') ? (
+                        {doc.mimeType?.includes('pdf') ? (
                           <FileText className="h-5 w-5" />
                         ) : (
                           <FileImage className="h-5 w-5" />
