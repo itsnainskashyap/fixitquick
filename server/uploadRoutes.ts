@@ -3,8 +3,46 @@ import { authMiddleware } from './middleware/auth';
 import { uploadDocument } from './middleware/fileUpload';
 import { objectStorageService } from './services/objectStorage';
 import { storage } from './storage';
+import { setupAuth } from './replitAuth';
 
-export function setupUploadRoutes(app: Express) {
+export async function setupUploadRoutes(app: Express) {
+  // Set up Replit authentication (provides /api/login, /api/callback)
+  await setupAuth(app);
+  console.log('✅ Authentication routes registered');
+
+  // Essential auth endpoint - check user authentication status
+  app.get('/api/auth/user', async (req: any, res) => {
+    try {
+      console.log('🔍 /api/auth/user: Checking authentication...');
+      
+      // Check if user is authenticated via Replit session
+      if (req.user) {
+        const userId = req.user.id || req.user.claims?.sub;
+        if (userId) {
+          console.log(`🔐 /api/auth/user: Session authentication found for userId: ${userId}`);
+          const user = await storage.getUser(userId);
+          
+          if (user && user.isActive) {
+            console.log(`✅ /api/auth/user: Session user ${userId} authenticated successfully`);
+            const userWithDisplayName = {
+              ...user,
+              displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
+            };
+            return res.json(userWithDisplayName);
+          }
+        }
+      }
+      
+      // No valid authentication found
+      console.log('ℹ️ /api/auth/user: No valid authentication found, returning null');
+      res.json(null);
+      
+    } catch (error) {
+      console.error("❌ /api/auth/user: Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user data" });
+    }
+  });
+
   // Parts provider document upload endpoint
   app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadDocument, async (req, res) => {
     try {
