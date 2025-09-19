@@ -45,7 +45,7 @@ const upload = multer({
 /**
  * Middleware for handling single document upload
  */
-export const uploadDocument = upload.single('document');
+export const uploadDocument = upload.single('file');
 
 /**
  * Middleware for handling multiple document uploads

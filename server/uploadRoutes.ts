@@ -43,7 +43,69 @@ export async function setupUploadRoutes(app: Express) {
     }
   });
 
-  // Parts provider document upload endpoint
+  // Essential API routes for categories and services
+  app.get('/api/v1/services/categories/main', async (req, res) => {
+    try {
+      const categories = await storage.getMainCategories();
+      res.json(categories);
+    } catch (error) {
+      console.error('Error fetching main categories:', error);
+      res.status(500).json({ message: 'Failed to fetch categories' });
+    }
+  });
+
+  app.get('/api/v1/services/categories', async (req, res) => {
+    try {
+      const categories = await storage.getServiceCategories();
+      res.json(categories);
+    } catch (error) {
+      console.error('Error fetching all categories:', error);
+      res.status(500).json({ message: 'Failed to fetch categories' });
+    }
+  });
+
+  app.get('/api/v1/services', async (req, res) => {
+    try {
+      const services = await storage.getServices();
+      res.json(services);
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      res.status(500).json({ message: 'Failed to fetch services' });
+    }
+  });
+
+  app.get('/api/v1/parts-categories', async (req, res) => {
+    try {
+      const partsCategories = await storage.getPartsCategories();
+      res.json(partsCategories);
+    } catch (error) {
+      console.error('Error fetching parts categories:', error);
+      res.status(500).json({ message: 'Failed to fetch parts categories' });
+    }
+  });
+
+  // Stub routes for missing endpoints
+  app.get('/api/v1/wallet/balance', authMiddleware, async (req, res) => {
+    res.json({ balance: 0, currency: 'INR' });
+  });
+
+  app.get('/api/v1/notifications', authMiddleware, async (req, res) => {
+    res.json([]);
+  });
+
+  app.get('/api/v1/promotional-media/active', async (req, res) => {
+    res.json([]);
+  });
+
+  app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {
+    res.json([]);
+  });
+
+  app.get('/api/v1/services/suggested', async (req, res) => {
+    res.json([]);
+  });
+
+  // Parts provider document upload endpoint - Fix field name issue
   app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadDocument, async (req, res) => {
     try {
       const userId = req.user?.id;
