@@ -51,18 +51,9 @@ export async function setupUploadRoutes(app: Express) {
 
       // Generate JWT token for admin using same secret as the auth middleware
       const jwt = await import('jsonwebtoken');
-      const secret = process.env.JWT_SECRET_KEY || process.env.SESSION_SECRET || process.env.JWT_SECRET || 'dev-jwt-secret-key';
-      const accessToken = jwt.default.sign(
-        { 
-          userId: admin.id, 
-          phone: '', // Admin users don't need phone
-          role: admin.role, 
-          iat: Math.floor(Date.now() / 1000),
-          exp: Math.floor(Date.now() / 1000) + (2 * 60 * 60) // 2 hours
-        },
-        secret,
-        { algorithm: 'HS256' }
-      );
+      // Use jwtService to ensure consistent secret handling
+      const { jwtService } = await import('./utils/jwt');
+      const accessToken = await jwtService.generateAccessToken(admin.id, admin.role);
 
       // Set secure httpOnly cookie for admin
       res.cookie('adminToken', accessToken, {
@@ -99,7 +90,37 @@ export async function setupUploadRoutes(app: Express) {
     try {
       console.log('🔍 /api/auth/user: Checking authentication...');
       
-      // Check if user is authenticated via Replit session
+      // PRIORITY 1: Check for admin token in cookies FIRST
+      if (req.cookies?.adminToken) {
+        console.log('🍪 /api/auth/user: Found admin token in secure cookie, processing with ABSOLUTE HIGHEST PRIORITY');
+        try {
+          const { jwtService } = await import('./utils/jwt');
+          const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
+          if (jwtPayload) {
+            console.log(`🔑 /api/auth/user: Admin JWT token verified for userId: ${jwtPayload.userId}`);
+            const user = await storage.getUser(jwtPayload.userId);
+            
+            if (user && user.isActive && user.role === 'admin') {
+              console.log(`✅ /api/auth/user: Admin user ${jwtPayload.userId} authenticated successfully`);
+              const userWithDisplayName = {
+                ...user,
+                displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Administrator'
+              };
+              return res.json(userWithDisplayName);
+            } else {
+              console.error(`❌ /api/auth/user: Admin user ${jwtPayload.userId} not found or not admin`);
+              // Clear invalid admin cookie
+              res.clearCookie('adminToken', { path: '/', httpOnly: true });
+            }
+          }
+        } catch (adminJwtError) {
+          console.log('❌ /api/auth/user: Admin JWT token expired/invalid, clearing cookie...');
+          // Clear expired admin cookie
+          res.clearCookie('adminToken', { path: '/', httpOnly: true });
+        }
+      }
+      
+      // PRIORITY 2: Check if user is authenticated via Replit session
       if (req.user) {
         const userId = req.user.id || req.user.claims?.sub;
         if (userId) {

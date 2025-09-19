@@ -74,9 +74,26 @@ export default function AdminLogin() {
     return false;
   };
 
+  // Helper function to clear all potentially invalid admin cookies
+  const clearAdminCookies = () => {
+    // Clear common admin cookie names that might be stale
+    const cookieNamesToClear = ['adminToken', 'accessToken', 'token', 'authToken', 'userToken'];
+    
+    cookieNamesToClear.forEach(cookieName => {
+      // Clear cookie with different path and domain combinations
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${window.location.hostname}`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`;
+    });
+    
+    console.log('🧹 Cleared potentially stale admin cookies');
+  };
+
   // Admin login mutation
   const loginMutation = useMutation({
     mutationFn: async (credentials: AdminLoginForm) => {
+      // Clear any existing stale cookies before attempting login
+      clearAdminCookies();
       return apiRequest('POST', '/api/admin/login', credentials);
     },
     onSuccess: async (data) => {
@@ -107,11 +124,15 @@ export default function AdminLogin() {
         }
       } catch (error) {
         console.error('❌ Admin auth verification error:', error);
-        setLoginError(error instanceof Error ? error.message : 'Authentication verification failed');
+        // Clear cookies on verification failure to prevent future conflicts
+        clearAdminCookies();
+        
+        const errorMsg = error instanceof Error ? error.message : 'Authentication verification failed';
+        setLoginError(`Failed to verify admin authentication: ${errorMsg}`);
         
         toast({
           title: 'Authentication Error',
-          description: 'Failed to verify admin credentials. Please try again.',
+          description: 'Failed to verify admin credentials. Cleared stale cookies - please try again.',
           variant: 'destructive',
           duration: 5000,
         });
@@ -123,7 +144,16 @@ export default function AdminLogin() {
       console.error('❌ Admin login error:', error);
       setIsAuthRefreshing(false);
       
-      const errorMessage = error?.message || 'Login failed. Please check your credentials.';
+      // Clear cookies on login failure to prevent conflicts with stale tokens
+      clearAdminCookies();
+      
+      let errorMessage = 'Login failed. Please check your credentials.';
+      if (error?.message?.includes('signature')) {
+        errorMessage = 'Authentication token conflict detected. Cleared cookies - please try again.';
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
       setLoginError(errorMessage);
       
       toast({
