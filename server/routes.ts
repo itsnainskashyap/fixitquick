@@ -8479,7 +8479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload parts provider documents (DocumentUpload component endpoint)
-  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, handleProviderDocumentUpload, async (req, res) => {
+  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, handleMultipleImageUpload, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
@@ -8536,28 +8536,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const documents = businessInfo.verificationDocuments || {};
+      // Process the uploaded file through object storage service
       const file = files[0];
+      const uploadResult = await objectStorageService.uploadFile(
+        file,
+        documentType,
+        userId,
+        false // Private by default
+      );
+
+      if (!uploadResult.success) {
+        return res.status(500).json({
+          success: false,
+          message: uploadResult.error || 'Failed to upload document',
+          error: 'UPLOAD_FAILED'
+        });
+      }
+
+      const documents = businessInfo.verificationDocuments || {};
       
       // Update documents based on type
       switch (mappedDocumentType) {
         case 'aadharFront':
-          documents.aadharFront = { url: file.url, verified: false };
+          documents.aadharFront = { url: uploadResult.url, verified: false };
           break;
         case 'aadharBack':
-          documents.aadharBack = { url: file.url, verified: false };
+          documents.aadharBack = { url: uploadResult.url, verified: false };
           break;
         case 'photo':
-          documents.photo = { url: file.url, verified: false };
+          documents.photo = { url: uploadResult.url, verified: false };
           break;
         case 'businessLicense':
-          documents.businessLicense = { url: file.url, verified: false };
+          documents.businessLicense = { url: uploadResult.url, verified: false };
           break;
         case 'gstCertificate':
-          documents.gstCertificate = { url: file.url, verified: false };
+          documents.gstCertificate = { url: uploadResult.url, verified: false };
           break;
         case 'bankStatement':
-          documents.bankStatement = { url: file.url, verified: false };
+          documents.bankStatement = { url: uploadResult.url, verified: false };
           break;
         default:
           return res.status(400).json({ message: 'Invalid document type' });
@@ -8569,10 +8585,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         verificationStatus: 'documents_submitted',
       });
 
+      console.log(`✅ Parts provider document uploaded: ${documentType} for user ${userId}`);
+
       res.json({
         success: true,
         message: 'Document uploaded successfully',
-        url: file.url,
+        url: uploadResult.url,
         documentType: mappedDocumentType,
         businessInfo: updatedInfo
       });
