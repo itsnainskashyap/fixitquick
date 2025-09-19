@@ -1,46 +1,7 @@
 import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
 import { useImageUpload, type UploadedImage } from '@/hooks/useImageUpload';
-
-// Utility function to format file sizes with proper units
-const formatFileSize = (sizeInBytes: number | string | undefined | null): string => {
-  // Handle undefined, null, or invalid inputs
-  if (sizeInBytes == null || sizeInBytes === '') {
-    return '0 B';
-  }
-  
-  // Convert string to number if needed
-  const size = typeof sizeInBytes === 'string' ? parseFloat(sizeInBytes) : sizeInBytes;
-  
-  // Check if conversion resulted in a valid number
-  if (isNaN(size) || size < 0) {
-    return '0 B';
-  }
-  
-  // If size is 0, return immediately
-  if (size === 0) {
-    return '0 B';
-  }
-  
-  // Define units and thresholds
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let unitIndex = 0;
-  let calculatedSize = size;
-  
-  // Find the appropriate unit
-  while (calculatedSize >= 1024 && unitIndex < units.length - 1) {
-    calculatedSize /= 1024;
-    unitIndex++;
-  }
-  
-  // Format the number with appropriate decimal places
-  const formattedSize = calculatedSize < 10 && unitIndex > 0 
-    ? calculatedSize.toFixed(1) 
-    : Math.round(calculatedSize);
-  
-  return `${formattedSize} ${units[unitIndex]}`;
-};
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

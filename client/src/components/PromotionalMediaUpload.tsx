@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, X, FileImage, Video, Check, AlertCircle, Loader2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -487,7 +487,7 @@ export default function PromotionalMediaUpload({
                       </div>
                       
                       <p className="text-xs text-muted-foreground">
-                        {(uploadFile.file.size / (1024 * 1024)).toFixed(1)} MB
+                        {formatFileSize(uploadFile.file.size)}
                       </p>
 
                       {/* Progress bar */}

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
 import ImageUpload, { type ImageUploadRef } from '@/components/ImageUpload';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -365,7 +365,7 @@ export default function ImageGallery({
                   />
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  {editingImage.filename} • {Math.round(editingImage.size / 1024)}KB
+                  {editingImage.filename} • {formatFileSize(editingImage.size)}
                   {editingImage.width && editingImage.height && 
                     ` • ${editingImage.width}×${editingImage.height}`
                   }

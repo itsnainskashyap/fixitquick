@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { formatFileSize } from '@/lib/utils';
 
 export interface UploadedImage {
   id: string;
@@ -134,7 +135,7 @@ export const useImageUpload = (options: ImageUploadOptions = {}) => {
     if (file.size > maxSize) {
       return { 
         valid: false, 
-        error: `File too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(1)}MB` 
+        error: `File too large. Maximum size: ${formatFileSize(maxSize)}` 
       };
     }
     

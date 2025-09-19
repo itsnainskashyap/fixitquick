@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
 import { useImageUpload, type ImageUploadOptions, type UploadedImage } from '@/hooks/useImageUpload';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -238,7 +238,7 @@ const ImageUpload = forwardRef<ImageUploadRef, ImageUploadProps>(({
               <div className="w-full max-w-xs">
                 <Progress value={uploadProgress.percentage} className="h-2" />
                 <div className="text-xs text-center mt-1">
-                  {uploadProgress.percentage}% ({Math.round(uploadProgress.loaded / 1024)}KB / {Math.round(uploadProgress.total / 1024)}KB)
+                  {uploadProgress.percentage}% ({formatFileSize(uploadProgress.loaded)} / {formatFileSize(uploadProgress.total)})
                 </div>
               </div>
             )}
@@ -416,13 +416,19 @@ const ImageUpload = forwardRef<ImageUploadRef, ImageUploadProps>(({
 
                   {/* Image Info */}
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
-                    <div className="text-white text-xs truncate" title={image.filename}>
-                      {image.filename}
+                    <div className="text-white text-xs">
+                      <div className="truncate" title={image.filename}>
+                        {image.filename}
+                      </div>
+                      <div className="text-gray-300 text-[10px] mt-0.5">
+                        {formatFileSize(image.size)} • {image.mimeType?.split('/')[1]?.toUpperCase() || 'IMG'}
+                      </div>
                     </div>
-                    <div className="text-white/80 text-xs">
-                      {Math.round(image.size / 1024)}KB
-                      {image.width && image.height && ` • ${image.width}×${image.height}`}
-                    </div>
+                    {image.width && image.height && (
+                      <div className="text-white/80 text-[10px] mt-0.5">
+                        {image.width}×{image.height}
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               ))}
