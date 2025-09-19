@@ -22,9 +22,9 @@ export async function setupUploadRoutes(app: Express) {
         });
       }
 
-      // Check admin credentials
-      const admin = await storage.getAdminByEmail(email);
-      if (!admin || !admin.isActive) {
+      // Check admin credentials using getUserByEmail
+      const admin = await storage.getUserByEmail(email);
+      if (!admin || admin.role !== 'admin') {
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
