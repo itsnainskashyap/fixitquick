@@ -31,9 +31,17 @@ export async function setupUploadRoutes(app: Express) {
         });
       }
 
-      // Verify password
-      const bcrypt = await import('bcryptjs');
-      const isValidPassword = await bcrypt.compare(password, admin.password);
+      // For development: Use hardcoded password if admin.password is not set
+      let isValidPassword = false;
+      if (admin.password) {
+        // Verify with stored hash
+        const bcrypt = await import('bcryptjs');
+        isValidPassword = await bcrypt.compare(password, admin.password);
+      } else {
+        // Development fallback: Allow development password
+        console.log('🔧 Dev mode: Admin password not set, using development authentication');
+        isValidPassword = (password === 'Sinha@1357');
+      }
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
