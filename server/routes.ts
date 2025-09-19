@@ -8478,6 +8478,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Upload parts provider documents (DocumentUpload component endpoint)
+  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, requireRole(['parts_provider']), uploadLimiter, handleProviderDocumentUpload, async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'User not authenticated' });
+      }
+
+      const { documentType } = req.body;
+      const files = (req as any).files;
+
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: 'No files uploaded' });
+      }
+
+      // Map document types from frontend to backend
+      const documentTypeMap: { [key: string]: string } = {
+        'aadhar_front': 'aadharFront',
+        'aadhar_back': 'aadharBack',
+        'photo': 'photo',
+        'business_license': 'businessLicense',
+        'gst_certificate': 'gstCertificate',
+        'bank_statement': 'bankStatement'
+      };
+
+      const mappedDocumentType = documentTypeMap[documentType] || documentType;
+
+      // Update business info with document URLs
+      const businessInfo = await storage.getPartsProviderBusinessInfo(userId);
+      if (!businessInfo) {
+        return res.status(404).json({ message: 'Parts provider profile not found' });
+      }
+
+      const documents = businessInfo.verificationDocuments || {};
+      const file = files[0];
+      
+      // Update documents based on type
+      switch (mappedDocumentType) {
+        case 'aadharFront':
+          documents.aadharFront = { url: file.url, verified: false };
+          break;
+        case 'aadharBack':
+          documents.aadharBack = { url: file.url, verified: false };
+          break;
+        case 'photo':
+          documents.photo = { url: file.url, verified: false };
+          break;
+        case 'businessLicense':
+          documents.businessLicense = { url: file.url, verified: false };
+          break;
+        case 'gstCertificate':
+          documents.gstCertificate = { url: file.url, verified: false };
+          break;
+        case 'bankStatement':
+          documents.bankStatement = { url: file.url, verified: false };
+          break;
+        default:
+          return res.status(400).json({ message: 'Invalid document type' });
+      }
+
+      // Update verification status to documents_submitted
+      const updatedInfo = await storage.updatePartsProviderBusinessInfo(userId, {
+        verificationDocuments: documents,
+        verificationStatus: 'documents_submitted',
+      });
+
+      res.json({
+        success: true,
+        message: 'Document uploaded successfully',
+        url: file.url,
+        documentType: mappedDocumentType,
+        businessInfo: updatedInfo
+      });
+    } catch (error) {
+      console.error('Error uploading parts provider document:', error);
+      res.status(500).json({ message: 'Failed to upload document' });
+    }
+  });
+
   // Get parts provider documents status
   app.get('/api/v1/parts-provider/documents', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
