@@ -169,9 +169,17 @@ export const useImageUpload = (options: ImageUploadOptions = {}) => {
         processedFiles.push(processedFile);
       }
 
-      // Add files to FormData
+      // Add files to FormData with correct field name based on document type
       processedFiles.forEach((file, index) => {
-        formData.append(files.length > 1 ? 'images' : 'image', file);
+        let fieldName: string;
+        if (documentType === 'avatar') {
+          fieldName = 'avatar';
+        } else if (files.length > 1) {
+          fieldName = 'images';
+        } else {
+          fieldName = 'image';
+        }
+        formData.append(fieldName, file);
       });
       
       formData.append('documentType', documentType);
