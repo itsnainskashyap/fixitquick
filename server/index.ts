@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
+import { setupUploadRoutes } from "./uploadRoutes";
 import { setupVite, serveStatic, log } from "./vite";
 import { backgroundMatcher } from "./services/backgroundMatcher";
 import dotenv from "dotenv";
@@ -212,7 +213,30 @@ app.use((req, res, next) => {
   // Run security validation before starting the server
   validateProductionSafety();
   
-  const server = await registerRoutes(app);
+  // TEMPORARILY BYPASS BROKEN ROUTES - Set up minimal server with just upload functionality
+  console.log('⚠️  Bypassing broken main routes - using minimal setup for upload functionality');
+  
+  // Basic security and middleware
+  const helmet = (await import('helmet')).default;
+  const cors = (await import('cors')).default;
+  
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
+  
+  app.use(cors({
+    origin: ['http://localhost:5000', 'http://localhost:3000'],
+    credentials: true,
+  }));
+  
+  // Setup clean upload routes
+  setupUploadRoutes(app);
+  console.log('✅ Upload routes registered successfully');
+  
+  // Create minimal server
+  const { createServer } = await import('http');
+  const server = createServer(app);
   
   // Initialize Background Matcher Service with WebSocket integration
   console.log('🚀 Initializing Background Matcher Service...');

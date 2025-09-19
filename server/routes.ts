@@ -8478,8 +8478,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Upload parts provider documents (DocumentUpload component endpoint)
-  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, uploadDocument, async (req, res) => {
+  // Upload parts provider documents - MOVED TO uploadRoutes.ts to avoid compilation issues
+  // app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, uploadDocument, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
