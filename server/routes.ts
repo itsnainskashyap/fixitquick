@@ -9445,28 +9445,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'User not authenticated' });
       }
 
-      const provider = await storage.getServiceProvider(userId);
-      if (!provider) {
-        return res.status(404).json({ message: 'Provider profile not found' });
+      // Get user details to check role
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
       }
 
-      // Get user details
-      const user = await storage.getUser(userId);
-      
-      // Get verification history
-      const history = await storage.getVerificationHistory(userId);
+      let profile = null;
+      let verificationHistory = [];
+
+      // Handle different provider types based on user role
+      if (user.role === 'service_provider') {
+        // Existing logic for service providers
+        const serviceProvider = await storage.getServiceProvider(userId);
+        if (serviceProvider) {
+          profile = {
+            ...serviceProvider,
+            providerType: 'service_provider'
+          };
+          verificationHistory = await storage.getVerificationHistory(userId);
+        }
+      } else if (user.role === 'parts_provider') {
+        // Handle parts providers
+        const partsProvider = await storage.getPartsProviderBusinessInfo(userId);
+        if (partsProvider) {
+          // Transform parts provider data to match expected format
+          profile = {
+            userId: partsProvider.userId,
+            businessName: partsProvider.businessName,
+            businessType: partsProvider.businessType,
+            verificationStatus: partsProvider.verificationStatus,
+            verificationDate: partsProvider.verificationDate,
+            verificationNotes: partsProvider.verificationNotes,
+            submittedAt: partsProvider.createdAt,
+            updatedAt: partsProvider.updatedAt,
+            createdAt: partsProvider.createdAt,
+            isVerified: partsProvider.isVerified,
+            providerType: 'parts_provider',
+            // Parts provider specific fields
+            businessAddress: partsProvider.businessAddress,
+            gstNumber: partsProvider.gstNumber,
+            panNumber: partsProvider.panNumber,
+            bankDetails: {
+              accountNumber: partsProvider.bankAccountNumber,
+              bankName: partsProvider.bankName,
+              bankBranch: partsProvider.bankBranch,
+              ifscCode: partsProvider.ifscCode,
+              accountHolderName: partsProvider.accountHolderName,
+            }
+          };
+          // Parts providers don't have verification history yet, so empty array
+          verificationHistory = [];
+        }
+      }
+
+      // If no provider profile found for any type
+      if (!profile) {
+        return res.status(404).json({ message: 'Provider profile not found' });
+      }
 
       res.json({
         success: true,
         profile: {
-          ...provider,
+          ...profile,
           user: {
-            firstName: user?.firstName,
-            lastName: user?.lastName,
-            email: user?.email,
-            phone: user?.phone,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phone: user.phone,
           },
-          verificationHistory: history,
+          verificationHistory,
         },
       });
     } catch (error) {
