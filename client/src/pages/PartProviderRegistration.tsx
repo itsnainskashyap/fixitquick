@@ -901,56 +901,130 @@ export default function PartProviderRegistration() {
                   <Form {...inventoryForm}>
                     <form onSubmit={inventoryForm.handleSubmit(handleInventorySubmit)} className="space-y-6">
                       <div className="space-y-4">
-                        <div>
-                          <Label className="text-base font-medium">Parts Categories *</Label>
-                          <p className="text-sm text-muted-foreground mb-3">
-                            Select the categories of parts you deal with
-                          </p>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            {['Automotive', 'Electronics', 'Home Appliances', 'Mobile & Gadgets', 'Tools & Hardware', 'Others'].map((category) => (
-                              <div key={category} className="flex items-center space-x-2">
-                                <Checkbox id={category} data-testid={`checkbox-category-${category.toLowerCase()}`} />
-                                <Label htmlFor={category} className="text-sm">{category}</Label>
+                        <FormField
+                          control={inventoryForm.control}
+                          name="selectedCategories"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-base font-medium">Parts Categories *</FormLabel>
+                              <FormDescription>
+                                Select the categories of parts you deal with
+                              </FormDescription>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                {['Automotive', 'Electronics', 'Home Appliances', 'Mobile & Gadgets', 'Tools & Hardware', 'Others'].map((category) => (
+                                  <FormField
+                                    key={category}
+                                    control={inventoryForm.control}
+                                    name="selectedCategories"
+                                    render={({ field }) => {
+                                      return (
+                                        <FormItem
+                                          key={category}
+                                          className="flex flex-row items-start space-x-3 space-y-0"
+                                        >
+                                          <FormControl>
+                                            <Checkbox
+                                              checked={field.value?.includes(category)}
+                                              onCheckedChange={(checked) => {
+                                                const current = Array.isArray(field.value) ? field.value : [];
+                                                return checked
+                                                  ? field.onChange([...current, category])
+                                                  : field.onChange(current.filter((value) => value !== category))
+                                              }}
+                                              data-testid={`checkbox-category-${category.toLowerCase()}`}
+                                            />
+                                          </FormControl>
+                                          <FormLabel className="text-sm font-normal">
+                                            {category}
+                                          </FormLabel>
+                                        </FormItem>
+                                      )
+                                    }}
+                                  />
+                                ))}
                               </div>
-                            ))}
-                          </div>
-                        </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                        <div>
-                          <Label className="text-base font-medium">Brands You Deal With *</Label>
-                          <p className="text-sm text-muted-foreground mb-3">
-                            Add brands you sell parts for (one per line)
-                          </p>
-                          <Textarea 
-                            placeholder="e.g., Bosch, Philips, Samsung, LG, Maruti Suzuki, etc."
-                            className="min-h-[100px]"
-                            data-testid="textarea-brands"
-                          />
-                        </div>
+                        <FormField
+                          control={inventoryForm.control}
+                          name="brandsDeal"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-base font-medium">Brands You Deal With *</FormLabel>
+                              <FormDescription>
+                                Add brands you sell parts for (one per line)
+                              </FormDescription>
+                              <FormControl>
+                                <Textarea 
+                                  placeholder="e.g., Bosch, Philips, Samsung, LG, Maruti Suzuki, etc."
+                                  className="min-h-[100px]"
+                                  value={Array.isArray(field.value) ? field.value.join('\n') : ''}
+                                  onChange={(e) => {
+                                    const brands = e.target.value.split(/\n|,/).map(s => s.trim()).filter(Boolean);
+                                    field.onChange(brands);
+                                  }}
+                                  data-testid="textarea-brands"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                        <div>
-                          <Label className="text-base font-medium">Specializations</Label>
-                          <p className="text-sm text-muted-foreground mb-3">
-                            Any specific areas of expertise (optional)
-                          </p>
-                          <Textarea 
-                            placeholder="e.g., Genuine parts, Aftermarket parts, Refurbished parts, etc."
-                            className="min-h-[80px]"
-                            data-testid="textarea-specializations"
-                          />
-                        </div>
+                        <FormField
+                          control={inventoryForm.control}
+                          name="specializations"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-base font-medium">Specializations</FormLabel>
+                              <FormDescription>
+                                Any specific areas of expertise (optional)
+                              </FormDescription>
+                              <FormControl>
+                                <Textarea 
+                                  placeholder="e.g., Genuine parts, Aftermarket parts, Refurbished parts, etc."
+                                  className="min-h-[80px]"
+                                  value={Array.isArray(field.value) ? field.value.join('\n') : ''}
+                                  onChange={(e) => {
+                                    const specs = e.target.value.split(/\n|,/).map(s => s.trim()).filter(Boolean);
+                                    field.onChange(specs);
+                                  }}
+                                  data-testid="textarea-specializations"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                        <div>
-                          <Label className="text-base font-medium">Quality Certifications</Label>
-                          <p className="text-sm text-muted-foreground mb-3">
-                            Any quality certifications you have (optional)
-                          </p>
-                          <Textarea 
-                            placeholder="e.g., ISO 9001, OEM Certified, Authorized Dealer, etc."
-                            className="min-h-[80px]"
-                            data-testid="textarea-certifications"
-                          />
-                        </div>
+                        <FormField
+                          control={inventoryForm.control}
+                          name="qualityCertifications"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-base font-medium">Quality Certifications</FormLabel>
+                              <FormDescription>
+                                Any quality certifications you have (optional)
+                              </FormDescription>
+                              <FormControl>
+                                <Textarea 
+                                  placeholder="e.g., ISO 9001, OEM Certified, Authorized Dealer, etc."
+                                  className="min-h-[80px]"
+                                  value={Array.isArray(field.value) ? field.value.join('\n') : ''}
+                                  onChange={(e) => {
+                                    const certs = e.target.value.split(/\n|,/).map(s => s.trim()).filter(Boolean);
+                                    field.onChange(certs);
+                                  }}
+                                  data-testid="textarea-certifications"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                       </div>
 
                       <div className="flex justify-between">
