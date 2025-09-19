@@ -8479,19 +8479,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload parts provider documents (DocumentUpload component endpoint)
-  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, handleMultipleImageUpload, async (req, res) => {
+  app.post('/api/v1/parts-provider/documents/upload', authMiddleware, uploadLimiter, uploadDocument, async (req, res) => {
     try {
       const userId = req.user?.id;
       if (!userId) {
-        return res.status(401).json({ message: 'User not authenticated' });
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
       }
 
       const { documentType } = req.body;
-      const files = (req as any).files;
+      const file = req.file;
 
-      if (!files || files.length === 0) {
-        return res.status(400).json({ message: 'No files uploaded' });
+      if (!file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
       }
+
+      console.log(`📁 Parts provider document upload attempt: ${documentType} for user ${userId}`);
 
       // Map document types from frontend to backend
       const documentTypeMap: { [key: string]: string } = {
@@ -8537,7 +8539,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Process the uploaded file through object storage service
-      const file = files[0];
       const uploadResult = await objectStorageService.uploadFile(
         file,
         documentType,
