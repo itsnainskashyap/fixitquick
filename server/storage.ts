@@ -7729,13 +7729,24 @@ export class PostgresStorage implements IStorage {
           skills: provider.skills || [],
         };
       })
+      .map(provider => ({
+        ...provider,
+        matchScore: this.calculateProviderMatchScore(provider, criteria)
+      }))
       .sort((a, b) => {
-        // Sort by distance, rating, and response rate
-        const distanceScore = (a.distanceKm || 0) - (b.distanceKm || 0);
-        const ratingScore = (b.rating - a.rating) * 5; // Weight rating heavily
-        const responseScore = (b.responseRate - a.responseRate) * 2;
+        // Primary sort by match score (higher = better)
+        const scoreDiff = b.matchScore - a.matchScore;
+        if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
         
-        return distanceScore + ratingScore + responseScore;
+        // Stable tiebreakers for deterministic results
+        const distanceDiff = (a.distanceKm || Infinity) - (b.distanceKm || Infinity);
+        if (Math.abs(distanceDiff) > 0.01) return distanceDiff;
+        
+        const ratingDiff = (b.rating || 0) - (a.rating || 0);
+        if (Math.abs(ratingDiff) > 0.01) return ratingDiff;
+        
+        // Final tiebreaker by userId for complete determinism
+        return a.userId.localeCompare(b.userId);
       })
       .slice(0, maxProviders);
 
@@ -7752,6 +7763,100 @@ export class PostgresStorage implements IStorage {
       Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+  }
+
+  /**
+   * Enhanced provider matching score calculation with intelligent weighting
+   * Fixed for deterministic, stable sorting
+   */
+  private calculateProviderMatchScore(provider: any, criteria: any): number {
+    let score = 0;
+
+    // Null-safe field extraction with defaults
+    const distanceKm = Math.min(provider.distanceKm || 999, 999);
+    const rating = Math.max(0, Math.min(5, provider.rating || 0));
+    const responseRate = Math.max(0, Math.min(1, provider.responseRate || 0));
+    const totalJobs = Math.max(0, provider.totalJobs || 0);
+    const estimatedTravelTime = Math.max(0, provider.estimatedTravelTime || 999);
+    const isOnline = Boolean(provider.isOnline);
+    const maxDistance = criteria.maxDistance || 15;
+
+    // 1. Distance Score (0-100 points, closer = higher score)
+    const distanceScore = Math.max(0, (maxDistance - distanceKm) / maxDistance * 100);
+    score += distanceScore * 0.3; // 30% weight
+
+    // 2. Rating Score (0-100 points, 5 stars = 100 points)
+    const ratingScore = (rating / 5) * 100;
+    score += ratingScore * 0.25; // 25% weight
+
+    // 3. Response Rate Score (0-100 points)
+    const responseScore = responseRate * 100;
+    score += responseScore * 0.15; // 15% weight
+
+    // 4. Online Status Bonus (instant bookings get priority)
+    if (criteria.bookingType === 'instant' && isOnline) {
+      score += 20; // 20 point bonus for being online during instant bookings
+    }
+
+    // 5. Experience Score based on total jobs (0-50 points)
+    const experienceScore = Math.min(50, Math.log10(totalJobs + 1) * 15);
+    score += experienceScore * 0.1; // 10% weight
+
+    // 6. Urgency-based adjustment
+    if (criteria.urgency === 'urgent') {
+      // For urgent jobs, prioritize distance and online status more
+      const urgentDistanceBonus = Math.max(0, (5 - distanceKm) * 5);
+      const urgentOnlineBonus = isOnline ? 15 : -30;
+      score += urgentDistanceBonus + urgentOnlineBonus;
+    } else if (criteria.urgency === 'high') {
+      const highDistanceBonus = Math.max(0, (10 - distanceKm) * 3);
+      const highOnlineBonus = isOnline ? 10 : -15;
+      score += highDistanceBonus + highOnlineBonus;
+    }
+
+    // 7. Time-based availability score (business hours consideration)
+    // Use booking request time context if available, fallback to current time
+    const requestTime = criteria.requestTime || new Date();
+    const currentHour = requestTime.getHours();
+    
+    // Business hours bonus (8 AM to 8 PM gets bonus)
+    if (currentHour >= 8 && currentHour <= 20) {
+      score += 10; // Business hours bonus
+    } else {
+      // Night/early morning penalty, but less for urgent jobs
+      const nightPenalty = criteria.urgency === 'urgent' ? -5 : -15;
+      score += nightPenalty;
+    }
+
+    // 8. Weekend/Holiday consideration
+    const dayOfWeek = requestTime.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday = 0, Saturday = 6
+      // Weekend - slight bonus for providers available during weekends
+      if (isOnline) {
+        score += 8; // Weekend availability bonus
+      }
+    }
+
+    // 9. Travel time efficiency (faster estimated arrival = higher score)
+    const travelTimeScore = Math.max(0, (60 - estimatedTravelTime) / 60 * 20);
+    score += travelTimeScore * 0.1; // 10% weight
+
+    // 10. Deterministic load balancing factor (prevent overloading single provider)
+    // Use booking ID and provider ID to create deterministic jitter
+    const bookingId = criteria.bookingId || 'default';
+    const hashInput = `${bookingId}:${provider.userId}`;
+    let hash = 0;
+    for (let i = 0; i < hashInput.length; i++) {
+      const char = hashInput.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const deterministicJitter = Math.abs(hash % 50) / 10; // 0-5 range
+    score += deterministicJitter;
+
+    // Ensure score is finite and non-negative
+    const finalScore = Math.max(0, isFinite(score) ? score : 0);
+    return finalScore;
   }
 
   // ========================================
@@ -7801,17 +7906,13 @@ export class PostgresStorage implements IStorage {
       maxProviders: 10
     });
 
-    // Calculate assignment scores and sort providers
-    const scoredProviders = matchingProviders.map(provider => {
-      const score = this.calculateProviderScore(provider, booking);
-      return {
-        ...provider,
-        profileImageUrl: provider.profileImage,
-        assignmentScore: score
-      };
-    })
-    .sort((a, b) => b.assignmentScore - a.assignmentScore)
-    .slice(0, 5); // Top 5 providers
+    // Use the enhanced matchScore as assignmentScore for API consistency
+    const scoredProviders = matchingProviders.map(provider => ({
+      ...provider,
+      profileImageUrl: provider.profileImage,
+      assignmentScore: provider.matchScore // Use enhanced matching score
+    }))
+    .slice(0, 5); // Top 5 providers (already sorted by enhanced algorithm)
 
     console.log(`✅ Smart Assignment: Found ${scoredProviders.length} eligible providers for booking ${bookingId}`);
     return scoredProviders;
