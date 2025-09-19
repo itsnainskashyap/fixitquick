@@ -3393,6 +3393,176 @@ export const serviceRequests = pgTable("service_requests", {
   createdAtIdx: index("sr_created_at_idx").on(table.createdAt),
 }));
 
+// Laundry Orders - Specialized table for laundry services with pickup/drop workflow
+export const laundryOrders = pgTable("laundry_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id),
+  
+  // Order Details
+  serviceType: varchar("service_type", { 
+    enum: ["wash_fold", "wash_iron", "dry_cleaning", "stain_removal", "premium_care", "express_service"] 
+  }).notNull(),
+  priority: varchar("priority", { 
+    enum: ["standard", "urgent", "express"] 
+  }).default("standard"),
+  
+  // Pickup & Delivery
+  pickupAddress: jsonb("pickup_address").$type<{
+    address: string;
+    latitude: number;
+    longitude: number;
+    instructions?: string;
+    contactPerson?: string;
+    contactPhone?: string;
+  }>().notNull(),
+  deliveryAddress: jsonb("delivery_address").$type<{
+    address: string;
+    latitude: number;
+    longitude: number;
+    instructions?: string;
+    contactPerson?: string;
+    contactPhone?: string;
+  }>(),
+  
+  // Scheduling
+  preferredPickupDate: timestamp("preferred_pickup_date").notNull(),
+  preferredPickupTime: varchar("preferred_pickup_time").notNull(), // "09:00-12:00"
+  preferredDeliveryDate: timestamp("preferred_delivery_date"),
+  preferredDeliveryTime: varchar("preferred_delivery_time"), // "09:00-12:00"
+  
+  // Actual Timings
+  actualPickupTime: timestamp("actual_pickup_time"),
+  actualDeliveryTime: timestamp("actual_delivery_time"),
+  
+  // Status Tracking
+  status: varchar("status", {
+    enum: ["pending", "pickup_scheduled", "pickup_confirmed", "picked_up", "processing", "washing", "drying", "ironing", "quality_check", "ready_for_delivery", "out_for_delivery", "delivered", "completed", "cancelled", "refunded"]
+  }).default("pending"),
+  
+  // Items and Pricing
+  items: jsonb("items").$type<{
+    type: string;
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    specialInstructions?: string;
+    stains?: string[];
+  }[]>().default(sql`'[]'::jsonb`),
+  
+  totalWeight: decimal("total_weight", { precision: 5, scale: 2 }), // in kg
+  estimatedWeight: decimal("estimated_weight", { precision: 5, scale: 2 }), // initial estimate
+  
+  // Pricing
+  basePrice: decimal("base_price", { precision: 10, scale: 2 }).notNull(),
+  weightCharges: decimal("weight_charges", { precision: 10, scale: 2 }).default("0.00"),
+  expressCharges: decimal("express_charges", { precision: 10, scale: 2 }).default("0.00"),
+  pickupDeliveryCharges: decimal("pickup_delivery_charges", { precision: 10, scale: 2 }).default("0.00"),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  
+  // Payment
+  paymentMethod: varchar("payment_method", { 
+    enum: ["online", "cod", "wallet"] 
+  }).default("online"),
+  paymentStatus: varchar("payment_status", { 
+    enum: ["pending", "paid", "failed", "refunded", "partial_refund"] 
+  }).default("pending"),
+  
+  // Special Requirements
+  specialInstructions: text("special_instructions"),
+  allergyInfo: text("allergy_info"),
+  stainDetails: jsonb("stain_details").$type<{
+    location: string;
+    type: string;
+    description: string;
+  }[]>(),
+  
+  // Quality and Damage
+  beforePhotos: jsonb("before_photos").$type<string[]>(),
+  afterPhotos: jsonb("after_photos").$type<string[]>(),
+  damageReports: jsonb("damage_reports").$type<{
+    itemName: string;
+    damageType: string;
+    description: string;
+    photos: string[];
+    reportedAt: string;
+    compensation?: number;
+  }[]>(),
+  
+  // Reviews and Rating
+  customerRating: integer("customer_rating"), // 1-5
+  customerReview: text("customer_review"),
+  providerRating: integer("provider_rating"), // 1-5 (provider rates customer)
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+}, (table) => ({
+  userIdx: index("laundry_orders_user_idx").on(table.userId),
+  providerIdx: index("laundry_orders_provider_idx").on(table.providerId),
+  statusIdx: index("laundry_orders_status_idx").on(table.status),
+  pickupDateIdx: index("laundry_orders_pickup_date_idx").on(table.preferredPickupDate),
+  priorityIdx: index("laundry_orders_priority_idx").on(table.priority),
+  serviceTypeIdx: index("laundry_orders_service_type_idx").on(table.serviceType),
+  createdAtIdx: index("laundry_orders_created_at_idx").on(table.createdAt),
+}));
+
+// Laundry Status Tracking - Detailed status history for transparency
+export const laundryStatusHistory = pgTable("laundry_status_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => laundryOrders.id).notNull(),
+  fromStatus: varchar("from_status"),
+  toStatus: varchar("to_status").notNull(),
+  changedBy: varchar("changed_by").references(() => users.id),
+  notes: text("notes"),
+  location: jsonb("location").$type<{
+    latitude: number;
+    longitude: number;
+    address?: string;
+  }>(),
+  timestamp: timestamp("timestamp").defaultNow(),
+}, (table) => ({
+  orderIdx: index("laundry_status_order_idx").on(table.orderId),
+  timestampIdx: index("laundry_status_timestamp_idx").on(table.timestamp),
+}));
+
+// Enhanced Provider Notifications - Real-time notification system with phone integration
+export const enhancedProviderNotifications = pgTable("enhanced_provider_notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  type: varchar("type", {
+    enum: ["new_order", "order_match", "pickup_reminder", "delivery_reminder", "payment_received", "customer_message", "system_alert", "rating_received", "phone_call_missed"]
+  }).notNull(),
+  title: varchar("title").notNull(),
+  message: text("message").notNull(),
+  data: jsonb("data").$type<{
+    orderId?: string;
+    customerId?: string;
+    amount?: number;
+    priority?: string;
+    actionRequired?: boolean;
+    expiresAt?: string;
+    distance?: number;
+    customerLocation?: { lat: number; lng: number };
+  }>(),
+  isRead: boolean("is_read").default(false),
+  isUrgent: boolean("is_urgent").default(false),
+  requiresPhoneCall: boolean("requires_phone_call").default(false),
+  phoneCallAttempted: boolean("phone_call_attempted").default(false),
+  phoneCallSuccessful: boolean("phone_call_successful").default(false),
+  readAt: timestamp("read_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("enhanced_provider_notifications_provider_idx").on(table.providerId),
+  typeIdx: index("enhanced_provider_notifications_type_idx").on(table.type),
+  isReadIdx: index("enhanced_provider_notifications_is_read_idx").on(table.isRead),
+  urgentIdx: index("enhanced_provider_notifications_urgent_idx").on(table.isUrgent),
+  phoneCallIdx: index("enhanced_provider_notifications_phone_call_idx").on(table.requiresPhoneCall),
+  createdAtIdx: index("enhanced_provider_notifications_created_at_idx").on(table.createdAt),
+}));
+
 // Phone notification system insert schemas - defined after table definitions to avoid circular dependencies
 export const insertPhoneCallLogSchema = createInsertSchema(phoneCallLogs).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertNotificationStatisticsSchema = createInsertSchema(notificationStatistics).omit({ id: true, createdAt: true, updatedAt: true });
@@ -3400,3 +3570,14 @@ export const insertProviderPhoneNotificationSettingsSchema = createInsertSchema(
 export const insertServiceRequestSchema = createInsertSchema(serviceRequests).omit({ id: true, createdAt: true, updatedAt: true, reviewedAt: true, implementedAt: true });
 export type ServiceRequest = typeof serviceRequests.$inferSelect;
 export type InsertServiceRequest = z.infer<typeof insertServiceRequestSchema>;
+
+// Laundry system types
+export type LaundryOrder = typeof laundryOrders.$inferSelect;
+export type CreateLaundryOrderInput = typeof laundryOrders.$inferInsert;
+export const insertLaundryOrderSchema = createInsertSchema(laundryOrders).omit({ id: true, createdAt: true, updatedAt: true });
+
+export type LaundryStatusHistory = typeof laundryStatusHistory.$inferSelect;
+export type CreateLaundryStatusHistoryInput = typeof laundryStatusHistory.$inferInsert;
+
+export type EnhancedProviderNotification = typeof enhancedProviderNotifications.$inferSelect;
+export type CreateEnhancedProviderNotificationInput = typeof enhancedProviderNotifications.$inferInsert;
