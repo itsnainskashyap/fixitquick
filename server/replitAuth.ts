@@ -61,11 +61,14 @@ export function getSession() {
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    name: 'connect.sid', // Explicit session name
     cookie: {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production', // Environment-dependent security
       sameSite: 'lax', // Add sameSite for CSRF protection while allowing OAuth redirects
       maxAge: sessionTtl,
+      path: '/', // Explicit path to ensure cookies work across the app
+      domain: process.env.NODE_ENV === 'development' ? undefined : undefined, // Let browser handle domain
     },
   });
 }
@@ -174,6 +177,12 @@ export async function setupAuth(app: Express) {
       await upsertUser(claims);
       
       console.log('✅ OAuth verification successful for user:', claims?.sub);
+      console.log('🔐 Session user object after OAuth:', { 
+        hasId: !!(user as any).id, 
+        hasClaims: !!(user as any).claims,
+        claimsSub: (user as any).claims?.sub,
+        userKeys: Object.keys(user) 
+      });
       verified(null, user);
     } catch (error) {
       console.error('❌ OAuth verification failed:', error);
