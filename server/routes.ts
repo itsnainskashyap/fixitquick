@@ -2747,6 +2747,167 @@ export function registerRoutes(app: Express): void {
     }
   });
 
+  // =====================================
+  // MISSING ADMIN ENDPOINTS - Added to fix 404 errors
+  // =====================================
+  
+  // Admin: Get all users (for admin management)
+  app.get('/api/v1/users', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const users = await db.execute(sql`
+        SELECT id, first_name, last_name, email, role, is_verified, 
+               wallet_balance, fixi_points, is_active, created_at 
+        FROM users 
+        ORDER BY created_at DESC 
+        LIMIT 100
+      `);
+      res.json({ success: true, data: users.rows });
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch users' });
+    }
+  });
+
+  // Admin: Get all orders (for order management)
+  app.get('/api/v1/admin/orders', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const orders = await db.execute(sql`
+        SELECT o.id, o.customer_id, o.service_id, o.total_amount, 
+               o.status, o.created_at,
+               u.first_name, u.last_name, u.email as customer_email,
+               s.name as service_name
+        FROM orders o
+        LEFT JOIN users u ON o.customer_id = u.id
+        LEFT JOIN services s ON o.service_id = s.id
+        ORDER BY o.created_at DESC 
+        LIMIT 50
+      `);
+      res.json({ success: true, data: orders.rows });
+    } catch (error) {
+      console.error('Error fetching admin orders:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch orders' });
+    }
+  });
+
+  // Admin: Get all service providers (for provider management)
+  app.get('/api/v1/admin/providers', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const providers = await db.execute(sql`
+        SELECT u.id, u.first_name, u.last_name, u.email, u.is_verified,
+               sp.business_name, sp.verification_status, sp.rating, 
+               sp.total_completed_orders, sp.is_available
+        FROM users u
+        INNER JOIN service_providers sp ON u.id = sp.user_id
+        WHERE u.role = 'service_provider'
+        ORDER BY sp.rating DESC, u.created_at DESC
+      `);
+      res.json({ success: true, data: providers.rows });
+    } catch (error) {
+      console.error('Error fetching admin providers:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch providers' });
+    }
+  });
+
+  // Admin: Get pending verifications (for verification management)
+  app.get('/api/v1/admin/verifications/pending', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const pendingVerifications = await db.execute(sql`
+        SELECT u.id, u.first_name, u.last_name, u.email,
+               sp.business_name, sp.verification_status, sp.created_at
+        FROM users u
+        INNER JOIN service_providers sp ON u.id = sp.user_id
+        WHERE u.role = 'service_provider' AND sp.verification_status = 'pending'
+        ORDER BY sp.created_at ASC
+      `);
+      res.json({ success: true, data: pendingVerifications.rows });
+    } catch (error) {
+      console.error('Error fetching pending verifications:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch pending verifications' });
+    }
+  });
+
+  // Admin: Get all parts providers (for parts provider management)
+  app.get('/api/v1/admin/parts-providers', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const partsProviders = await db.execute(sql`
+        SELECT u.id, u.first_name, u.last_name, u.email, u.is_verified,
+               ps.name as business_name, ps.gst_number, ps.quality_rating,
+               ps.total_orders, ps.is_active
+        FROM users u
+        INNER JOIN parts_suppliers ps ON u.id = ps.provider_id
+        WHERE u.role = 'parts_provider'
+        ORDER BY ps.quality_rating DESC, u.created_at DESC
+      `);
+      res.json({ success: true, data: partsProviders.rows });
+    } catch (error) {
+      console.error('Error fetching admin parts providers:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch parts providers' });
+    }
+  });
+
+  // Admin: Get pending parts provider verifications
+  app.get('/api/v1/admin/parts-providers/pending', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const pendingParts = await db.execute(sql`
+        SELECT u.id, u.first_name, u.last_name, u.email,
+               ps.name as business_name, ps.created_at
+        FROM users u
+        INNER JOIN parts_suppliers ps ON u.id = ps.provider_id
+        WHERE u.role = 'parts_provider' AND ps.is_active = false
+        ORDER BY ps.created_at ASC
+      `);
+      res.json({ success: true, data: pendingParts.rows });
+    } catch (error) {
+      console.error('Error fetching pending parts providers:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch pending parts providers' });
+    }
+  });
+
+  // Admin: Get marketplace statistics (for dashboard)
+  app.get('/api/v1/admin/stats', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const [categories, services, providers, partsProviders, orders] = await Promise.all([
+        db.execute(sql`SELECT COUNT(*) as count FROM service_categories WHERE is_active = true`),
+        db.execute(sql`SELECT COUNT(*) as count FROM services WHERE is_active = true`),
+        db.execute(sql`SELECT COUNT(*) as count FROM users WHERE role = 'service_provider' AND is_verified = true`),
+        db.execute(sql`SELECT COUNT(*) as count FROM users WHERE role = 'parts_provider' AND is_active = true`),
+        db.execute(sql`SELECT COUNT(*) as count FROM orders WHERE created_at >= NOW() - INTERVAL '30 days'`)
+      ]);
+
+      const stats = {
+        categories: parseInt(categories.rows[0].count as string),
+        services: parseInt(services.rows[0].count as string),
+        serviceProviders: parseInt(providers.rows[0].count as string),
+        partsProviders: parseInt(partsProviders.rows[0].count as string),
+        recentOrders: parseInt(orders.rows[0].count as string)
+      };
+
+      res.json({ success: true, data: stats });
+    } catch (error) {
+      console.error('Error fetching admin stats:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch statistics' });
+    }
+  });
+
+  // Admin: Test services endpoint for verification
+  app.get('/api/v1/admin/test-services', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const testServices = await db.execute(sql`
+        SELECT s.id, s.name, s.base_price, s.rating, s.total_bookings,
+               sc.name as category_name
+        FROM services s
+        INNER JOIN service_categories sc ON s.category_id = sc.id
+        WHERE s.is_active = true
+        ORDER BY s.total_bookings DESC
+        LIMIT 10
+      `);
+      res.json({ success: true, data: testServices.rows });
+    } catch (error) {
+      console.error('Error fetching test services:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch test services' });
+    }
+  });
+
   // Catch-all route REMOVED to prevent 501 errors - let specific routes handle requests
 
   // Health check endpoint
