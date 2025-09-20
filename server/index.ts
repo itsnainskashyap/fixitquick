@@ -230,7 +230,7 @@ app.use((req, res, next) => {
     credentials: true,
   }));
   
-  // Setup upload routes first
+  // Setup upload routes first (includes authentication setup)
   setupUploadRoutes(app);
   console.log('✅ Upload routes registered successfully');
 

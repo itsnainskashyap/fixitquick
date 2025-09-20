@@ -586,20 +586,59 @@ export function registerRoutes(app: Express): Server {
   // CORE FRONTEND API ENDPOINTS
   // ============================
 
+  // Temporary debugging endpoint to check session state
+  app.get('/api/debug/session', (req: Request, res: Response) => {
+    const sessionExists = !!req.session;
+    const userInReq = !!(req as any).user;
+    const userData = (req as any).user || {};
+    const isAuthenticated = req.isAuthenticated?.() || false;
+    
+    res.json({
+      sessionExists,
+      userInReq,
+      isAuthenticated,
+      hasAuthHeader: !!req.headers.authorization,
+      userKeys: Object.keys(userData),
+      sessionId: req.sessionID,
+      userClaims: userData.claims ? {
+        sub: userData.claims.sub,
+        email: userData.claims.email
+      } : null
+    });
+  });
+
   // /api/auth/user - Get current authenticated user
   app.get('/api/auth/user', async (req: Request, res: Response) => {
     try {
       let user = null;
 
       // PRIORITY 1: Check for Replit OAuth session (via passport)
+      const sessionExists = !!req.session;
+      const userInReq = !!(req as any).user;
+      const userData = (req as any).user || {};
+      const isAuthenticated = req.isAuthenticated?.() || false;
+      
+      // Return debugging info if no authentication is found for troubleshooting
+      if (!userInReq && !req.headers.authorization) {
+        return res.status(401).json({
+          message: "No authentication found",
+          debug: {
+            sessionExists,
+            userInReq,
+            isAuthenticated,
+            hasAuthHeader: !!req.headers.authorization,
+            userKeys: Object.keys(userData),
+            sessionId: req.sessionID
+          }
+        });
+      }
+      
       if ((req as any).user) {
         const userId = (req as any).user.id || (req as any).user.claims?.sub;
         if (userId) {
-          console.log(`🔐 /api/auth/user: Found Replit OAuth session for userId: ${userId}`);
           user = await storage.getUser(userId);
           
           if (user && user.isActive) {
-            console.log(`✅ /api/auth/user: Replit OAuth user ${userId} authenticated successfully`);
             return res.json({
               success: true,
               data: {
@@ -612,6 +651,11 @@ export function registerRoutes(app: Express): Server {
                 role: user.role,
                 isActive: user.isActive,
               }
+            });
+          } else {
+            return res.status(401).json({
+              message: "User not found in database or inactive",
+              debug: { userId, userExists: !!user, isActive: user?.isActive }
             });
           }
         }
