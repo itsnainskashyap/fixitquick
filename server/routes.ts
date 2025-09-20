@@ -740,96 +740,43 @@ export function registerRoutes(app: Express): Server {
   });
 
   // /api/auth/user - Get current authenticated user
-  app.get('/api/auth/user', async (req: Request, res: Response) => {
+  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      let user = null;
-
-      // PRIORITY 1: Check for Replit OAuth session (via passport)
-      const sessionExists = !!req.session;
-      const userInReq = !!(req as any).user;
-      const userData = (req as any).user || {};
-      const isAuthenticated = req.isAuthenticated?.() || false;
-      
-      // Return debugging info if no authentication is found for troubleshooting
-      if (!userInReq && !req.headers.authorization) {
-        return res.status(401).json({
-          message: "No authentication found",
-          debug: {
-            sessionExists,
-            userInReq,
-            isAuthenticated,
-            hasAuthHeader: !!req.headers.authorization,
-            userKeys: Object.keys(userData),
-            sessionId: req.sessionID
-          }
+      // authMiddleware ensures req.user exists and is properly authenticated
+      if (!req.user) {
+        console.error('❌ /api/auth/user: No user in request after authMiddleware');
+        return res.status(401).json({ 
+          message: 'Authentication required'
         });
       }
-      
-      if ((req as any).user) {
-        const userId = (req as any).user.id || (req as any).user.claims?.sub;
-        if (userId) {
-          user = await storage.getUser(userId);
-          
-          if (user && user.isActive) {
-            return res.json({
-              success: true,
-              data: {
-                id: user.id,
-                phone: user.phone,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-                profileImageUrl: user.profileImageUrl,
-                role: user.role,
-                isActive: user.isActive,
-              }
-            });
-          } else {
-            return res.status(401).json({
-              message: "User not found in database or inactive",
-              debug: { userId, userExists: !!user, isActive: user?.isActive }
-            });
-          }
-        }
-      }
 
-      // PRIORITY 2: Check for JWT token in Authorization header (phone login)
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-        const decoded = await jwtService.verifyAccessToken(token);
-        
-        if (decoded) {
-          user = await storage.getUser(decoded.userId);
-          if (user && user.isActive) {
-            console.log(`✅ /api/auth/user: JWT user ${decoded.userId} authenticated successfully`);
-            return res.json({
-              success: true,
-              data: {
-                id: user.id,
-                phone: user.phone,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-                profileImageUrl: user.profileImageUrl,
-                role: user.role,
-                isActive: user.isActive,
-              }
-            });
-          }
-        }
-      }
+      // Return the complete user object directly (no wrapping)
+      // Frontend expects just the User object, not { success: true, data: user }
+      const userResponse = {
+        id: req.user.id,
+        email: req.user.email || null,
+        phone: req.user.phone || null,
+        firstName: req.user.firstName || '',
+        lastName: req.user.lastName || '',
+        profileImageUrl: req.user.profileImageUrl || null,
+        role: req.user.role || 'user',
+        walletBalance: req.user.walletBalance || 0,
+        fixiPoints: req.user.fixiPoints || 0,
+        location: req.user.location || null,
+        isActive: req.user.isActive ?? true,
+        isVerified: req.user.isVerified ?? false,
+        lastLoginAt: req.user.lastLoginAt || null,
+        createdAt: req.user.createdAt || null,
+        updatedAt: req.user.updatedAt || null
+      };
 
-      // No valid authentication found
-      console.log('ℹ️ /api/auth/user: No valid authentication found');
-      return res.status(401).json({ 
-        message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
-      });
+      console.log(`✅ /api/auth/user: User ${req.user.id} data retrieved successfully`);
+      return res.json(userResponse);
 
     } catch (error) {
       console.error('❌ /api/auth/user error:', error);
-      res.status(401).json({ 
-        message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
+      return res.status(500).json({ 
+        message: 'Internal server error'
       });
     }
   });
