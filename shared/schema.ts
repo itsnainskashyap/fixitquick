@@ -851,18 +851,21 @@ export const parts = pgTable("parts", {
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id).notNull(),
-  serviceId: varchar("service_id").references(() => services.id).notNull(),
+  serviceId: varchar("service_id").references(() => services.id), // Nullable for parts orders
   addressId: varchar("address_id"), // Customer address reference
+  
+  // Order Type - Critical for parts/service distinction
+  type: varchar("type", { enum: ["service", "parts"] }).default("service"),
   
   // SECURITY FIX: Idempotency key for duplicate prevention (nullable for existing records)
   idempotencyKey: varchar("idempotency_key", { length: 255 }).unique(),
   
   status: varchar("status", { 
-    enum: ["pending_assignment", "matching", "assigned", "in_progress", "completed", "cancelled"] 
-  }).default("pending_assignment"),
+    enum: ["pending_assignment", "matching", "assigned", "in_progress", "completed", "cancelled", "pending", "confirmed", "processing", "shipped", "delivered"] 
+  }).default("pending"),
   providerId: varchar("provider_id").references(() => users.id), // Nullable, assigned provider ID
   acceptedAt: timestamp("accepted_at"), // When provider accepted
-  acceptDeadlineAt: timestamp("accept_deadline_at").notNull(), // 5-minute deadline for provider response
+  acceptDeadlineAt: timestamp("accept_deadline_at"), // 5-minute deadline for provider response (nullable for parts orders)
   meta: jsonb("meta").$type<{
     basePrice?: number;
     totalAmount?: number;
@@ -881,6 +884,25 @@ export const orders = pgTable("orders", {
       longitude: number;
       instructions?: string;
     };
+    // Parts order specific metadata
+    items?: Array<{
+      id: string;
+      partId?: string;
+      name: string;
+      price: number;
+      quantity: number;
+      providerId?: string;
+    }>;
+    shippingAddress?: {
+      fullName: string;
+      phone: string;
+      address: string;
+      city: string;
+      pincode: string;
+      landmark?: string;
+    };
+    trackingNumber?: string;
+    estimatedDeliveryDate?: string;
   }>().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1940,7 +1962,17 @@ export const orderCreateApiSchema = z.object({
   idempotencyKey: z.string()
     .min(1, 'Idempotency key is required')
     .max(255, 'Idempotency key too long')
-    .regex(/^[a-zA-Z0-9_-]+$/, 'Invalid idempotency key format')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Invalid idempotency key format'),
+
+  // PARTS ORDER SPECIFIC: Shipping address for parts delivery
+  shippingAddress: z.object({
+    fullName: z.string().min(1, 'Full name is required').max(100),
+    phone: z.string().min(10, 'Phone number must be at least 10 digits').max(15),
+    address: z.string().min(1, 'Address is required').max(500),
+    city: z.string().min(1, 'City is required').max(100),
+    pincode: z.string().min(5, 'Pincode must be at least 5 characters').max(10),
+    landmark: z.string().max(200).optional()
+  }).optional() // Optional because service orders don't need shipping address
 })
 
 // Export the type for TypeScript usage

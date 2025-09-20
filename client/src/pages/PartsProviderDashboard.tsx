@@ -113,6 +113,19 @@ export default function PartsProviderDashboard() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [categoryView, setCategoryView] = useState('grid'); // 'grid', 'list', 'hierarchy'
   
+  // Order management state
+  const [orderFilter, setOrderFilter] = useState('all'); // 'all', 'pending', 'confirmed', 'processing', 'shipped', 'delivered'
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [isUpdateStatusDialogOpen, setIsUpdateStatusDialogOpen] = useState(false);
+  const [updateStatusForm, setUpdateStatusForm] = useState({
+    status: '',
+    trackingNumber: '',
+    estimatedDeliveryDate: '',
+    notes: ''
+  });
+  const [rejectReason, setRejectReason] = useState('');
+  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  
   // New part form state
   const [newPart, setNewPart] = useState<PartData>({
     name: '',
@@ -140,7 +153,15 @@ export default function PartsProviderDashboard() {
     enabled: !!user && user.role === 'parts_provider',
   });
 
+  // Fetch parts provider orders
+  const { data: ordersData, isLoading: ordersLoading } = useQuery({
+    queryKey: ['/api/v1/parts-provider/orders'],
+    enabled: !!user && user.role === 'parts_provider',
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
   const categories = Array.isArray(categoriesData?.data) ? categoriesData.data : [];
+  const providerOrders = Array.isArray(ordersData?.data?.orders) ? ordersData.data.orders : [];
 
   // Add new part mutation using centralized apiRequest
   const addPartMutation = useMutation({
@@ -187,10 +208,66 @@ export default function PartsProviderDashboard() {
         description: "You have successfully accepted the order.",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders'] });
     },
     onError: (error: any) => {
       toast({
         title: "Failed to Accept Order",
+        description: error.message || "Something went wrong",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject order mutation
+  const rejectOrderMutation = useMutation({
+    mutationFn: async ({ orderId, reason }: { orderId: string; reason?: string }) => {
+      return await apiRequest('POST', `/api/v1/parts-provider/orders/${orderId}/reject`, { reason });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Order Rejected",
+        description: "You have successfully rejected the order.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to Reject Order",
+        description: error.message || "Something went wrong",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Update order status mutation
+  const updateOrderStatusMutation = useMutation({
+    mutationFn: async ({ orderId, status, trackingNumber, estimatedDeliveryDate, notes }: {
+      orderId: string;
+      status: string;
+      trackingNumber?: string;
+      estimatedDeliveryDate?: string;
+      notes?: string;
+    }) => {
+      return await apiRequest('PUT', `/api/v1/parts/orders/${orderId}/status`, {
+        status,
+        trackingNumber,
+        estimatedDeliveryDate,
+        notes
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Order Status Updated!",
+        description: "The order status has been updated successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-provider/orders'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to Update Status",
         description: error.message || "Something went wrong",
         variant: "destructive",
       });
@@ -746,6 +823,13 @@ export default function PartsProviderDashboard() {
             <TabsTrigger value="overview" data-testid="tab-overview" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white">
               <PieChart className="h-4 w-4 mr-2" />
               Overview
+            </TabsTrigger>
+            <TabsTrigger value="orders" data-testid="tab-orders" className="data-[state=active]:bg-orange-500 data-[state=active]:text-white">
+              <ShoppingCart className="h-4 w-4 mr-2" />
+              Orders
+              {stats.pendingOrders > 0 && (
+                <Badge variant="destructive" className="ml-2">{stats.pendingOrders}</Badge>
+              )}
             </TabsTrigger>
             <TabsTrigger value="inventory" data-testid="tab-inventory" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
               <Package className="h-4 w-4 mr-2" />

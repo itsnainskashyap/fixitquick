@@ -1482,14 +1482,51 @@ export function registerRoutes(app: Express): Server {
       const user = (req as AuthenticatedRequest).user!;
       const { id: orderId } = req.params;
 
-      // Note: This is a placeholder implementation
-      // You would typically have a storage method like acceptPartsOrder(orderId, providerId)
-      // For now, we'll return a success response to fix the 404 error
-      
+      // Get the order and validate access
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      if (order.type !== 'parts') {
+        return res.status(400).json({
+          success: false,
+          message: 'Not a parts order'
+        });
+      }
+
+      // Check if provider has parts in this order
+      const hasProviderItems = order.meta?.items?.some((item: any) => item.providerId === user.id);
+      if (!hasProviderItems) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: No parts from your inventory in this order'
+        });
+      }
+
+      // Update order status to confirmed
+      const updatedOrder = await storage.updateOrderStatus(orderId, 'confirmed', {
+        acceptedBy: user.id,
+        acceptedAt: new Date().toISOString()
+      });
+
+      // Send notification to customer
+      if (webSocketManager) {
+        webSocketManager.sendToUser(order.userId, {
+          type: 'order_status_update',
+          orderId: orderId,
+          status: 'confirmed',
+          message: 'Your parts order has been confirmed and is being processed'
+        });
+      }
+
       res.json({
         success: true,
-        message: 'Order accepted successfully',
-        data: { orderId, providerId: user.id, acceptedAt: new Date() }
+        message: 'Parts order accepted successfully',
+        data: updatedOrder
       });
     } catch (error) {
       console.error('Error accepting parts order:', error);
@@ -1550,87 +1587,90 @@ export function registerRoutes(app: Express): Server {
   // PARTS ORDERING ENDPOINTS
   // ========================================
 
-  // POST /api/v1/parts/orders - Create new parts order
-  app.post('/api/v1/parts/orders', authMiddleware, async (req, res) => {
+  // POST /api/v1/parts/orders - Create new parts order (UPDATED)
+  app.post('/api/v1/parts/orders', authMiddleware, validateBody(orderCreateApiSchema), async (req, res) => {
     try {
       const user = (req as AuthenticatedRequest).user!;
-      const { items, shippingAddress, notes } = req.body;
+      const orderData = req.body as OrderCreateApiData;
 
-      // Validate items array
-      if (!items || !Array.isArray(items) || items.length === 0) {
+      // Validate it's a parts order
+      if (orderData.type !== 'parts') {
         return res.status(400).json({
           success: false,
-          message: 'Items array is required and cannot be empty'
+          message: 'Invalid order type for this endpoint'
         });
       }
 
-      // Validate each item and calculate total
-      let totalAmount = 0;
-      const orderItems = [];
-
-      for (const item of items) {
-        const { partId, quantity } = item;
-        
-        if (!partId || !quantity || quantity <= 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Each item must have valid partId and quantity'
-          });
-        }
-
-        // Get part details
-        const part = await storage.getPartById(partId);
-        if (!part) {
-          return res.status(404).json({
-            success: false,
-            message: `Part with ID ${partId} not found`
-          });
-        }
-
-        // Check stock availability
-        if (part.stock < quantity) {
-          return res.status(400).json({
-            success: false,
-            message: `Insufficient stock for ${part.name}. Available: ${part.stock}, Requested: ${quantity}`
-          });
-        }
-
-        const itemTotal = parseFloat(part.price) * quantity;
-        totalAmount += itemTotal;
-
-        orderItems.push({
-          partId,
-          partName: part.name,
-          providerId: part.providerId,
-          quantity,
-          unitPrice: parseFloat(part.price),
-          totalPrice: itemTotal
+      // SECURITY: Check for duplicate order using idempotency key
+      const existingOrder = await storage.getOrderByIdempotencyKey(user.id, orderData.idempotencyKey);
+      if (existingOrder) {
+        console.log(`🔒 Idempotency key ${orderData.idempotencyKey} already used for user ${user.id}, returning existing order`);
+        return res.status(200).json({
+          success: true,
+          data: existingOrder,
+          message: 'Order already exists (idempotent response)'
         });
       }
 
-      // Create order with parts-specific type
-      const orderData = {
-        customerId: user.id,
+      // Validate parts items and calculate total
+      let calculatedTotal = 0;
+      const processedItems = [];
+
+      for (const item of orderData.items) {
+        if (item.type === 'part' && item.partId) {
+          // Get part details
+          const part = await storage.getPartById(item.partId);
+          if (!part) {
+            return res.status(404).json({
+              success: false,
+              message: `Part with ID ${item.partId} not found`
+            });
+          }
+
+          // Check stock availability
+          if (part.stock < item.quantity) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient stock for ${part.name}. Available: ${part.stock}, Requested: ${item.quantity}`
+            });
+          }
+
+          const itemTotal = parseFloat(part.price) * item.quantity;
+          calculatedTotal += itemTotal;
+
+          processedItems.push({
+            id: item.id,
+            partId: item.partId,
+            name: part.name,
+            price: parseFloat(part.price),
+            quantity: item.quantity,
+            providerId: part.providerId
+          });
+        }
+      }
+
+      // Create order using the standard createOrder method
+      const orderCreateData = {
+        userId: user.id,
         type: 'parts' as const,
-        status: 'pending' as const,
-        totalAmount: totalAmount.toString(),
-        items: orderItems,
-        shippingAddress,
-        notes,
-        createdAt: new Date()
+        totalAmount: parseFloat(orderData.totalAmount),
+        paymentMethod: orderData.paymentMethod,
+        idempotencyKey: orderData.idempotencyKey,
+        location: orderData.location,
+        notes: orderData.notes,
+        items: processedItems,
+        couponCode: orderData.couponCode,
+        couponDiscount: orderData.couponDiscount || 0
       };
 
-      const order = await storage.createOrder(orderData);
+      const order = await storage.createOrder(orderCreateData);
 
-      // Update stock for each part (reserve stock)
-      for (const item of orderItems) {
-        const part = await storage.getPartById(item.partId);
-        if (part) {
-          await storage.updatePartsInventory(item.partId, {
-            stock: part.stock,
-            reservedStock: (part.reservedStock || 0) + item.quantity
-          });
-        }
+      // Reserve stock for each part
+      for (const item of processedItems) {
+        await storage.updatePartsInventory(item.partId, {
+          stock: await storage.getPartById(item.partId).then(p => p?.stock || 0),
+          reservedStock: await storage.getPartById(item.partId).then(p => (p?.reservedStock || 0) + item.quantity)
+        });
       }
 
       res.status(201).json({
@@ -1715,17 +1755,17 @@ export function registerRoutes(app: Express): Server {
       const result = await storage.getOrdersByCustomer(user.id, filters);
       
       // Filter only parts orders
-      const partsOrders = result.orders.filter(order => order.type === 'parts');
+      const partsOrders = result.orders.filter((order: any) => order.type === 'parts');
       
       res.json({
         success: true,
         data: {
           orders: partsOrders,
           pagination: {
-            total: partsOrders.length,
+            total: result.total,
             page: pageNum,
             limit: limitNum,
-            totalPages: Math.ceil(partsOrders.length / limitNum)
+            totalPages: Math.ceil(result.total / limitNum)
           }
         }
       });
@@ -1734,6 +1774,204 @@ export function registerRoutes(app: Express): Server {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch parts orders'
+      });
+    }
+  });
+
+  // POST /api/v1/parts-provider/orders/:id/reject - Reject a parts order  
+  app.post('/api/v1/parts-provider/orders/:id/reject', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { reason } = req.body;
+
+      // Get the order and validate access
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      if (order.type !== 'parts') {
+        return res.status(400).json({
+          success: false,
+          message: 'Not a parts order'
+        });
+      }
+
+      // Check if provider has parts in this order
+      const hasProviderItems = order.meta?.items?.some((item: any) => item.providerId === user.id);
+      if (!hasProviderItems) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: No parts from your inventory in this order'
+        });
+      }
+
+      // Update order status to cancelled with reason
+      const updatedOrder = await storage.updateOrderStatus(orderId, 'cancelled', {
+        rejectedBy: user.id,
+        rejectedAt: new Date().toISOString(),
+        rejectionReason: reason || 'Provider declined the order'
+      });
+
+      // Release reserved stock
+      if (order.meta?.items) {
+        for (const item of order.meta.items) {
+          if (item.providerId === user.id) {
+            const part = await storage.getPartById(item.partId);
+            if (part) {
+              await storage.updatePartsInventory(item.partId, {
+                stock: part.stock,
+                reservedStock: Math.max(0, (part.reservedStock || 0) - item.quantity)
+              });
+            }
+          }
+        }
+      }
+
+      // Send notification to customer
+      if (webSocketManager) {
+        webSocketManager.sendToUser(order.userId, {
+          type: 'order_status_update',
+          orderId: orderId,
+          status: 'cancelled',
+          message: 'Your parts order has been cancelled by the provider'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Parts order rejected successfully',
+        data: updatedOrder
+      });
+    } catch (error) {
+      console.error('Error rejecting parts order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to reject order'
+      });
+    }
+  });
+
+  // PUT /api/v1/parts/orders/:id/status - Update parts order status (provider only)
+  app.put('/api/v1/parts/orders/:id/status', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { status, trackingNumber, estimatedDeliveryDate, notes } = req.body;
+
+      // Validate status
+      const validStatuses = ['processing', 'shipped', 'delivered'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid status. Must be one of: processing, shipped, delivered'
+        });
+      }
+
+      // Get the order and validate access
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      if (order.type !== 'parts') {
+        return res.status(400).json({
+          success: false,
+          message: 'Not a parts order'
+        });
+      }
+
+      // Check if provider has parts in this order
+      const hasProviderItems = order.meta?.items?.some((item: any) => item.providerId === user.id);
+      if (!hasProviderItems) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: No parts from your inventory in this order'
+        });
+      }
+
+      // Build update data
+      const updateData: any = {
+        statusUpdatedAt: new Date().toISOString(),
+        statusUpdatedBy: user.id,
+        notes: notes
+      };
+
+      if (trackingNumber) {
+        updateData.trackingNumber = trackingNumber;
+      }
+
+      if (estimatedDeliveryDate) {
+        updateData.estimatedDeliveryDate = estimatedDeliveryDate;
+      }
+
+      // If delivered, update inventory (convert reserved to sold)
+      if (status === 'delivered' && order.meta?.items) {
+        for (const item of order.meta.items) {
+          if (item.providerId === user.id) {
+            const part = await storage.getPartById(item.partId);
+            if (part) {
+              await storage.updatePartsInventory(item.partId, {
+                stock: part.stock,
+                reservedStock: Math.max(0, (part.reservedStock || 0) - item.quantity)
+              });
+              
+              // Create inventory movement record
+              await db.insert(partsInventoryMovements).values({
+                partId: item.partId,
+                providerId: user.id,
+                movementType: 'sold',
+                quantity: -item.quantity,
+                previousStock: part.stock + item.quantity,
+                newStock: part.stock,
+                orderId: orderId,
+                reason: 'Order delivered'
+              });
+            }
+          }
+        }
+      }
+
+      // Update order status
+      const updatedOrder = await storage.updateOrderStatus(orderId, status, updateData);
+
+      // Send real-time notification to customer
+      if (webSocketManager) {
+        const statusMessages = {
+          processing: 'Your parts order is being processed',
+          shipped: trackingNumber ? 
+            `Your parts order has been shipped. Tracking: ${trackingNumber}` :
+            'Your parts order has been shipped',
+          delivered: 'Your parts order has been delivered successfully'
+        };
+
+        webSocketManager.sendToUser(order.userId, {
+          type: 'order_status_update',
+          orderId: orderId,
+          status: status,
+          message: statusMessages[status as keyof typeof statusMessages],
+          trackingNumber,
+          estimatedDeliveryDate
+        });
+      }
+
+      res.json({
+        success: true,
+        message: `Parts order status updated to ${status}`,
+        data: updatedOrder
+      });
+    } catch (error) {
+      console.error('Error updating parts order status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update order status'
       });
     }
   });

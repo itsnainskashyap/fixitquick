@@ -355,6 +355,9 @@ export interface IStorage {
   createOrderRating(ratingData: InsertOrderRating): Promise<OrderRating>;
   getOrderRatings(orderId: string): Promise<OrderRating[]>;
   
+  // Order idempotency methods
+  getOrderByIdempotencyKey(userId: string, idempotencyKey: string): Promise<Order | undefined>;
+  
   // OTP challenge methods for rate limiting and verification
   getRecentOtpChallenges(phone: string, seconds: number): Promise<OtpChallenge[]>;
   getRecentOtpChallengesByIp(ip: string, seconds: number): Promise<OtpChallenge[]>;
@@ -657,6 +660,21 @@ export class PostgresStorage implements IStorage {
       .from(orderRatings)
       .where(eq(orderRatings.orderId, orderId))
       .orderBy(desc(orderRatings.createdAt));
+  }
+
+  // ========================================
+  // ORDER IDEMPOTENCY METHODS
+  // ========================================
+
+  async getOrderByIdempotencyKey(userId: string, idempotencyKey: string): Promise<Order | undefined> {
+    const result = await db.select()
+      .from(orders)
+      .where(and(
+        eq(orders.userId, userId),
+        eq(orders.idempotencyKey, idempotencyKey)
+      ))
+      .limit(1);
+    return result[0];
   }
 
   // ========================================

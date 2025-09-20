@@ -169,10 +169,12 @@ export default function Checkout() {
     enabled: !!user,
   });
 
-  // SECURE: Create order mutation
+  // SECURE: Create order mutation (parts vs service specific)
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
-      return await apiRequest('POST', '/api/v1/orders', orderData);
+      const isPartsOrder = orderData.type === 'parts';
+      const endpoint = isPartsOrder ? '/api/v1/parts/orders' : '/api/v1/orders';
+      return await apiRequest('POST', endpoint, orderData);
     },
     onError: (error: any) => {
       console.error('Order creation error:', error);
@@ -326,12 +328,23 @@ export default function Checkout() {
         couponDiscount: cart.couponDiscount || 0,
         notes: serviceSchedule.notes || `Delivery to: ${deliveryAddress.fullName}, ${deliveryAddress.phone}`,
         // SECURITY FIX: Add idempotency key to prevent duplicate orders
-        idempotencyKey
+        idempotencyKey,
+        // Parts-specific shipping address
+        ...(partItems.length > 0 && {
+          shippingAddress: {
+            fullName: deliveryAddress.fullName,
+            phone: deliveryAddress.phone,
+            address: deliveryAddress.address,
+            city: deliveryAddress.city,
+            pincode: deliveryAddress.pincode,
+            landmark: deliveryAddress.landmark
+          }
+        })
       };
 
       // Step 1: Create order in database (server generates secure orderId)
       const createdOrder = await createOrderMutation.mutateAsync(orderData);
-      const orderId = createdOrder.id;
+      const orderId = createdOrder.data?.id || createdOrder.id;
 
       if (paymentMethod === 'wallet') {
         // Step 2: Pay for the order (server validates and calculates amount)
