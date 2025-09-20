@@ -78,6 +78,8 @@ import {
   insertPartsProviderQualityMetricsSchema,
   insertProviderResubmissionSchema,
   insertVerificationNotificationPreferencesSchema,
+  insertPartsCategorySchema,
+  insertPartsSupplierSchema,
   // Service request schemas
   insertServiceRequestSchema,
   // SECURITY: Order lifecycle validation schemas
@@ -1116,19 +1118,599 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  // Parts endpoints 
+  // ========================================
+  // PARTS ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/parts - List parts with filtering
   app.get('/api/v1/parts', async (req, res) => {
-    res.status(501).json({ 
-      message: 'Parts endpoint temporarily unavailable',
-      error: 'Feature under maintenance' 
-    });
+    try {
+      const {
+        category,
+        provider,
+        search,
+        sortBy,
+        priceRange,
+        inStock,
+        page = '1',
+        limit = '20'
+      } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      const filters = {
+        categoryId: category as string,
+        providerId: provider as string,
+        search: search as string,
+        sortBy: sortBy as string,
+        priceRange: priceRange as string,
+        inStock: inStock === 'true',
+        limit: limitNum,
+        offset
+      };
+
+      const result = await storage.getParts(filters);
+      
+      res.json({
+        success: true,
+        data: {
+          parts: result.parts,
+          pagination: {
+            total: result.total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(result.total / limitNum)
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching parts:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch parts'
+      });
+    }
   });
 
+  // GET /api/v1/parts/:id - Get single part details
   app.get('/api/v1/parts/:id', async (req, res) => {
-    res.status(501).json({ 
-      message: 'Part details endpoint temporarily unavailable',
-      error: 'Feature under maintenance' 
-    });
+    try {
+      const { id } = req.params;
+      const part = await storage.getPartById(id);
+
+      if (!part) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: part
+      });
+    } catch (error) {
+      console.error('Error fetching part:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch part details'
+      });
+    }
+  });
+
+  // POST /api/v1/parts - Create new part (providers only)
+  app.post('/api/v1/parts', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartSchema), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const partData = {
+        ...req.body,
+        providerId: user.id
+      };
+
+      const part = await storage.createPart(partData);
+
+      res.status(201).json({
+        success: true,
+        data: part
+      });
+    } catch (error) {
+      console.error('Error creating part:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create part'
+      });
+    }
+  });
+
+  // PUT /api/v1/parts/:id - Update part (providers only, own parts)
+  app.put('/api/v1/parts/:id', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartSchema.partial()), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      // Check if part exists and belongs to user
+      const existingPart = await storage.getPartById(id);
+      if (!existingPart) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found'
+        });
+      }
+
+      if (existingPart.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only update your own parts'
+        });
+      }
+
+      const updatedPart = await storage.updatePart(id, req.body);
+
+      res.json({
+        success: true,
+        data: updatedPart
+      });
+    } catch (error) {
+      console.error('Error updating part:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update part'
+      });
+    }
+  });
+
+  // DELETE /api/v1/parts/:id - Soft delete part (providers only, own parts)
+  app.delete('/api/v1/parts/:id', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      // Check if part exists and belongs to user
+      const existingPart = await storage.getPartById(id);
+      if (!existingPart) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found'
+        });
+      }
+
+      if (existingPart.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only delete your own parts'
+        });
+      }
+
+      const success = await storage.deletePart(id);
+
+      if (success) {
+        res.json({
+          success: true,
+          message: 'Part deleted successfully'
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to delete part'
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting part:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete part'
+      });
+    }
+  });
+
+  // ========================================
+  // PARTS CATEGORIES ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/parts/categories - List all parts categories
+  app.get('/api/v1/parts/categories', async (req, res) => {
+    try {
+      const categories = await storage.getPartsCategories();
+      
+      res.json({
+        success: true,
+        data: categories
+      });
+    } catch (error) {
+      console.error('Error fetching parts categories:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch parts categories'
+      });
+    }
+  });
+
+  // POST /api/v1/parts/categories - Create new parts category (admin only)
+  app.post('/api/v1/parts/categories', authMiddleware, requireRole(['admin']), validateBody(insertPartsCategorySchema), async (req, res) => {
+    try {
+      const category = await storage.createPartsCategory(req.body);
+
+      res.status(201).json({
+        success: true,
+        data: category
+      });
+    } catch (error) {
+      console.error('Error creating parts category:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create parts category'
+      });
+    }
+  });
+
+  // ========================================
+  // PARTS SUPPLIERS ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/parts-suppliers - List parts suppliers
+  app.get('/api/v1/parts-suppliers', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const providerId = user.role === 'parts_provider' ? user.id : undefined;
+      
+      const suppliers = await storage.getPartsSuppliers(providerId);
+      
+      res.json({
+        success: true,
+        data: suppliers
+      });
+    } catch (error) {
+      console.error('Error fetching parts suppliers:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch parts suppliers'
+      });
+    }
+  });
+
+  // POST /api/v1/parts-suppliers - Create new parts supplier (providers only)
+  app.post('/api/v1/parts-suppliers', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartsSupplierSchema), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const supplierData = {
+        ...req.body,
+        providerId: user.id
+      };
+
+      const supplier = await storage.createPartsSupplier(supplierData);
+
+      res.status(201).json({
+        success: true,
+        data: supplier
+      });
+    } catch (error) {
+      console.error('Error creating parts supplier:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create parts supplier'
+      });
+    }
+  });
+
+  // ========================================
+  // PARTS PROVIDER DASHBOARD ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/parts-provider/dashboard - Parts provider dashboard data
+  app.get('/api/v1/parts-provider/dashboard', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const dashboardData = await storage.getPartsProviderDashboard(user.id);
+      
+      res.json({
+        success: true,
+        data: dashboardData
+      });
+    } catch (error) {
+      console.error('Error fetching parts provider dashboard:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch dashboard data'
+      });
+    }
+  });
+
+  // GET /api/v1/parts-provider/orders - Parts provider orders
+  app.get('/api/v1/parts-provider/orders', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const { status, page = '1', limit = '20' } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      const filters = {
+        status: status as string,
+        limit: limitNum,
+        offset
+      };
+
+      const result = await storage.getPartsProviderOrders(user.id, filters);
+      
+      res.json({
+        success: true,
+        data: {
+          orders: result.orders,
+          pagination: {
+            total: result.total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(result.total / limitNum)
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching parts provider orders:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch orders'
+      });
+    }
+  });
+
+  // GET /api/v1/parts-provider/inventory - Parts provider inventory
+  app.get('/api/v1/parts-provider/inventory', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const inventory = await storage.getPartsProviderInventory(user.id);
+      
+      res.json({
+        success: true,
+        data: inventory
+      });
+    } catch (error) {
+      console.error('Error fetching parts provider inventory:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch inventory'
+      });
+    }
+  });
+
+  // PUT /api/v1/parts-provider/inventory/:id - Update inventory stock
+  app.put('/api/v1/parts-provider/inventory/:id', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+      const { stock, reservedStock } = req.body;
+
+      // Validate input
+      if (typeof stock !== 'number' || stock < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid stock value'
+        });
+      }
+
+      // Check if part belongs to user
+      const existingPart = await storage.getPartById(id);
+      if (!existingPart) {
+        return res.status(404).json({
+          success: false,
+          message: 'Part not found'
+        });
+      }
+
+      if (existingPart.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only update your own inventory'
+        });
+      }
+
+      const updatedPart = await storage.updatePartsInventory(id, { stock, reservedStock });
+
+      res.json({
+        success: true,
+        data: updatedPart
+      });
+    } catch (error) {
+      console.error('Error updating parts inventory:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update inventory'
+      });
+    }
+  });
+
+  // ========================================
+  // PARTS ORDERING ENDPOINTS
+  // ========================================
+
+  // POST /api/v1/parts/orders - Create new parts order
+  app.post('/api/v1/parts/orders', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { items, shippingAddress, notes } = req.body;
+
+      // Validate items array
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Items array is required and cannot be empty'
+        });
+      }
+
+      // Validate each item and calculate total
+      let totalAmount = 0;
+      const orderItems = [];
+
+      for (const item of items) {
+        const { partId, quantity } = item;
+        
+        if (!partId || !quantity || quantity <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each item must have valid partId and quantity'
+          });
+        }
+
+        // Get part details
+        const part = await storage.getPartById(partId);
+        if (!part) {
+          return res.status(404).json({
+            success: false,
+            message: `Part with ID ${partId} not found`
+          });
+        }
+
+        // Check stock availability
+        if (part.stock < quantity) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for ${part.name}. Available: ${part.stock}, Requested: ${quantity}`
+          });
+        }
+
+        const itemTotal = parseFloat(part.price) * quantity;
+        totalAmount += itemTotal;
+
+        orderItems.push({
+          partId,
+          partName: part.name,
+          providerId: part.providerId,
+          quantity,
+          unitPrice: parseFloat(part.price),
+          totalPrice: itemTotal
+        });
+      }
+
+      // Create order with parts-specific type
+      const orderData = {
+        customerId: user.id,
+        type: 'parts' as const,
+        status: 'pending' as const,
+        totalAmount: totalAmount.toString(),
+        items: orderItems,
+        shippingAddress,
+        notes,
+        createdAt: new Date()
+      };
+
+      const order = await storage.createOrder(orderData);
+
+      // Update stock for each part (reserve stock)
+      for (const item of orderItems) {
+        const part = await storage.getPartById(item.partId);
+        if (part) {
+          await storage.updatePartsInventory(item.partId, {
+            stock: part.stock,
+            reservedStock: (part.reservedStock || 0) + item.quantity
+          });
+        }
+      }
+
+      res.status(201).json({
+        success: true,
+        data: order,
+        message: 'Parts order created successfully'
+      });
+    } catch (error) {
+      console.error('Error creating parts order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create parts order'
+      });
+    }
+  });
+
+  // GET /api/v1/parts/orders/:id - Get specific parts order details
+  app.get('/api/v1/parts/orders/:id', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      const order = await storage.getOrderById(id);
+      
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      // Check authorization - user must be customer or provider involved in the order
+      const hasAccess = order.customerId === user.id || 
+                       (order.items && order.items.some((item: any) => item.providerId === user.id));
+
+      if (!hasAccess) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized to view this order'
+        });
+      }
+
+      // Only return parts orders
+      if (order.type !== 'parts') {
+        return res.status(404).json({
+          success: false,
+          message: 'Parts order not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: order
+      });
+    } catch (error) {
+      console.error('Error fetching parts order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch parts order'
+      });
+    }
+  });
+
+  // GET /api/v1/users/parts-orders - Get user's parts order history
+  app.get('/api/v1/users/parts-orders', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { page = '1', limit = '10', status } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      const filters = {
+        customerId: user.id,
+        type: 'parts' as const,
+        status: status as string,
+        limit: limitNum,
+        offset
+      };
+
+      const result = await storage.getOrdersByCustomer(user.id, filters);
+      
+      // Filter only parts orders
+      const partsOrders = result.orders.filter(order => order.type === 'parts');
+      
+      res.json({
+        success: true,
+        data: {
+          orders: partsOrders,
+          pagination: {
+            total: partsOrders.length,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(partsOrders.length / limitNum)
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching user parts orders:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch parts orders'
+      });
+    }
   });
 
   // Admin endpoints

@@ -16,6 +16,7 @@ import {
   type ServiceProvider,
   type InsertServiceProvider,
   type PartsCategory,
+  type InsertPartsCategory,
   type PartsProviderBusinessInfo,
   type InsertPartsProviderBusinessInfo,
   type PartsInventoryMovement,
@@ -377,11 +378,48 @@ export interface IStorage {
   
   // Parts category methods
   getPartsCategories(): Promise<PartsCategory[]>;
+  createPartsCategory(category: InsertPartsCategory): Promise<PartsCategory>;
+  
+  // Parts CRUD methods
+  createPart(part: InsertPart): Promise<Part>;
+  getParts(filters?: {
+    categoryId?: string;
+    providerId?: string;
+    search?: string;
+    inStock?: boolean;
+    sortBy?: string;
+    priceRange?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ parts: Part[]; total: number }>;
+  getPartById(id: string): Promise<Part | undefined>;
+  updatePart(id: string, data: Partial<InsertPart>): Promise<Part | undefined>;
+  deletePart(id: string): Promise<boolean>;
+  
+  // Parts supplier methods
+  createPartsSupplier(supplier: InsertPartsSupplier): Promise<PartsSupplier>;
+  getPartsSuppliers(providerId?: string): Promise<PartsSupplier[]>;
   
   // Parts provider business info methods
   createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo>;
   getPartsProviderBusinessInfo(userId: string): Promise<PartsProviderBusinessInfo | undefined>;
   updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined>;
+  
+  // Parts provider dashboard methods
+  getPartsProviderDashboard(providerId: string): Promise<{
+    totalParts: number;
+    totalOrders: number;
+    totalRevenue: number;
+    lowStockParts: Part[];
+    recentOrders: Order[];
+  }>;
+  getPartsProviderOrders(providerId: string, filters?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ orders: Order[]; total: number }>;
+  getPartsProviderInventory(providerId: string): Promise<Part[]>;
+  updatePartsInventory(partId: string, stockData: { stock: number; reservedStock?: number }): Promise<Part | undefined>;
   
   // Seed data method for development initialization
   seedData(): Promise<void>;
@@ -836,6 +874,269 @@ export class PostgresStorage implements IStorage {
     return await db.select().from(partsCategories)
       .where(eq(partsCategories.isActive, true))
       .orderBy(asc(partsCategories.sortOrder), asc(partsCategories.name));
+  }
+
+  async createPartsCategory(category: InsertPartsCategory): Promise<PartsCategory> {
+    const result = await db.insert(partsCategories).values({
+      ...category,
+      createdAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  // ========================================
+  // PARTS CRUD METHODS
+  // ========================================
+
+  async createPart(part: InsertPart): Promise<Part> {
+    const result = await db.insert(parts).values({
+      ...part,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async getParts(filters?: {
+    categoryId?: string;
+    providerId?: string;
+    search?: string;
+    inStock?: boolean;
+    sortBy?: string;
+    priceRange?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ parts: Part[]; total: number }> {
+    const { 
+      categoryId, 
+      providerId, 
+      search, 
+      inStock, 
+      sortBy = 'name',
+      priceRange,
+      limit = 50, 
+      offset = 0 
+    } = filters || {};
+
+    let query = db.select().from(parts);
+    let countQuery = db.select({ count: count() }).from(parts);
+    
+    // Build where conditions
+    const whereConditions = [eq(parts.isActive, true)];
+    
+    if (categoryId) {
+      whereConditions.push(eq(parts.categoryId, categoryId));
+    }
+    
+    if (providerId) {
+      whereConditions.push(eq(parts.providerId, providerId));
+    }
+    
+    if (inStock) {
+      whereConditions.push(sql`${parts.stock} > 0`);
+    }
+    
+    if (search) {
+      whereConditions.push(
+        or(
+          ilike(parts.name, `%${search}%`),
+          ilike(parts.description, `%${search}%`),
+          ilike(parts.brand, `%${search}%`)
+        )
+      );
+    }
+    
+    if (priceRange) {
+      const [min, max] = priceRange.split('-').map(Number);
+      if (min !== undefined) {
+        whereConditions.push(gte(parts.price, min.toString()));
+      }
+      if (max !== undefined) {
+        whereConditions.push(lte(parts.price, max.toString()));
+      }
+    }
+
+    const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
+    
+    if (whereClause) {
+      query = query.where(whereClause);
+      countQuery = countQuery.where(whereClause);
+    }
+
+    // Add sorting
+    switch (sortBy) {
+      case 'price_low':
+        query = query.orderBy(asc(parts.price));
+        break;
+      case 'price_high':
+        query = query.orderBy(desc(parts.price));
+        break;
+      case 'rating':
+        query = query.orderBy(desc(parts.rating));
+        break;
+      case 'popular':
+        query = query.orderBy(desc(parts.totalSold));
+        break;
+      case 'newest':
+        query = query.orderBy(desc(parts.createdAt));
+        break;
+      default:
+        query = query.orderBy(asc(parts.name));
+    }
+
+    // Add pagination
+    query = query.limit(limit).offset(offset);
+
+    const [partsResult, totalResult] = await Promise.all([
+      query,
+      countQuery
+    ]);
+
+    return {
+      parts: partsResult,
+      total: totalResult[0]?.count || 0
+    };
+  }
+
+  async getPartById(id: string): Promise<Part | undefined> {
+    const result = await db.select()
+      .from(parts)
+      .where(and(eq(parts.id, id), eq(parts.isActive, true)))
+      .limit(1);
+    return result[0];
+  }
+
+  async updatePart(id: string, data: Partial<InsertPart>): Promise<Part | undefined> {
+    const result = await db.update(parts)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(parts.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deletePart(id: string): Promise<boolean> {
+    const result = await db.update(parts)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(parts.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // ========================================
+  // PARTS SUPPLIER METHODS
+  // ========================================
+
+  async createPartsSupplier(supplier: InsertPartsSupplier): Promise<PartsSupplier> {
+    const result = await db.insert(partsSuppliers).values({
+      ...supplier,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async getPartsSuppliers(providerId?: string): Promise<PartsSupplier[]> {
+    let query = db.select().from(partsSuppliers).where(eq(partsSuppliers.isActive, true));
+    
+    if (providerId) {
+      query = query.where(and(
+        eq(partsSuppliers.isActive, true),
+        eq(partsSuppliers.providerId, providerId)
+      ));
+    }
+
+    return await query.orderBy(asc(partsSuppliers.name));
+  }
+
+  // ========================================
+  // PARTS PROVIDER DASHBOARD METHODS
+  // ========================================
+
+  async getPartsProviderDashboard(providerId: string): Promise<{
+    totalParts: number;
+    totalOrders: number;
+    totalRevenue: number;
+    lowStockParts: Part[];
+    recentOrders: Order[];
+  }> {
+    // Get total parts count
+    const totalPartsResult = await db.select({ count: count() })
+      .from(parts)
+      .where(and(eq(parts.providerId, providerId), eq(parts.isActive, true)));
+
+    // Get low stock parts (stock <= lowStockThreshold)
+    const lowStockParts = await db.select()
+      .from(parts)
+      .where(and(
+        eq(parts.providerId, providerId),
+        eq(parts.isActive, true),
+        sql`${parts.stock} <= ${parts.lowStockThreshold}`
+      ))
+      .limit(10);
+
+    // For orders and revenue, we'll need to join with orders table and filter for parts orders
+    // For now, returning placeholder values since parts ordering may not be fully implemented yet
+    const totalOrders = 0;
+    const totalRevenue = 0;
+    const recentOrders: Order[] = [];
+
+    return {
+      totalParts: totalPartsResult[0]?.count || 0,
+      totalOrders,
+      totalRevenue,
+      lowStockParts,
+      recentOrders
+    };
+  }
+
+  async getPartsProviderOrders(providerId: string, filters?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ orders: Order[]; total: number }> {
+    // Placeholder implementation - would need to filter orders table for parts-related orders
+    // This would require additional schema changes to link orders to parts providers
+    return {
+      orders: [],
+      total: 0
+    };
+  }
+
+  async getPartsProviderInventory(providerId: string): Promise<Part[]> {
+    return await db.select()
+      .from(parts)
+      .where(and(eq(parts.providerId, providerId), eq(parts.isActive, true)))
+      .orderBy(asc(parts.name));
+  }
+
+  async updatePartsInventory(partId: string, stockData: { stock: number; reservedStock?: number }): Promise<Part | undefined> {
+    const updateData: any = {
+      stock: stockData.stock,
+      lastStockUpdate: new Date(),
+      updatedAt: new Date()
+    };
+
+    if (stockData.reservedStock !== undefined) {
+      updateData.reservedStock = stockData.reservedStock;
+    }
+
+    // Update availability status based on stock
+    if (stockData.stock <= 0) {
+      updateData.availabilityStatus = 'out_of_stock';
+    } else {
+      const part = await this.getPartById(partId);
+      if (part && stockData.stock <= (part.lowStockThreshold || 10)) {
+        updateData.availabilityStatus = 'low_stock';
+      } else {
+        updateData.availabilityStatus = 'in_stock';
+      }
+    }
+
+    const result = await db.update(parts)
+      .set(updateData)
+      .where(eq(parts.id, partId))
+      .returning();
+    return result[0];
   }
 
   // ========================================
