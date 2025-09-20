@@ -1395,6 +1395,123 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // GET /api/v1/parts-suppliers/:id - Get specific parts supplier (providers only)
+  app.get('/api/v1/parts-suppliers/:id', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      const supplier = await storage.getPartsSupplierById(id);
+      
+      if (!supplier) {
+        return res.status(404).json({
+          success: false,
+          message: 'Supplier not found'
+        });
+      }
+
+      // Check if supplier belongs to the current provider
+      if (supplier.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only view your own suppliers'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: supplier
+      });
+    } catch (error) {
+      console.error('Error fetching parts supplier:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch supplier'
+      });
+    }
+  });
+
+  // PUT /api/v1/parts-suppliers/:id - Update parts supplier (providers only)
+  app.put('/api/v1/parts-suppliers/:id', authMiddleware, requireRole(['parts_provider']), validateBody(insertPartsSupplierSchema.partial()), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      // Check if supplier exists and belongs to user
+      const existingSupplier = await storage.getPartsSupplierById(id);
+      if (!existingSupplier) {
+        return res.status(404).json({
+          success: false,
+          message: 'Supplier not found'
+        });
+      }
+
+      if (existingSupplier.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only update your own suppliers'
+        });
+      }
+
+      const updatedSupplier = await storage.updatePartsSupplier(id, req.body);
+
+      res.json({
+        success: true,
+        data: updatedSupplier
+      });
+    } catch (error) {
+      console.error('Error updating parts supplier:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update supplier'
+      });
+    }
+  });
+
+  // DELETE /api/v1/parts-suppliers/:id - Delete parts supplier (providers only)
+  app.delete('/api/v1/parts-suppliers/:id', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      // Check if supplier exists and belongs to user
+      const existingSupplier = await storage.getPartsSupplierById(id);
+      if (!existingSupplier) {
+        return res.status(404).json({
+          success: false,
+          message: 'Supplier not found'
+        });
+      }
+
+      if (existingSupplier.providerId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only delete your own suppliers'
+        });
+      }
+
+      const success = await storage.deletePartsSupplier(id);
+
+      if (success) {
+        res.json({
+          success: true,
+          message: 'Supplier deleted successfully'
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to delete supplier'
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting parts supplier:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete supplier'
+      });
+    }
+  });
+
   // ========================================
   // PARTS PROVIDER DASHBOARD ENDPOINTS
   // ========================================

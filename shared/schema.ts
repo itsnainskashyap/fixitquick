@@ -772,6 +772,7 @@ export const parts = pgTable("parts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   categoryId: varchar("category_id").references(() => partsCategories.id),
   providerId: varchar("provider_id").references(() => users.id),
+  supplierId: varchar("supplier_id").references(() => partsSuppliers.id), // Link to supplier
   name: varchar("name").notNull(),
   slug: varchar("slug"), // SEO-friendly URL slug
   description: text("description"),
@@ -842,6 +843,7 @@ export const parts = pgTable("parts", {
   skuIdx: index("parts_sku_idx").on(table.sku),
   categoryIdx: index("parts_category_idx").on(table.categoryId),
   providerIdx: index("parts_provider_idx").on(table.providerId),
+  supplierIdx: index("parts_supplier_idx").on(table.supplierId),
   slugIdx: index("parts_slug_idx").on(table.slug),
   stockIdx: index("parts_stock_idx").on(table.stock),
   statusIdx: index("parts_status_idx").on(table.availabilityStatus),

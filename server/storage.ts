@@ -1074,6 +1074,30 @@ export class PostgresStorage implements IStorage {
     return await query.orderBy(asc(partsSuppliers.name));
   }
 
+  async getPartsSupplierById(id: string): Promise<PartsSupplier | undefined> {
+    const result = await db.select()
+      .from(partsSuppliers)
+      .where(and(eq(partsSuppliers.id, id), eq(partsSuppliers.isActive, true)))
+      .limit(1);
+    return result[0];
+  }
+
+  async updatePartsSupplier(id: string, data: Partial<InsertPartsSupplier>): Promise<PartsSupplier | undefined> {
+    const result = await db.update(partsSuppliers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(partsSuppliers.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deletePartsSupplier(id: string): Promise<boolean> {
+    const result = await db.update(partsSuppliers)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(partsSuppliers.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
   // ========================================
   // PARTS PROVIDER DASHBOARD METHODS
   // ========================================

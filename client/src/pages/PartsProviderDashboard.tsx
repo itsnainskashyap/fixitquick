@@ -132,6 +132,7 @@ export default function PartsProviderDashboard() {
     description: '',
     sku: '',
     categoryId: '',
+    supplierId: '',
     price: 0,
     costPrice: 0,
     stock: 0,
@@ -160,6 +161,12 @@ export default function PartsProviderDashboard() {
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
+  // Fetch suppliers for the dropdown in parts form
+  const { data: suppliers } = useQuery({
+    queryKey: ['/api/v1/parts-suppliers'],
+    enabled: !!user && user.role === 'parts_provider',
+  });
+
   const categories = Array.isArray(categoriesData?.data) ? categoriesData.data : [];
   const providerOrders = Array.isArray(ordersData?.data?.orders) ? ordersData.data.orders : [];
 
@@ -180,6 +187,7 @@ export default function PartsProviderDashboard() {
         description: '',
         sku: '',
         categoryId: '',
+        supplierId: '',
         price: 0,
         costPrice: 0,
         stock: 0,
@@ -684,14 +692,21 @@ export default function PartsProviderDashboard() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="supplier">Supplier</Label>
-                    <Input
-                      id="supplier"
-                      value={newPart.supplier}
-                      onChange={(e) => setNewPart({ ...newPart, supplier: e.target.value })}
-                      placeholder="Supplier name"
-                      data-testid="input-part-supplier"
-                    />
+                    <Label htmlFor="supplierId">Supplier</Label>
+                    <select
+                      id="supplierId"
+                      value={newPart.supplierId}
+                      onChange={(e) => setNewPart({ ...newPart, supplierId: e.target.value })}
+                      className="w-full p-2 border rounded-md bg-background"
+                      data-testid="select-part-supplier"
+                    >
+                      <option value="">Select supplier (optional)</option>
+                      {Array.isArray(suppliers?.data) && suppliers.data.map((supplier: any) => (
+                        <option key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 
@@ -1104,6 +1119,11 @@ export default function PartsProviderDashboard() {
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-6">
           <AnalyticsDashboard dashboardData={dashboardData} user={user} />
+        </TabsContent>
+
+        {/* Suppliers Tab */}
+        <TabsContent value="suppliers" className="space-y-6">
+          <SuppliersManagement />
         </TabsContent>
       </Tabs>
 
@@ -1950,6 +1970,10 @@ function InventoryPartCard({ part, onStockUpdate, isUpdating, viewMode = 'card' 
 function SuppliersManagement() {
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [supplierToDelete, setSupplierToDelete] = useState<any>(null);
+  const [suppliersSearchQuery, setSuppliersSearchQuery] = useState('');
+  const [suppliersFilterStatus, setSuppliersFilterStatus] = useState('all');
   const [supplierForm, setSupplierForm] = useState({
     name: '',
     contactPerson: '',
@@ -1977,12 +2001,16 @@ function SuppliersManagement() {
 
   const addSupplierMutation = useMutation({
     mutationFn: async (supplierData: typeof supplierForm) => {
-      return await apiRequest('POST', '/api/v1/parts-suppliers', supplierData);
+      if (editingSupplier) {
+        return await apiRequest('PUT', `/api/v1/parts-suppliers/${editingSupplier.id}`, supplierData);
+      } else {
+        return await apiRequest('POST', '/api/v1/parts-suppliers', supplierData);
+      }
     },
     onSuccess: () => {
       toast({
-        title: "Supplier Added!",
-        description: "New supplier has been added successfully.",
+        title: editingSupplier ? "Supplier Updated!" : "Supplier Added!",
+        description: editingSupplier ? "Supplier has been updated successfully." : "New supplier has been added successfully.",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-suppliers'] });
       setIsAddSupplierOpen(false);
@@ -1990,7 +2018,27 @@ function SuppliersManagement() {
     },
     onError: (error: any) => {
       toast({
-        title: "Failed to Add Supplier",
+        title: editingSupplier ? "Failed to Update Supplier" : "Failed to Add Supplier",
+        description: error.message || "Something went wrong",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSupplierMutation = useMutation({
+    mutationFn: async (supplierId: string) => {
+      return await apiRequest('DELETE', `/api/v1/parts-suppliers/${supplierId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Supplier Deleted!",
+        description: "Supplier has been removed successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/parts-suppliers'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to Delete Supplier",
         description: error.message || "Something went wrong",
         variant: "destructive",
       });
@@ -2028,8 +2076,44 @@ function SuppliersManagement() {
 
   const suppliersList = Array.isArray(suppliers?.data) ? suppliers.data : [];
 
+  // Filter suppliers based on search and status
+  const filteredSuppliers = suppliersList.filter((supplier: any) => {
+    const matchesSearch = supplier.name.toLowerCase().includes(suppliersSearchQuery.toLowerCase()) ||
+                         supplier.contactPerson?.toLowerCase().includes(suppliersSearchQuery.toLowerCase()) ||
+                         supplier.email?.toLowerCase().includes(suppliersSearchQuery.toLowerCase());
+    const matchesStatus = suppliersFilterStatus === 'all' || 
+                         (suppliersFilterStatus === 'active' && supplier.isActive) ||
+                         (suppliersFilterStatus === 'inactive' && !supplier.isActive);
+    return matchesSearch && matchesStatus;
+  });
+
   return (
     <div className="space-y-6">
+      {/* Search and Filters */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex-1">
+          <Input
+            placeholder="Search suppliers by name, contact, or email..."
+            value={suppliersSearchQuery}
+            onChange={(e) => setSuppliersSearchQuery(e.target.value)}
+            className="max-w-sm"
+            data-testid="search-suppliers"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Select value={suppliersFilterStatus} onValueChange={setSuppliersFilterStatus}>
+            <SelectTrigger className="w-32" data-testid="filter-supplier-status">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold">Supplier Management</h3>
@@ -2044,9 +2128,12 @@ function SuppliersManagement() {
           </DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Add New Supplier</DialogTitle>
+              <DialogTitle>{editingSupplier ? 'Edit Supplier' : 'Add New Supplier'}</DialogTitle>
               <DialogDescription>
-                Add a new supplier to your network for better inventory management.
+                {editingSupplier 
+                  ? 'Update supplier information and manage their details.'
+                  : 'Add a new supplier to your network for better inventory management.'
+                }
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -2184,15 +2271,62 @@ function SuppliersManagement() {
                 {addSupplierMutation.isPending && (
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                 )}
-                Add Supplier
+                {editingSupplier ? 'Update Supplier' : 'Add Supplier'}
               </Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Supplier</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{supplierToDelete?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (supplierToDelete) {
+                  deleteSupplierMutation.mutate(supplierToDelete.id);
+                  setIsDeleteDialogOpen(false);
+                  setSupplierToDelete(null);
+                }
+              }}
+              disabled={deleteSupplierMutation.isPending}
+              data-testid="button-confirm-delete-supplier"
+            >
+              {deleteSupplierMutation.isPending && (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Delete Supplier
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Suppliers List */}
-      {suppliersList.length === 0 ? (
+      {filteredSuppliers.length === 0 && suppliersSearchQuery ? (
+        <Card>
+          <CardContent className="text-center py-12">
+            <Search className="mx-auto h-16 w-16 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No suppliers found</h3>
+            <p className="text-muted-foreground mb-4">
+              No suppliers match your search criteria. Try adjusting your filters.
+            </p>
+            <Button variant="outline" onClick={() => setSuppliersSearchQuery('')}>
+              Clear Search
+            </Button>
+          </CardContent>
+        </Card>
+      ) : suppliersList.length === 0 ? (
         <Card>
           <CardContent className="text-center py-12">
             <Truck className="mx-auto h-16 w-16 text-muted-foreground mb-4" />
@@ -2208,7 +2342,7 @@ function SuppliersManagement() {
         </Card>
       ) : (
         <div className="grid gap-4">
-          {suppliersList.map((supplier: any) => (
+          {filteredSuppliers.map((supplier: any) => (
             <Card key={supplier.id} data-testid={`card-supplier-${supplier.id}`}>
               <CardContent className="p-6">
                 <div className="flex items-start justify-between">
@@ -2291,9 +2425,13 @@ function SuppliersManagement() {
                     <Button
                       size="sm"
                       variant="outline"
-                      data-testid={`button-view-supplier-${supplier.id}`}
+                      onClick={() => {
+                        setSupplierToDelete(supplier);
+                        setIsDeleteDialogOpen(true);
+                      }}
+                      data-testid={`button-delete-supplier-${supplier.id}`}
                     >
-                      <FileText className="h-4 w-4" />
+                      <AlertTriangle className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
