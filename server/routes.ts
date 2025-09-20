@@ -589,45 +589,67 @@ export function registerRoutes(app: Express): Server {
   // /api/auth/user - Get current authenticated user
   app.get('/api/auth/user', async (req: Request, res: Response) => {
     try {
-      // Check for authorization header
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ 
-          message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
-        });
-      }
+      let user = null;
 
-      // Extract and verify token
-      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-      const decoded = await jwtService.verifyAccessToken(token);
-      
-      if (!decoded) {
-        return res.status(401).json({ 
-          message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
-        });
-      }
-
-      // Get user data
-      const user = await storage.getUser(decoded.userId);
-      if (!user) {
-        return res.status(404).json({ 
-          message: 'User not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        data: {
-          id: user.id,
-          phone: user.phone,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          email: user.email,
-          profileImageUrl: user.profileImageUrl,
-          role: user.role,
-          isActive: user.isActive,
+      // PRIORITY 1: Check for Replit OAuth session (via passport)
+      if ((req as any).user) {
+        const userId = (req as any).user.id || (req as any).user.claims?.sub;
+        if (userId) {
+          console.log(`🔐 /api/auth/user: Found Replit OAuth session for userId: ${userId}`);
+          user = await storage.getUser(userId);
+          
+          if (user && user.isActive) {
+            console.log(`✅ /api/auth/user: Replit OAuth user ${userId} authenticated successfully`);
+            return res.json({
+              success: true,
+              data: {
+                id: user.id,
+                phone: user.phone,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                profileImageUrl: user.profileImageUrl,
+                role: user.role,
+                isActive: user.isActive,
+              }
+            });
+          }
         }
+      }
+
+      // PRIORITY 2: Check for JWT token in Authorization header (phone login)
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+        const decoded = await jwtService.verifyAccessToken(token);
+        
+        if (decoded) {
+          user = await storage.getUser(decoded.userId);
+          if (user && user.isActive) {
+            console.log(`✅ /api/auth/user: JWT user ${decoded.userId} authenticated successfully`);
+            return res.json({
+              success: true,
+              data: {
+                id: user.id,
+                phone: user.phone,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                profileImageUrl: user.profileImageUrl,
+                role: user.role,
+                isActive: user.isActive,
+              }
+            });
+          }
+        }
+      }
+
+      // No valid authentication found
+      console.log('ℹ️ /api/auth/user: No valid authentication found');
+      return res.status(401).json({ 
+        message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
       });
+
     } catch (error) {
       console.error('❌ /api/auth/user error:', error);
       res.status(401).json({ 
