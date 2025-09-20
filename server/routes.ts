@@ -2503,7 +2503,247 @@ export function registerRoutes(app: Express): void {
     });
   });
 
-  // Provider endpoints
+  // ========================================
+  // SERVICE PROVIDER DASHBOARD ENDPOINTS
+  // ========================================
+  
+  // GET /api/v1/providers/me/job-requests - Get provider's assigned jobs
+  app.get('/api/v1/providers/me/job-requests', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      
+      // Get all job requests for this provider
+      const jobRequests = await storage.getProviderJobRequests(user.id);
+      
+      // Transform the data to match frontend expectations
+      const transformedData = {
+        pendingOffers: jobRequests.filter(job => job.status === 'sent'),
+        activeJobs: jobRequests.filter(job => ['accepted', 'in_progress', 'started', 'provider_assigned', 'work_in_progress'].includes(job.status)),
+        recentJobs: jobRequests.filter(job => ['completed', 'cancelled', 'work_completed'].includes(job.status)),
+        totalOffers: jobRequests.filter(job => job.status === 'sent').length,
+        totalActive: jobRequests.filter(job => ['accepted', 'in_progress', 'started', 'provider_assigned', 'work_in_progress'].includes(job.status)).length,
+        totalCompleted: jobRequests.filter(job => ['completed', 'cancelled', 'work_completed'].includes(job.status)).length
+      };
+
+      console.log(`✅ GET /api/v1/providers/me/job-requests: Retrieved ${jobRequests.length} job requests for provider ${user.id}`);
+      res.json({
+        success: true,
+        data: transformedData
+      });
+    } catch (error) {
+      console.error('❌ Error fetching provider job requests:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch job requests'
+      });
+    }
+  });
+
+  // GET /api/v1/providers/profile - Get provider profile data
+  app.get('/api/v1/providers/profile', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      
+      // Get provider profile from storage
+      const profile = await storage.getServiceProviderProfile(user.id);
+      
+      if (!profile) {
+        return res.status(404).json({
+          success: false,
+          message: 'Provider profile not found'
+        });
+      }
+
+      console.log(`✅ GET /api/v1/providers/profile: Retrieved profile for provider ${user.id}`);
+      res.json({
+        success: true,
+        profile: profile
+      });
+    } catch (error) {
+      console.error('❌ Error fetching provider profile:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch provider profile'
+      });
+    }
+  });
+
+  // POST /api/v1/orders/:id/accept - Accept service order
+  app.post('/api/v1/orders/:id/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { estimatedArrival, quotedPrice, notes } = req.body;
+
+      console.log(`🔄 Provider ${user.id} accepting order ${orderId}`);
+
+      // Check if order exists and provider has access
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      // Accept the job request
+      const result = await storage.acceptJobRequest(orderId, user.id, {
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : null,
+        quotedPrice: quotedPrice ? parseFloat(quotedPrice) : null,
+        notes: notes || null
+      });
+
+      // Send WebSocket notification to customer
+      if (webSocketManager && order.userId) {
+        webSocketManager.sendToUser(order.userId, {
+          type: 'order_accepted',
+          orderId: orderId,
+          providerId: user.id,
+          message: 'Your service order has been accepted by a provider',
+          estimatedArrival,
+          quotedPrice
+        });
+      }
+
+      console.log(`✅ Order ${orderId} accepted by provider ${user.id}`);
+      res.json({
+        success: true,
+        message: 'Order accepted successfully',
+        data: result
+      });
+    } catch (error) {
+      console.error('❌ Error accepting order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to accept order'
+      });
+    }
+  });
+
+  // POST /api/v1/orders/:id/decline - Decline service order
+  app.post('/api/v1/orders/:id/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { reason } = req.body;
+
+      console.log(`🔄 Provider ${user.id} declining order ${orderId}`);
+
+      // Check if order exists
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      // Decline the job request
+      await storage.declineJobRequest(orderId, user.id, reason || 'Provider declined');
+
+      console.log(`✅ Order ${orderId} declined by provider ${user.id}`);
+      res.json({
+        success: true,
+        message: 'Order declined successfully'
+      });
+    } catch (error) {
+      console.error('❌ Error declining order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to decline order'
+      });
+    }
+  });
+
+  // POST /api/v1/orders/:id/start - Start service order
+  app.post('/api/v1/orders/:id/start', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { location, notes } = req.body;
+
+      console.log(`🔄 Provider ${user.id} starting work on order ${orderId}`);
+
+      // Update order status to work in progress
+      const updatedOrder = await storage.updateOrderStatus(orderId, 'work_in_progress', {
+        startedBy: user.id,
+        startedAt: new Date().toISOString(),
+        providerLocation: location,
+        providerNotes: notes
+      });
+
+      // Send WebSocket notification to customer
+      if (webSocketManager && updatedOrder.userId) {
+        webSocketManager.sendToUser(updatedOrder.userId, {
+          type: 'order_started',
+          orderId: orderId,
+          providerId: user.id,
+          message: 'Your service provider has started working on your order',
+          providerLocation: location
+        });
+      }
+
+      console.log(`✅ Work started on order ${orderId} by provider ${user.id}`);
+      res.json({
+        success: true,
+        message: 'Work started successfully',
+        data: updatedOrder
+      });
+    } catch (error) {
+      console.error('❌ Error starting work on order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to start work'
+      });
+    }
+  });
+
+  // POST /api/v1/orders/:id/complete - Complete service order
+  app.post('/api/v1/orders/:id/complete', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: orderId } = req.params;
+      const { completionNotes, images, finalPrice } = req.body;
+
+      console.log(`🔄 Provider ${user.id} completing order ${orderId}`);
+
+      // Update order status to completed
+      const updatedOrder = await storage.updateOrderStatus(orderId, 'work_completed', {
+        completedBy: user.id,
+        completedAt: new Date().toISOString(),
+        completionNotes,
+        workImages: images,
+        finalPrice: finalPrice ? parseFloat(finalPrice) : null
+      });
+
+      // Send WebSocket notification to customer
+      if (webSocketManager && updatedOrder.userId) {
+        webSocketManager.sendToUser(updatedOrder.userId, {
+          type: 'order_completed',
+          orderId: orderId,
+          providerId: user.id,
+          message: 'Your service has been completed. Please review and confirm payment.',
+          completionNotes,
+          finalPrice
+        });
+      }
+
+      console.log(`✅ Order ${orderId} completed by provider ${user.id}`);
+      res.json({
+        success: true,
+        message: 'Order completed successfully',
+        data: updatedOrder
+      });
+    } catch (error) {
+      console.error('❌ Error completing order:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to complete order'
+      });
+    }
+  });
+
+  // Provider endpoints (legacy)
   app.get('/api/v1/providers', async (req, res) => {
     res.status(501).json({ 
       message: 'Providers endpoint temporarily unavailable',

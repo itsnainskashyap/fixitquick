@@ -2501,9 +2501,52 @@ export class PostgresStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(and(
-        eq(providerJobRequests.bookingId, bookingId),
+        eq(providerJobRequests.orderId, bookingId),
         eq(providerJobRequests.providerId, providerId)
       ));
+  }
+
+  // GET provider's job requests - used by service provider dashboard
+  async getProviderJobRequests(providerId: string): Promise<ProviderJobRequest[]> {
+    const result = await db.select()
+      .from(providerJobRequests)
+      .where(eq(providerJobRequests.providerId, providerId))
+      .orderBy(desc(providerJobRequests.createdAt));
+    
+    return result;
+  }
+
+  // ACCEPT job request - used by service provider endpoints
+  async acceptJobRequest(orderId: string, providerId: string, acceptanceData?: {
+    estimatedArrival?: Date | null;
+    quotedPrice?: number | null;
+    notes?: string | null;
+  }): Promise<ProviderJobRequest> {
+    const result = await db.update(providerJobRequests)
+      .set({
+        status: 'accepted',
+        respondedAt: new Date(),
+        estimatedArrival: acceptanceData?.estimatedArrival || null,
+        quotedPrice: acceptanceData?.quotedPrice?.toString() || null,
+        acceptanceNotes: acceptanceData?.notes || null
+      })
+      .where(and(
+        eq(providerJobRequests.orderId, orderId),
+        eq(providerJobRequests.providerId, providerId)
+      ))
+      .returning();
+
+    if (!result[0]) {
+      throw new Error('Job request not found or already processed');
+    }
+
+    // Also update the order/booking status to accepted
+    await this.updateOrderStatus(orderId, 'accepted', {
+      acceptedBy: providerId,
+      acceptedAt: new Date().toISOString()
+    });
+
+    return result[0];
   }
 
   async getValidStatusTransitions(currentStatus: string, userRole: string): Promise<string[]> {

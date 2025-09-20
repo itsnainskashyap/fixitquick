@@ -119,12 +119,16 @@ export default function ServiceProviderDashboard() {
     enabled: !!user && user.role === 'service_provider',
     refetchInterval: 30000, // Refetch every 30 seconds
     select: (data: any) => {
-      // Transform backend data to match component expectations
-      const jobs = Array.isArray(data) ? data : data?.jobs || [];
+      // Backend returns { success: true, data: { pendingOffers, activeJobs, recentJobs, ... } }
+      // Use the structured data directly from backend
+      const backendData = data?.data || {};
       return {
-        pendingOffers: jobs.filter((job: any) => job.status === 'sent'),
-        activeJobs: jobs.filter((job: any) => ['accepted', 'in_progress', 'started', 'provider_assigned', 'work_in_progress'].includes(job.status)),
-        recentJobs: jobs.filter((job: any) => ['completed', 'cancelled', 'work_completed'].includes(job.status)),
+        pendingOffers: backendData.pendingOffers || [],
+        activeJobs: backendData.activeJobs || [],
+        recentJobs: backendData.recentJobs || [],
+        totalOffers: backendData.totalOffers || 0,
+        totalActive: backendData.totalActive || 0,
+        totalCompleted: backendData.totalCompleted || 0,
       };
     },
   });
