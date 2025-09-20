@@ -646,9 +646,11 @@ export function registerRoutes(app: Express): Server {
       });
     } catch (error) {
       console.error('❌ /api/v1/services/categories/main error:', error);
-      res.status(501).json({ 
-        message: 'API endpoint temporarily unavailable',
-        error: 'Feature under maintenance'
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch categories: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch categories'
       });
     }
   });
@@ -671,21 +673,16 @@ export function registerRoutes(app: Express): Server {
       });
     } catch (error) {
       console.error('❌ /api/v1/wallet/balance error:', error);
-      res.status(501).json({ 
-        message: 'API endpoint temporarily unavailable',
-        error: 'Feature under maintenance'
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development'
+          ? `Failed to fetch wallet balance: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch wallet balance'
       });
     }
   });
 
-  // /api/login - This is handled by replitAuth.ts but we need a fallback
-  app.get('/api/login', (req: Request, res: Response) => {
-    res.status(501).json({ 
-      message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]',
-      error: 'Feature under maintenance',
-      endpoint: '/api/login'
-    });
-  });
+  // /api/login - Remove conflicting fallback, let replitAuth.ts handle it
 
   // ============================
   // 501 NOT IMPLEMENTED RESPONSES FOR OTHER ENDPOINTS
