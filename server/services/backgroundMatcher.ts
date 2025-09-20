@@ -573,6 +573,454 @@ export class BackgroundMatcher {
   }
 
   /**
+   * Handle provider acceptance of job offer with complete state machine integration
+   */
+  async handleProviderAcceptance(bookingId: string, providerId: string, acceptanceDetails?: {
+    estimatedArrival?: Date;
+    quotedPrice?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(`✅ BackgroundMatcher: Handling provider acceptance for booking ${bookingId} by provider ${providerId}`);
+
+      // Use storage method with race condition protection
+      const result = await storage.acceptProviderJobRequest(bookingId, providerId, acceptanceDetails);
+      
+      if (result.success && result.booking) {
+        // Create status history for acceptance
+        await storage.createOrderStatusHistory({
+          orderId: bookingId,
+          fromStatus: 'provider_search',
+          toStatus: 'provider_assigned',
+          changedBy: providerId,
+          changedByRole: 'provider',
+          reason: 'Provider accepted job offer',
+          metadata: acceptanceDetails,
+        });
+
+        // Send welcome chat message from system
+        await storage.createOrderChatMessage({
+          orderId: bookingId,
+          senderId: 'system',
+          senderRole: 'system',
+          messageType: 'status_update',
+          content: `Your service provider has been assigned and will arrive soon! ${acceptanceDetails?.estimatedArrival ? `Estimated arrival: ${new Date(acceptanceDetails.estimatedArrival).toLocaleTimeString()}` : ''}`,
+          isSystemMessage: true,
+        });
+
+        // Emit WebSocket events for real-time updates
+        if (this.webSocketManager) {
+          // Notify customer
+          this.webSocketManager.sendToUser(result.booking.userId, {
+            type: 'order.provider_assigned',
+            data: {
+              bookingId,
+              providerId,
+              status: 'provider_assigned',
+              estimatedArrival: acceptanceDetails?.estimatedArrival,
+              quotedPrice: acceptanceDetails?.quotedPrice,
+              message: 'Great news! A service provider has accepted your request.',
+              providerInfo: {
+                // Will be populated by frontend from provider profile
+                name: 'Your Service Provider',
+                rating: 4.8,
+                experience: '5+ years'
+              }
+            }
+          });
+
+          // Notify provider about successful assignment
+          this.webSocketManager.sendToUser(providerId, {
+            type: 'job.accepted_confirmed',
+            data: {
+              bookingId,
+              status: 'provider_assigned',
+              customerLocation: result.booking.serviceLocation,
+              customerInfo: {
+                name: result.booking.customerName
+              },
+              nextSteps: [
+                'Review customer location and requirements',
+                'Start heading to the location',
+                'Update your status when en route'
+              ]
+            }
+          });
+        }
+
+        console.log(`✅ BackgroundMatcher: Successfully processed provider acceptance for booking ${bookingId}`);
+        return { success: true };
+      }
+
+      return result;
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error handling provider acceptance:`, error);
+      return { success: false, message: 'Failed to process provider acceptance' };
+    }
+  }
+
+  /**
+   * Handle provider declining job offer
+   */
+  async handleProviderDecline(bookingId: string, providerId: string, reason?: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(`❌ BackgroundMatcher: Handling provider decline for booking ${bookingId} by provider ${providerId}`);
+
+      const result = await storage.declineProviderJobRequest(bookingId, providerId, reason);
+      
+      if (result.success) {
+        // Continue matching with remaining providers or expand radius
+        const booking = await storage.getServiceBooking(bookingId);
+        if (booking && booking.status === 'provider_search') {
+          // Check if there are still pending offers
+          const pendingOffers = await storage.getProviderJobRequests(providerId, { status: 'sent' });
+          
+          if (pendingOffers.length === 0) {
+            // No more pending offers, trigger radius expansion
+            setTimeout(() => {
+              this.handleRadiusExpansion(booking);
+            }, 2000); // Small delay to allow other potential acceptances
+          }
+        }
+
+        console.log(`✅ BackgroundMatcher: Successfully processed provider decline for booking ${bookingId}`);
+        return { success: true };
+      }
+
+      return result;
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error handling provider decline:`, error);
+      return { success: false, message: 'Failed to process provider decline' };
+    }
+  }
+
+  /**
+   * Handle provider status updates (enroute, arrived, started, etc.)
+   */
+  async updateProviderStatus(bookingId: string, providerId: string, status: 'enroute' | 'arrived' | 'started' | 'in_progress' | 'completed', metadata?: any): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(`🔄 BackgroundMatcher: Updating provider status for booking ${bookingId} to ${status}`);
+
+      // Validate state transition
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking) {
+        return { success: false, message: 'Booking not found' };
+      }
+
+      // Map provider status to booking status
+      const statusMapping: Record<string, string> = {
+        'enroute': 'provider_on_way',
+        'arrived': 'work_in_progress',
+        'started': 'work_in_progress',
+        'in_progress': 'work_in_progress',
+        'completed': 'work_completed'
+      };
+
+      const newBookingStatus = statusMapping[status];
+      if (!newBookingStatus) {
+        return { success: false, message: 'Invalid status update' };
+      }
+
+      // Use enhanced state transition method
+      const transitionResult = await storage.transitionOrderState(
+        bookingId,
+        newBookingStatus,
+        providerId,
+        `Provider updated status to ${status}`,
+        metadata
+      );
+
+      if (!transitionResult.success) {
+        return transitionResult;
+      }
+
+      // Update booking status
+      await storage.updateServiceBooking(bookingId, { 
+        status: newBookingStatus,
+        ...(status === 'completed' && { completedAt: new Date() })
+      });
+
+      // Create location update if location data provided
+      if (metadata?.location && (status === 'enroute' || status === 'arrived')) {
+        await storage.createLocationUpdate({
+          orderId: bookingId,
+          providerId,
+          latitude: metadata.location.latitude,
+          longitude: metadata.location.longitude,
+          status: status === 'arrived' ? 'arrived' : 'enroute',
+          accuracy: metadata.location.accuracy,
+          estimatedArrival: metadata.estimatedArrival,
+          isSharedWithCustomer: true,
+          shareLevel: 'approximate',
+        });
+      }
+
+      // Send status update chat message
+      const statusMessages: Record<string, string> = {
+        'enroute': 'Your service provider is on the way! 🚗',
+        'arrived': 'Your service provider has arrived at your location! 📍',
+        'started': 'Work has started on your service request! 🔧',
+        'in_progress': 'Work is currently in progress... ⚙️',
+        'completed': 'Work has been completed! Please review and rate the service. ✅'
+      };
+
+      await storage.createOrderChatMessage({
+        orderId: bookingId,
+        senderId: 'system',
+        senderRole: 'system',
+        messageType: 'status_update',
+        content: statusMessages[status] || `Status updated to ${status}`,
+        isSystemMessage: true,
+      });
+
+      // Emit WebSocket events for real-time updates
+      if (this.webSocketManager) {
+        // Notify customer
+        this.webSocketManager.sendToUser(booking.userId, {
+          type: 'order.status_updated',
+          data: {
+            bookingId,
+            status: newBookingStatus,
+            providerStatus: status,
+            timestamp: new Date(),
+            location: metadata?.location,
+            estimatedArrival: metadata?.estimatedArrival,
+            message: statusMessages[status],
+          }
+        });
+
+        // Notify provider of successful status update
+        this.webSocketManager.sendToUser(providerId, {
+          type: 'job.status_updated',
+          data: {
+            bookingId,
+            status: newBookingStatus,
+            providerStatus: status,
+            timestamp: new Date(),
+          }
+        });
+      }
+
+      // Handle completion flow
+      if (status === 'completed') {
+        await this.handleOrderCompletion(bookingId, providerId);
+      }
+
+      console.log(`✅ BackgroundMatcher: Successfully updated provider status for booking ${bookingId} to ${status}`);
+      return { success: true };
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error updating provider status:`, error);
+      return { success: false, message: 'Failed to update provider status' };
+    }
+  }
+
+  /**
+   * Handle order completion workflow
+   */
+  private async handleOrderCompletion(bookingId: string, providerId: string): Promise<void> {
+    try {
+      console.log(`🎉 BackgroundMatcher: Handling order completion for booking ${bookingId}`);
+
+      // Generate completion certificate
+      await storage.createOrderDocument({
+        orderId: bookingId,
+        documentType: 'completion_certificate',
+        title: 'Service Completion Certificate',
+        description: 'Certificate confirming successful completion of service',
+        url: `/api/documents/completion/${bookingId}`, // Will be generated by document service
+        uploadedBy: providerId,
+        uploadedByRole: 'provider',
+        isPublic: false,
+      });
+
+      // Create system message for completion
+      await storage.createOrderChatMessage({
+        orderId: bookingId,
+        senderId: 'system',
+        senderRole: 'system',
+        messageType: 'status_update',
+        content: 'Service completed successfully! 🎉 Please take a moment to rate your experience and provide feedback.',
+        isSystemMessage: true,
+      });
+
+      // Emit completion events
+      if (this.webSocketManager) {
+        const booking = await storage.getServiceBooking(bookingId);
+        if (booking) {
+          // Notify customer
+          this.webSocketManager.sendToUser(booking.userId, {
+            type: 'order.completed',
+            data: {
+              bookingId,
+              status: 'work_completed',
+              completedAt: new Date(),
+              message: 'Service completed successfully!',
+              nextSteps: [
+                'Rate your service provider',
+                'Provide feedback',
+                'Download receipt'
+              ]
+            }
+          });
+
+          // Notify provider
+          this.webSocketManager.sendToUser(providerId, {
+            type: 'job.completed',
+            data: {
+              bookingId,
+              status: 'work_completed',
+              completedAt: new Date(),
+              message: 'Job marked as completed!',
+              nextSteps: [
+                'Rate your customer',
+                'Submit any final documentation',
+                'Wait for payment processing'
+              ]
+            }
+          });
+        }
+      }
+
+      console.log(`✅ BackgroundMatcher: Successfully processed order completion for booking ${bookingId}`);
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error handling order completion:`, error);
+    }
+  }
+
+  /**
+   * Handle order cancellation workflow
+   */
+  async handleOrderCancellation(bookingId: string, cancelledBy: string, cancelledByRole: 'customer' | 'provider' | 'admin', reason: string, customReason?: string): Promise<{ success: boolean; message?: string; refundInfo?: any }> {
+    try {
+      console.log(`🚫 BackgroundMatcher: Handling order cancellation for booking ${bookingId} by ${cancelledByRole} ${cancelledBy}`);
+
+      const booking = await storage.getServiceBooking(bookingId);
+      if (!booking) {
+        return { success: false, message: 'Booking not found' };
+      }
+
+      // Get cancellation policy
+      const policy = await storage.getCancellationPolicy(booking.serviceId);
+      
+      // Calculate hours before service
+      const hoursBeforeService = booking.scheduledAt 
+        ? (new Date(booking.scheduledAt).getTime() - new Date().getTime()) / (1000 * 60 * 60)
+        : 0;
+
+      // Calculate refund based on policy and timing
+      let refundPercent = 0;
+      let penaltyAmount = 0;
+
+      if (policy) {
+        if (hoursBeforeService >= policy.freeHours) {
+          refundPercent = policy.freeRefundPercent;
+        } else if (hoursBeforeService >= policy.partialRefundHours) {
+          refundPercent = policy.partialRefundPercent;
+        } else {
+          refundPercent = policy.noRefundPercent;
+        }
+
+        // Calculate provider penalty if provider cancels
+        if (cancelledByRole === 'provider' && hoursBeforeService < policy.freeHours) {
+          penaltyAmount = (booking.totalAmount * policy.providerPenaltyPercent) / 100;
+        }
+      }
+
+      const refundAmount = (booking.totalAmount * refundPercent) / 100;
+
+      // Create cancellation record
+      const cancellation = await storage.createOrderCancellation({
+        orderId: bookingId,
+        cancelledBy,
+        cancelledByRole,
+        reason,
+        customReason,
+        policyId: policy?.id,
+        hoursBeforeService,
+        appliedRefundPercent: refundPercent,
+        refundAmount,
+        penaltyAmount,
+      });
+
+      // Update booking status
+      await storage.transitionOrderState(
+        bookingId,
+        'cancelled',
+        cancelledBy,
+        `Order cancelled: ${reason}`,
+        { refundPercent, refundAmount, penaltyAmount }
+      );
+
+      await storage.updateServiceBooking(bookingId, { 
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancelReason: reason,
+      });
+
+      // Cancel any pending job requests
+      await storage.cancelAllJobRequests(bookingId);
+
+      // Create cancellation chat message
+      await storage.createOrderChatMessage({
+        orderId: bookingId,
+        senderId: 'system',
+        senderRole: 'system',
+        messageType: 'status_update',
+        content: `Order has been cancelled. ${refundAmount > 0 ? `Refund of ₹${refundAmount} will be processed within 3-5 business days.` : ''}`,
+        isSystemMessage: true,
+      });
+
+      // Emit cancellation events
+      if (this.webSocketManager) {
+        const cancelData = {
+          bookingId,
+          status: 'cancelled',
+          cancelledBy: cancelledByRole,
+          reason,
+          refundAmount,
+          refundPercent,
+          cancelledAt: new Date(),
+        };
+
+        // Notify customer
+        this.webSocketManager.sendToUser(booking.userId, {
+          type: 'order.cancelled',
+          data: {
+            ...cancelData,
+            message: `Order cancelled: ${reason}`,
+          }
+        });
+
+        // Notify provider if assigned
+        if (booking.assignedProviderId) {
+          this.webSocketManager.sendToUser(booking.assignedProviderId, {
+            type: 'job.cancelled',
+            data: {
+              ...cancelData,
+              message: `Job cancelled: ${reason}`,
+            }
+          });
+        }
+      }
+
+      console.log(`✅ BackgroundMatcher: Successfully processed order cancellation for booking ${bookingId}`);
+      return { 
+        success: true, 
+        refundInfo: {
+          refundAmount,
+          refundPercent,
+          penaltyAmount,
+          hoursBeforeService
+        }
+      };
+    } catch (error) {
+      console.error(`❌ BackgroundMatcher: Error handling order cancellation:`, error);
+      return { success: false, message: 'Failed to process cancellation' };
+    }
+  }
+
+  /**
    * Handle orders where the 5-minute matching timer has expired
    */
   private async handleExpiredMatching(booking: any) {
@@ -591,6 +1039,15 @@ export class BackgroundMatcher {
         assignmentMethod: 'timeout',
         matchingExpiresAt: null, // Clear expiry since matching is done
         pendingOffers: 0,
+      });
+
+      // Create status history
+      await storage.createOrderStatusHistory({
+        orderId: bookingId,
+        fromStatus: 'provider_search',
+        toStatus: 'no_providers_found',
+        changedByRole: 'system',
+        reason: 'Matching timer expired - no providers accepted within time limit',
       });
 
       // Emit WebSocket events for expiry

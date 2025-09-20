@@ -795,7 +795,9 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
     try {
       const stats = await storage.getOtpStatistics(hours);
       return {
-        ...stats,
+        totalSent: stats.totalChallenges,
+        totalVerified: stats.successfulVerifications,
+        successRate: stats.totalChallenges > 0 ? (stats.successfulVerifications / stats.totalChallenges) * 100 : 0,
         activeMode: this.isStubMode ? 'stub' : 'twilio',
         environment: this.config.environment,
         hasValidCredentials: this.hasValidCredentials,
@@ -1388,14 +1390,13 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
       }
 
       // Use Twilio's built-in webhook signature validation
-      const expectedSignature = twilio.validateRequest(
-        this.config.authToken,
-        payload,
-        signature,
-        url
-      );
-
-      return expectedSignature;
+      const crypto = require('crypto');
+      const expectedSignature = crypto
+        .createHmac('sha1', this.config.authToken)
+        .update(url + payload)
+        .digest('base64');
+      
+      return expectedSignature === signature;
     } catch (error) {
       console.error('Error verifying webhook signature:', error);
       return false;
@@ -1413,17 +1414,14 @@ ${this.config.serviceName.toLowerCase()}.app #${this.generateWebOTPHash()}`;
 
       // Log the call event in phone call logs
       await storage.createPhoneCallLog({
-        id: `call_log_${CallSid}_${Date.now()}`,
         providerId: '', // Will be filled from job request lookup
-        callId: CallSid,
+        twilioCallSid: CallSid,
+        fromNumber: this.config.fromNumber || '',
+        toNumber: '', // Will be filled from job request lookup
         status: CallStatus,
         duration: Duration ? parseInt(Duration) : undefined,
         errorCode: ErrorCode,
-        errorMessage: ErrorMessage,
-        timestamp: new Date(),
-        callDirection: 'outbound',
-        cost: 0, // Will be updated later if available
-        webhookData: JSON.stringify(webhookData)
+        errorMessage: ErrorMessage
       });
 
       // Update job request status based on call status

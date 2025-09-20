@@ -73,7 +73,14 @@ import {
   promotionalMedia,
   promotionalMediaAnalytics,
   // Service request schemas
-  insertServiceRequestSchema
+  insertServiceRequestSchema,
+  // SECURITY: Order lifecycle validation schemas
+  orderAcceptanceSchema,
+  orderDeclineSchema,
+  orderStatusUpdateSchema,
+  orderLocationUpdateSchema,
+  orderChatMessageSchema,
+  insertOrderRatingSchema
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -5182,7 +5189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Only order customer can submit review' });
       }
       
-      if (order.status !== 'completed') {
+      if (order.status !== 'completed' && order.status !== 'work_completed') {
         return res.status(400).json({ message: 'Can only review completed orders' });
       }
       
@@ -5201,6 +5208,1126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error submitting review:', error);
       res.status(500).json({ message: 'Failed to submit review' });
+    }
+  });
+
+  // ========================================
+  // ENHANCED ORDER LIFECYCLE API ROUTES
+  // ========================================
+
+  // Enhanced Bidirectional Rating & Review System
+  app.post('/api/v1/orders/:orderId/rating', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      const ratingData = req.body;
+      
+      console.log(`📊 Creating rating for order ${orderId} by user ${userId}`);
+      
+      // Use proper validation schema from shared/schema.ts
+      const ratingValidationSchema = insertOrderRatingSchema.omit({ 
+        orderId: true, 
+        raterId: true, 
+        raterRole: true 
+      });
+      
+      const validatedData = ratingValidationSchema.parse(ratingData);
+      
+      // Get order and determine user role
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Determine rater role
+      let raterRole: 'customer' | 'provider';
+      if (booking.userId === userId) {
+        raterRole = 'customer';
+      } else if (booking.assignedProviderId === userId) {
+        raterRole = 'provider';
+      } else {
+        return res.status(403).json({ message: 'Only order participants can submit ratings' });
+      }
+      
+      // Check if order is completed
+      if (booking.status !== 'work_completed' && booking.status !== 'completed') {
+        return res.status(400).json({ message: 'Can only rate completed orders' });
+      }
+      
+      // Create rating
+      const rating = await storage.createOrderRating({
+        orderId,
+        raterId: userId,
+        raterRole,
+        ...validatedData,
+      });
+      
+      console.log(`✅ Rating created successfully for order ${orderId}`);
+      res.json({ success: true, rating });
+    } catch (error) {
+      console.error('Error creating rating:', error);
+      res.status(500).json({ message: 'Failed to create rating' });
+    }
+  });
+
+  // Get order ratings
+  app.get('/api/v1/orders/:orderId/ratings', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const ratings = await storage.getOrderRatings(orderId);
+      res.json(ratings);
+    } catch (error) {
+      console.error('Error fetching ratings:', error);
+      res.status(500).json({ message: 'Failed to fetch ratings' });
+    }
+  });
+
+  // Provider Accept Job Offer - SECURITY FIXED: Added requireRole(['service_provider']) and Zod validation
+  app.post('/api/v1/orders/:orderId/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      
+      // SECURITY: Validate input with Zod schema to prevent bad state injection
+      const validationResult = orderAcceptanceSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        console.warn(`❌ Invalid acceptance data for order ${orderId}:`, validationResult.error.issues);
+        return res.status(400).json({ 
+          message: 'Invalid acceptance details',
+          errors: validationResult.error.issues
+        });
+      }
+      
+      const acceptanceDetails = validationResult.data;
+      
+      console.log(`✅ Provider ${providerId} accepting order ${orderId} with validated data`);
+      
+      // Use BackgroundMatcher for proper state management
+      const { backgroundMatcher } = await import('./services/backgroundMatcher');
+      const result = await backgroundMatcher.handleProviderAcceptance(orderId, providerId, acceptanceDetails);
+      
+      if (result.success) {
+        res.json({ success: true, message: 'Job accepted successfully' });
+      } else {
+        res.status(400).json({ success: false, message: result.message });
+      }
+    } catch (error) {
+      console.error('Error accepting job:', error);
+      res.status(500).json({ message: 'Failed to accept job' });
+    }
+  });
+
+  // Provider Decline Job Offer - SECURITY FIXED: Added requireRole(['service_provider']) and Zod validation
+  app.post('/api/v1/orders/:orderId/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      
+      // SECURITY: Validate input with Zod schema to prevent bad state injection
+      const validationResult = orderDeclineSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        console.warn(`❌ Invalid decline data for order ${orderId}:`, validationResult.error.issues);
+        return res.status(400).json({ 
+          message: 'Invalid decline details',
+          errors: validationResult.error.issues
+        });
+      }
+      
+      const { reason, customReason, suggestedAlternative } = validationResult.data;
+      
+      console.log(`❌ Provider ${providerId} declining order ${orderId} with validated reason: ${reason}`);
+      
+      // Use BackgroundMatcher for proper state management
+      const { backgroundMatcher } = await import('./services/backgroundMatcher');
+      const result = await backgroundMatcher.handleProviderDecline(orderId, providerId, reason, customReason);
+      
+      if (result.success) {
+        res.json({ success: true, message: 'Job declined successfully' });
+      } else {
+        res.status(400).json({ success: false, message: result.message });
+      }
+    } catch (error) {
+      console.error('Error declining job:', error);
+      res.status(500).json({ message: 'Failed to decline job' });
+    }
+  });
+
+  // ========================================
+  // DEDICATED STATE TRANSITION ENDPOINTS
+  // ========================================
+
+  // Provider marks order as en route
+  app.post('/api/v1/orders/:orderId/enroute', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const { estimatedArrival, currentLocation } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Validate booking and provider authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking || booking.assignedProviderId !== providerId) {
+        return res.status(403).json({ message: 'Not authorized for this order' });
+      }
+
+      // Validate state transition
+      const canUpdate = await storage.validateBookingStatusUpdate(orderId, 'provider_on_way', providerId, 'service_provider');
+      if (!canUpdate.allowed) {
+        return res.status(400).json({ message: canUpdate.reason });
+      }
+
+      // Update booking status
+      const updatedBooking = await storage.updateServiceBooking(orderId, {
+        status: 'provider_on_way',
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined
+      });
+
+      // Create status history
+      await storage.createOrderStatusHistory({
+        orderId,
+        fromStatus: booking.status,
+        toStatus: 'provider_on_way',
+        changedBy: providerId,
+        changedByRole: 'provider',
+        notes: 'Provider is en route to service location'
+      });
+
+      // Create location update if provided
+      if (currentLocation) {
+        await storage.createLocationUpdate({
+          orderId,
+          providerId,
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
+          accuracy: currentLocation.accuracy,
+          status: 'enroute',
+          estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined
+        });
+      }
+
+      // Send real-time WebSocket event
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.provider_enroute',
+          data: {
+            orderId,
+            estimatedArrival,
+            currentLocation,
+            message: 'Your service provider is on the way!'
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Status updated to en route',
+        booking: updatedBooking
+      });
+    } catch (error) {
+      console.error('Error updating to enroute:', error);
+      res.status(500).json({ message: 'Failed to update status' });
+    }
+  });
+
+  // Provider marks as arrived/started
+  app.post('/api/v1/orders/:orderId/arrived', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const { arrivalLocation, notes } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Validate booking and provider authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking || booking.assignedProviderId !== providerId) {
+        return res.status(403).json({ message: 'Not authorized for this order' });
+      }
+
+      // Validate state transition  
+      const canUpdate = await storage.validateBookingStatusUpdate(orderId, 'work_in_progress', providerId, 'service_provider');
+      if (!canUpdate.allowed) {
+        return res.status(400).json({ message: canUpdate.reason });
+      }
+
+      // Update booking status
+      const updatedBooking = await storage.updateServiceBooking(orderId, {
+        status: 'work_in_progress',
+        startedAt: new Date(),
+        notes: notes || undefined
+      });
+
+      // Create status history
+      await storage.createOrderStatusHistory({
+        orderId,
+        fromStatus: booking.status,
+        toStatus: 'work_in_progress',
+        changedBy: providerId,
+        changedByRole: 'provider',
+        notes: notes || 'Provider arrived and started work'
+      });
+
+      // Create location update for arrival
+      if (arrivalLocation) {
+        await storage.createLocationUpdate({
+          orderId,
+          providerId,
+          latitude: arrivalLocation.latitude,
+          longitude: arrivalLocation.longitude,
+          accuracy: arrivalLocation.accuracy,
+          status: 'arrived',
+          address: arrivalLocation.address
+        });
+      }
+
+      // Send real-time WebSocket events
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.provider_arrived',
+          data: {
+            orderId,
+            arrivalLocation,
+            message: 'Your service provider has arrived and started work!'
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Work started successfully',
+        booking: updatedBooking
+      });
+    } catch (error) {
+      console.error('Error updating to arrived:', error);
+      res.status(500).json({ message: 'Failed to update status' });
+    }
+  });
+
+  // Provider marks work as in-progress
+  app.post('/api/v1/orders/:orderId/in-progress', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const { workPhase, notes, photos, estimatedCompletion } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Validate booking and provider authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking || booking.assignedProviderId !== providerId) {
+        return res.status(403).json({ message: 'Not authorized for this order' });
+      }
+
+      // Ensure work is already in progress before allowing in-progress updates
+      if (booking.status !== 'work_in_progress') {
+        return res.status(400).json({ message: 'Work must be in progress to update progress status' });
+      }
+
+      // Update booking with progress information
+      const updatedBooking = await storage.updateServiceBooking(orderId, {
+        notes: notes || booking.notes,
+        estimatedCompletion: estimatedCompletion ? new Date(estimatedCompletion) : undefined
+      });
+
+      // Create status history for progress update
+      await storage.createOrderStatusHistory({
+        orderId,
+        fromStatus: 'work_in_progress',
+        toStatus: 'work_in_progress',
+        changedBy: providerId,
+        changedByRole: 'provider',
+        notes: notes || `Work progress update: ${workPhase || 'continuing'}`
+      });
+
+      // Store progress photos if provided
+      if (photos && photos.length > 0) {
+        for (const photo of photos) {
+          await storage.createOrderDocument({
+            orderId,
+            documentType: 'progress_photo',
+            title: `Work Progress Photo - ${workPhase || 'In Progress'}`,
+            description: 'Photo showing work progress',
+            url: photo.url,
+            uploadedBy: providerId,
+            uploadedByRole: 'provider'
+          });
+        }
+      }
+
+      // Send real-time WebSocket event
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.work_progress',
+          data: {
+            orderId,
+            workPhase,
+            notes,
+            photos,
+            estimatedCompletion,
+            message: 'Your service provider has updated the work progress.'
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Work progress updated successfully',
+        booking: updatedBooking
+      });
+    } catch (error) {
+      console.error('Error updating work progress:', error);
+      res.status(500).json({ message: 'Failed to update work progress' });
+    }
+  });
+
+  // Provider completes work
+  app.post('/api/v1/orders/:orderId/complete-work', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const { completionNotes, workPhotos, finalAmount, workDuration } = req.body;
+
+      if (!providerId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      // Validate booking and provider authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking || booking.assignedProviderId !== providerId) {
+        return res.status(403).json({ message: 'Not authorized for this order' });
+      }
+
+      // Validate state transition
+      const canUpdate = await storage.validateBookingStatusUpdate(orderId, 'work_completed', providerId, 'service_provider');
+      if (!canUpdate.allowed) {
+        return res.status(400).json({ message: canUpdate.reason });
+      }
+
+      // Update booking status
+      const updatedBooking = await storage.updateServiceBooking(orderId, {
+        status: 'work_completed',
+        completedAt: new Date(),
+        completionNotes,
+        finalAmount: finalAmount || undefined,
+        workDuration: workDuration || undefined
+      });
+
+      // Create status history
+      await storage.createOrderStatusHistory({
+        orderId,
+        fromStatus: booking.status,
+        toStatus: 'work_completed',
+        changedBy: providerId,
+        changedByRole: 'provider',
+        notes: completionNotes || 'Work completed successfully'
+      });
+
+      // Store work completion photos if provided
+      if (workPhotos && workPhotos.length > 0) {
+        for (const photo of workPhotos) {
+          await storage.createOrderDocument({
+            orderId,
+            documentType: 'work_photo',
+            title: 'Work Completion Photo',
+            description: 'Photo showing completed work',
+            url: photo.url,
+            uploadedBy: providerId,
+            uploadedByRole: 'provider'
+          });
+        }
+      }
+
+      // Send real-time WebSocket event
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.work_completed',
+          data: {
+            orderId,
+            completionNotes,
+            workPhotos,
+            finalAmount,
+            message: 'Your service has been completed! Please review and confirm.'
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Work completed successfully',
+        booking: updatedBooking
+      });
+    } catch (error) {
+      console.error('Error completing work:', error);
+      res.status(500).json({ message: 'Failed to complete work' });
+    }
+  });
+
+  // Update Provider Status (backwards compatibility)
+  app.post('/api/v1/orders/:orderId/status', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const { status, location, estimatedArrival } = req.body;
+      
+      console.log(`🔄 Provider ${providerId} updating status to ${status} for order ${orderId}`);
+      
+      // Validate status
+      const validStatuses = ['enroute', 'arrived', 'started', 'in_progress', 'completed'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ message: 'Invalid status' });
+      }
+      
+      // Use BackgroundMatcher for proper state management
+      const { backgroundMatcher } = await import('./services/backgroundMatcher');
+      const result = await backgroundMatcher.updateProviderStatus(orderId, providerId, status, {
+        location,
+        estimatedArrival: estimatedArrival ? new Date(estimatedArrival) : undefined,
+      });
+      
+      if (result.success) {
+        res.json({ success: true, message: 'Status updated successfully' });
+      } else {
+        res.status(400).json({ success: false, message: result.message });
+      }
+    } catch (error) {
+      console.error('Error updating status:', error);
+      res.status(500).json({ message: 'Failed to update status' });
+    }
+  });
+
+  // Basic Cancel Order endpoint
+  app.post('/api/v1/orders/:orderId/cancel', authMiddleware, validateBody(z.object({
+    reason: z.string().min(1, 'Cancellation reason is required'),
+    customReason: z.string().optional()
+  })), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      const { reason, customReason } = req.body;
+      
+      console.log(`🚫 User ${userId} cancelling order ${orderId}`);
+      
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      // Determine user role and validate authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      let cancelledByRole: 'customer' | 'provider' | 'admin';
+      if (booking.userId === userId) {
+        cancelledByRole = 'customer';
+      } else if (booking.assignedProviderId === userId) {
+        cancelledByRole = 'provider';
+      } else if (req.user?.role === 'admin') {
+        cancelledByRole = 'admin';
+      } else {
+        return res.status(403).json({ message: 'Only order participants can cancel' });
+      }
+      
+      // Check if order can be cancelled
+      const canCancel = await storage.canCancelServiceBooking(orderId, userId, req.user?.role || 'user');
+      if (!canCancel.allowed) {
+        return res.status(403).json({ message: canCancel.reason });
+      }
+
+      // Update booking status to cancelled
+      const updatedBooking = await storage.updateServiceBooking(orderId, {
+        status: 'cancelled'
+      });
+
+      // Create status history
+      await storage.createOrderStatusHistory({
+        orderId,
+        fromStatus: booking.status,
+        toStatus: 'cancelled',
+        changedBy: userId,
+        changedByRole: cancelledByRole,
+        reason,
+        notes: customReason || `Order cancelled by ${cancelledByRole}`,
+      });
+
+      // Cancel any pending job requests
+      await storage.cancelAllJobRequests(orderId);
+
+      // Send real-time notifications to all parties
+      if (webSocketManager) {
+        // Notify customer
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.cancelled',
+          data: {
+            orderId,
+            cancelledBy: cancelledByRole,
+            reason,
+            message: 'Order has been cancelled.'
+          }
+        });
+
+        // Notify provider if assigned and not the one cancelling
+        if (booking.assignedProviderId && booking.assignedProviderId !== userId) {
+          webSocketManager.sendToUser(booking.assignedProviderId, {
+            type: 'order.cancelled',
+            data: {
+              orderId,
+              cancelledBy: cancelledByRole,
+              reason,
+              message: `Order has been cancelled by ${cancelledByRole}`
+            }
+          });
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: 'Order cancelled successfully',
+        booking: updatedBooking
+      });
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      res.status(500).json({ message: 'Failed to cancel order' });
+    }
+  });
+
+  // Enhanced Cancel Order with Policy Enforcement
+  app.post('/api/v1/orders/:orderId/cancel-enhanced', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      const { reason, customReason } = req.body;
+      
+      console.log(`🚫 User ${userId} cancelling order ${orderId}`);
+      
+      // Validate required fields
+      if (!reason) {
+        return res.status(400).json({ message: 'Cancellation reason is required' });
+      }
+      
+      // Determine user role and validate authorization
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      let cancelledByRole: 'customer' | 'provider' | 'admin';
+      if (booking.userId === userId) {
+        cancelledByRole = 'customer';
+      } else if (booking.assignedProviderId === userId) {
+        cancelledByRole = 'provider';
+      } else if (req.user?.role === 'admin') {
+        cancelledByRole = 'admin';
+      } else {
+        return res.status(403).json({ message: 'Only order participants can cancel' });
+      }
+      
+      // Apply cancellation policy with proper enforcement
+      const policyResult = await storage.applyCancellationPolicy(
+        orderId, 
+        userId!, 
+        cancelledByRole, 
+        reason, 
+        customReason
+      );
+      
+      if (!policyResult.success) {
+        return res.status(400).json({ 
+          message: policyResult.message || 'Failed to apply cancellation policy' 
+        });
+      }
+
+      // Send real-time notifications to all parties
+      if (webSocketManager) {
+        // Notify customer
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.cancelled',
+          data: {
+            orderId,
+            cancelledBy: cancelledByRole,
+            reason,
+            refundAmount: policyResult.refundAmount,
+            message: `Order has been cancelled. Refund: $${policyResult.refundAmount?.toFixed(2)}`
+          }
+        });
+
+        // Notify provider if assigned
+        if (booking.assignedProviderId && booking.assignedProviderId !== userId) {
+          webSocketManager.sendToUser(booking.assignedProviderId, {
+            type: 'order.cancelled',
+            data: {
+              orderId,
+              cancelledBy: cancelledByRole,
+              reason,
+              message: 'Order has been cancelled by customer'
+            }
+          });
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: 'Order cancelled successfully',
+        refundInfo: {
+          refundAmount: policyResult.refundAmount,
+          refundPercent: policyResult.refundPercent,
+          penaltyAmount: policyResult.penaltyAmount
+        }
+      });
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      res.status(500).json({ message: 'Failed to cancel order' });
+    }
+  });
+
+  // Real-time Chat Messages
+  app.post('/api/v1/orders/:orderId/chat', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const senderId = req.user?.id;
+      const messageData = req.body;
+      
+      // Validate message data
+      const messageSchema = z.object({
+        content: z.string().min(1),
+        messageType: z.enum(['text', 'image', 'audio', 'video', 'location', 'document']).default('text'),
+        attachments: z.array(z.string()).optional(),
+        replyToId: z.string().optional(),
+        priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+      });
+      
+      const validatedMessage = messageSchema.parse(messageData);
+      
+      // Determine sender role
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      let senderRole: 'customer' | 'provider';
+      if (booking.userId === senderId) {
+        senderRole = 'customer';
+      } else if (booking.assignedProviderId === senderId) {
+        senderRole = 'provider';
+      } else {
+        return res.status(403).json({ message: 'Only order participants can send messages' });
+      }
+      
+      // Create chat message
+      const message = await storage.createOrderChatMessage({
+        orderId,
+        senderId,
+        senderRole,
+        ...validatedMessage,
+      });
+      
+      // Emit real-time WebSocket event
+      const webSocketManager = getWebSocketManager();
+      if (webSocketManager) {
+        const recipientId = senderRole === 'customer' ? booking.assignedProviderId : booking.userId;
+        if (recipientId) {
+          webSocketManager.sendToUser(recipientId, {
+            type: 'order.chat_message',
+            data: {
+              orderId,
+              message,
+              senderRole,
+            }
+          });
+        }
+      }
+      
+      res.json({ success: true, message });
+    } catch (error) {
+      console.error('Error sending chat message:', error);
+      res.status(500).json({ message: 'Failed to send message' });
+    }
+  });
+
+  // Get Chat Messages
+  app.get('/api/v1/orders/:orderId/chat', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      
+      // Verify user can access chat
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (booking.userId !== userId && booking.assignedProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const messages = await storage.getOrderChatMessages(orderId);
+      res.json(messages);
+    } catch (error) {
+      console.error('Error fetching chat messages:', error);
+      res.status(500).json({ message: 'Failed to fetch messages' });
+    }
+  });
+
+  // Location Updates
+  app.post('/api/v1/orders/:orderId/location', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const providerId = req.user?.id;
+      const locationData = req.body;
+      
+      // Validate location data
+      const locationSchema = z.object({
+        latitude: z.number().min(-90).max(90),
+        longitude: z.number().min(-180).max(180),
+        accuracy: z.number().optional(),
+        altitude: z.number().optional(),
+        bearing: z.number().optional(),
+        speed: z.number().optional(),
+        status: z.enum(['enroute', 'arrived', 'working', 'break', 'returning']),
+        address: z.string().optional(),
+        estimatedArrival: z.string().datetime().optional(),
+        shareLevel: z.enum(['exact', 'approximate', 'area_only']).default('approximate'),
+      });
+      
+      const validatedLocation = locationSchema.parse(locationData);
+      
+      // Verify provider is assigned to this order
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking || booking.assignedProviderId !== providerId) {
+        return res.status(403).json({ message: 'Not authorized to update location for this order' });
+      }
+      
+      // Create location update
+      await storage.createLocationUpdate({
+        orderId,
+        providerId,
+        ...validatedLocation,
+        estimatedArrival: validatedLocation.estimatedArrival ? new Date(validatedLocation.estimatedArrival) : undefined,
+      });
+      
+      // Emit real-time WebSocket event to customer
+      const webSocketManager = getWebSocketManager();
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'order.location_update',
+          data: {
+            orderId,
+            location: validatedLocation,
+            timestamp: new Date(),
+          }
+        });
+      }
+      
+      res.json({ success: true, message: 'Location updated successfully' });
+    } catch (error) {
+      console.error('Error updating location:', error);
+      res.status(500).json({ message: 'Failed to update location' });
+    }
+  });
+
+  // Get Location Updates
+  app.get('/api/v1/orders/:orderId/location', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      
+      // Verify user can access location data
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (booking.userId !== userId && booking.assignedProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const locationUpdates = await storage.getLocationUpdates(orderId);
+      res.json(locationUpdates);
+    } catch (error) {
+      console.error('Error fetching location updates:', error);
+      res.status(500).json({ message: 'Failed to fetch location updates' });
+    }
+  });
+
+  // Get Order Status History
+  app.get('/api/v1/orders/:orderId/history', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      
+      // Verify user can access order history
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (booking.userId !== userId && booking.assignedProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const history = await storage.getOrderStatusHistory(orderId);
+      res.json(history);
+    } catch (error) {
+      console.error('Error fetching order history:', error);
+      res.status(500).json({ message: 'Failed to fetch order history' });
+    }
+  });
+
+  // Get Order Documents
+  app.get('/api/v1/orders/:orderId/documents', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      
+      // Verify user can access order documents
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (booking.userId !== userId && booking.assignedProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const documents = await storage.getOrderDocuments(orderId);
+      res.json(documents);
+    } catch (error) {
+      console.error('Error fetching order documents:', error);
+      res.status(500).json({ message: 'Failed to fetch order documents' });
+    }
+  });
+
+  // Enhanced Receipt Generation with PDF/HTML
+  app.post('/api/v1/orders/:orderId/receipt', authMiddleware, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      const { format = 'html' } = req.body; // 'html' or 'pdf'
+      
+      // Verify user can generate receipt
+      const booking = await storage.getServiceBooking(orderId);
+      if (!booking) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      if (booking.userId !== userId && booking.assignedProviderId !== userId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      // Check if order is completed
+      if (booking.status !== 'work_completed' && booking.status !== 'completed') {
+        return res.status(400).json({ message: 'Receipt can only be generated for completed orders' });
+      }
+
+      // Get order details and related data
+      const orderDetails = await storage.getOrder(orderId);
+      const customer = await storage.getUser(booking.userId);
+      const provider = booking.assignedProviderId ? await storage.getUser(booking.assignedProviderId) : null;
+      const service = await storage.getService(booking.serviceId);
+      const statusHistory = await storage.getOrderStatusHistory(orderId);
+
+      // Generate receipt content
+      const receiptData = {
+        orderId,
+        orderNumber: `FQ-${orderId.slice(-8).toUpperCase()}`,
+        date: booking.completedAt || new Date(),
+        customer: {
+          name: `${customer?.firstName} ${customer?.lastName}`,
+          email: customer?.email,
+          phone: customer?.phone
+        },
+        provider: provider ? {
+          name: `${provider.firstName} ${provider.lastName}`,
+          email: provider.email,
+          phone: provider.phone
+        } : null,
+        service: {
+          name: service?.name,
+          category: service?.categoryName,
+          duration: booking.workDuration || 'N/A'
+        },
+        location: booking.serviceLocation,
+        timing: {
+          scheduled: booking.scheduledAt,
+          started: booking.startedAt,
+          completed: booking.completedAt
+        },
+        amount: {
+          basePrice: service?.basePrice || booking.totalAmount,
+          finalAmount: booking.finalAmount || booking.totalAmount,
+          currency: 'USD'
+        },
+        notes: booking.completionNotes || booking.notes,
+        statusHistory
+      };
+
+      let receiptContent: string;
+      let mimeType: string;
+      let fileExtension: string;
+
+      if (format === 'pdf') {
+        // Generate PDF receipt (placeholder - in production would use puppeteer/pdfkit)
+        receiptContent = `PDF Receipt for Order ${receiptData.orderNumber} - Generated ${new Date().toISOString()}`;
+        mimeType = 'application/pdf';
+        fileExtension = 'pdf';
+      } else {
+        // Generate HTML receipt
+        receiptContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Receipt - ${receiptData.orderNumber}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+    .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 20px; }
+    .section { margin-bottom: 20px; }
+    .row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+    .label { font-weight: bold; }
+    .amount { font-size: 1.2em; font-weight: bold; color: #2e7d32; }
+    .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>FixitQuick - Service Receipt</h1>
+    <p>Order #${receiptData.orderNumber}</p>
+    <p>Date: ${new Date(receiptData.date).toLocaleDateString()}</p>
+  </div>
+  
+  <div class="section">
+    <h3>Customer Information</h3>
+    <div class="row"><span class="label">Name:</span> <span>${receiptData.customer.name}</span></div>
+    <div class="row"><span class="label">Email:</span> <span>${receiptData.customer.email}</span></div>
+    <div class="row"><span class="label">Phone:</span> <span>${receiptData.customer.phone}</span></div>
+  </div>
+  
+  ${receiptData.provider ? `
+  <div class="section">
+    <h3>Service Provider</h3>
+    <div class="row"><span class="label">Name:</span> <span>${receiptData.provider.name}</span></div>
+    <div class="row"><span class="label">Email:</span> <span>${receiptData.provider.email}</span></div>
+  </div>
+  ` : ''}
+  
+  <div class="section">
+    <h3>Service Details</h3>
+    <div class="row"><span class="label">Service:</span> <span>${receiptData.service.name}</span></div>
+    <div class="row"><span class="label">Category:</span> <span>${receiptData.service.category}</span></div>
+    <div class="row"><span class="label">Duration:</span> <span>${receiptData.service.duration}</span></div>
+    <div class="row"><span class="label">Location:</span> <span>${receiptData.location?.address || 'N/A'}</span></div>
+  </div>
+  
+  <div class="section">
+    <h3>Service Timeline</h3>
+    ${receiptData.timing.scheduled ? `<div class="row"><span class="label">Scheduled:</span> <span>${new Date(receiptData.timing.scheduled).toLocaleString()}</span></div>` : ''}
+    ${receiptData.timing.started ? `<div class="row"><span class="label">Started:</span> <span>${new Date(receiptData.timing.started).toLocaleString()}</span></div>` : ''}
+    ${receiptData.timing.completed ? `<div class="row"><span class="label">Completed:</span> <span>${new Date(receiptData.timing.completed).toLocaleString()}</span></div>` : ''}
+  </div>
+  
+  <div class="section">
+    <h3>Payment Summary</h3>
+    <div class="row"><span class="label">Base Price:</span> <span>$${parseFloat(receiptData.amount.basePrice).toFixed(2)}</span></div>
+    <div class="row amount"><span class="label">Final Amount:</span> <span>$${parseFloat(receiptData.amount.finalAmount).toFixed(2)}</span></div>
+  </div>
+  
+  ${receiptData.notes ? `
+  <div class="section">
+    <h3>Notes</h3>
+    <p>${receiptData.notes}</p>
+  </div>
+  ` : ''}
+  
+  <div class="footer">
+    <p>Thank you for choosing FixitQuick!</p>
+    <p>Generated on ${new Date().toLocaleDateString()}</p>
+  </div>
+</body>
+</html>`;
+        mimeType = 'text/html';
+        fileExtension = 'html';
+      }
+
+      // Store receipt document
+      const receiptFileName = `receipt-${orderId}-${Date.now()}.${fileExtension}`;
+      const receiptUrl = `/api/documents/receipt/${receiptFileName}`;
+      
+      await storage.createOrderDocument({
+        orderId,
+        documentType: 'receipt',
+        title: `Receipt for Order #${receiptData.orderNumber}`,
+        description: `Official ${format.toUpperCase()} receipt for completed service`,
+        url: receiptUrl,
+        fileName: receiptFileName,
+        mimeType,
+        fileSize: receiptContent.length,
+        uploadedBy: userId!,
+        uploadedByRole: booking.userId === userId ? 'customer' : 'provider',
+        isPublic: false,
+        metadata: {
+          format,
+          generatedAt: new Date().toISOString(),
+          orderNumber: receiptData.orderNumber
+        }
+      });
+      
+      res.json({ 
+        success: true, 
+        receiptUrl,
+        format,
+        orderNumber: receiptData.orderNumber,
+        message: `${format.toUpperCase()} receipt generated successfully` 
+      });
+    } catch (error) {
+      console.error('Error generating receipt:', error);
+      res.status(500).json({ message: 'Failed to generate receipt' });
+    }
+  });
+
+  // Serve generated receipts
+  app.get('/api/documents/receipt/:fileName', async (req, res) => {
+    try {
+      const { fileName } = req.params;
+      
+      // Security: verify file belongs to a valid order document
+      const document = await storage.getOrderDocuments(fileName.split('-')[1]); // Extract orderId
+      const receiptDoc = document.find(doc => doc.fileName === fileName);
+      
+      if (!receiptDoc) {
+        return res.status(404).json({ message: 'Receipt not found' });
+      }
+
+      // For demo purposes, return a simple receipt response
+      // In production, this would serve the actual stored file
+      res.setHeader('Content-Type', receiptDoc.mimeType || 'text/html');
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      
+      if (receiptDoc.mimeType === 'application/pdf') {
+        res.send('PDF receipt content would be served here');
+      } else {
+        res.send(`
+          <!DOCTYPE html>
+          <html>
+            <head><title>Receipt - ${receiptDoc.title}</title></head>
+            <body>
+              <h1>${receiptDoc.title}</h1>
+              <p>This is a generated receipt for your completed service.</p>
+              <p>Generated: ${receiptDoc.createdAt}</p>
+            </body>
+          </html>
+        `);
+      }
+    } catch (error) {
+      console.error('Error serving receipt:', error);
+      res.status(500).json({ message: 'Failed to serve receipt' });
     }
   });
 
@@ -5454,14 +6581,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const now = new Date();
         const minScheduleTime = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
         
-        if (scheduledTime < minScheduleTime) {
-          return res.status(400).json({ message: 'Scheduled time must be at least 1 hour from now' });
-        }
+        // Use comprehensive scheduling constraint validation
+        const constraintValidation = await storage.validateSchedulingConstraints(
+          bookingData.serviceId,
+          scheduledTime,
+          bookingData.preferredProviderId // Optional provider constraint
+        );
         
-        const maxScheduleTime = new Date(now.getTime() + (service.advanceBookingDays || 7) * 24 * 60 * 60 * 1000);
-        if (scheduledTime > maxScheduleTime) {
+        if (!constraintValidation.valid) {
           return res.status(400).json({ 
-            message: `Cannot schedule more than ${service.advanceBookingDays || 7} days in advance` 
+            message: constraintValidation.reason || 'Scheduling constraint violation' 
           });
         }
       }

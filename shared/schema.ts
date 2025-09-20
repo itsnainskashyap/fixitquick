@@ -1207,11 +1207,13 @@ export const serviceBookings = pgTable("service_bookings", {
   attachments: jsonb("attachments").$type<string[]>(),
   urgency: varchar("urgency", { enum: ["low", "normal", "high", "urgent"] }).default("normal"),
   
-  // Status and workflow
+  // Status and workflow - ENHANCED with new state machine
   status: varchar("status", { 
-    enum: ["pending", "provider_search", "provider_assigned", "provider_on_way", 
-           "work_in_progress", "work_completed", "payment_pending", "completed", 
-           "cancelled", "refunded"] 
+    enum: ["pending", "requested", "matching", "matched", "accepted", "enroute", 
+           "arrived", "started", "in_progress", "work_completed", "payment_pending", 
+           "completed", "cancelled", "refunded",
+           // Legacy statuses for backward compatibility
+           "provider_search", "provider_assigned", "provider_on_way", "work_in_progress"] 
   }).default("pending"),
   
   // Provider assignment and matching
@@ -2097,7 +2099,6 @@ export type ProviderJobRequest = typeof providerJobRequests.$inferSelect;
 export type InsertProviderJobRequest = z.infer<typeof insertProviderJobRequestSchema>;
 
 // Enhanced parts management types
-export type PartsProviderBusinessInfo = typeof partsProviderBusinessInfo.$inferSelect;
 export type InsertPartsProviderBusinessInfo = z.infer<typeof insertPartsProviderBusinessInfoSchema>;
 export type PartsInventoryMovement = typeof partsInventoryMovements.$inferSelect;
 export type InsertPartsInventoryMovement = z.infer<typeof insertPartsInventoryMovementSchema>;
@@ -3124,6 +3125,432 @@ export type PromotionalMediaAnalyticsCreateData = z.infer<typeof promotionalMedi
 export type PromotionalMediaActiveQueryData = z.infer<typeof promotionalMediaActiveQuerySchema>;
 export type PromotionalMediaStatisticsData = z.infer<typeof promotionalMediaStatisticsSchema>;
 
+// ========================================
+// ORDER LIFECYCLE TYPE EXPORTS
+// ========================================
+
+// Table select types
+export type OrderStatusHistory = typeof orderStatusHistory.$inferSelect;
+export type OrderDocument = typeof orderDocuments.$inferSelect;
+export type CancellationPolicy = typeof cancellationPolicies.$inferSelect;
+export type OrderCancellation = typeof orderCancellations.$inferSelect;
+export type ProviderAvailability = typeof providerAvailability.$inferSelect;
+export type OrderLocationUpdate = typeof orderLocationUpdates.$inferSelect;
+export type OrderChatMessage = typeof orderChatMessages.$inferSelect;
+export type OrderRating = typeof orderRatings.$inferSelect;
+export type ServiceSchedulingRule = typeof serviceSchedulingRules.$inferSelect;
+
+// ========================================
+// ORDER LIFECYCLE INSERT SCHEMAS
+// ========================================
+
+// Order Status History schemas
+export const insertOrderStatusHistorySchema = z.object({
+  orderId: z.string().uuid(),
+  fromStatus: z.string().optional(),
+  toStatus: z.string(),
+  changedBy: z.string().uuid().optional(),
+  changedByRole: z.enum(['customer', 'provider', 'admin', 'system']).default('system'),
+  reason: z.string().optional(),
+  metadata: z.any().optional(),
+});
+
+// Order Documents schemas
+export const insertOrderDocumentSchema = z.object({
+  orderId: z.string().uuid(),
+  documentType: z.enum(['receipt', 'invoice', 'completion_certificate', 'warranty', 'before_photo', 'after_photo', 'work_evidence', 'payment_proof']),
+  title: z.string(),
+  description: z.string().optional(),
+  url: z.string().url(),
+  fileName: z.string().optional(),
+  fileSize: z.number().optional(),
+  mimeType: z.string().optional(),
+  uploadedBy: z.string().uuid().optional(),
+  uploadedByRole: z.enum(['customer', 'provider', 'admin', 'system']).optional(),
+  isPublic: z.boolean().default(false),
+  metadata: z.any().optional(),
+});
+
+// Cancellation Policies schemas
+export const insertCancellationPolicySchema = z.object({
+  serviceId: z.string().uuid().optional(),
+  categoryId: z.string().uuid().optional(),
+  policyName: z.string(),
+  description: z.string().optional(),
+  freeHours: z.number().default(0),
+  partialRefundHours: z.number().default(24),
+  noRefundHours: z.number().default(2),
+  freeRefundPercent: z.number().default(100),
+  partialRefundPercent: z.number().default(50),
+  noRefundPercent: z.number().default(0),
+  providerPenaltyPercent: z.number().default(10),
+  lateArrivalPenaltyPercent: z.number().default(5),
+  emergencyExemption: z.boolean().default(true),
+  weatherExemption: z.boolean().default(true),
+  isActive: z.boolean().default(true),
+});
+
+// Order Cancellations schemas
+export const insertOrderCancellationSchema = z.object({
+  orderId: z.string().uuid(),
+  cancelledBy: z.string().uuid(),
+  cancelledByRole: z.enum(['customer', 'provider', 'admin']),
+  reason: z.enum(['customer_change', 'provider_unavailable', 'weather', 'emergency', 'technical_issue', 'payment_issue', 'other']),
+  customReason: z.string().optional(),
+  policyId: z.string().uuid().optional(),
+  hoursBeforeService: z.number().optional(),
+  appliedRefundPercent: z.number().optional(),
+  refundAmount: z.number().optional(),
+  penaltyAmount: z.number().optional(),
+  refundStatus: z.enum(['pending', 'processing', 'completed', 'failed']).default('pending'),
+  refundTransactionId: z.string().optional(),
+  processedAt: z.date().optional(),
+});
+
+// Provider Availability schemas
+export const insertProviderAvailabilitySchema = z.object({
+  providerId: z.string().uuid(),
+  dayOfWeek: z.number().min(0).max(6).optional(),
+  specificDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/),
+  availabilityType: z.enum(['available', 'busy', 'break', 'unavailable']).default('available'),
+  maxBookings: z.number().default(1),
+  currentBookings: z.number().default(0),
+  bufferMinutes: z.number().default(15),
+  serviceRadius: z.number().default(25),
+  preferredAreas: z.array(z.string()).optional(),
+  isRecurring: z.boolean().default(true),
+  effectiveFrom: z.date().optional(),
+  effectiveUntil: z.date().optional(),
+  notes: z.string().optional(),
+});
+
+// Order Location Updates schemas
+export const insertOrderLocationUpdateSchema = z.object({
+  orderId: z.string().uuid(),
+  providerId: z.string().uuid(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracy: z.number().optional(),
+  altitude: z.number().optional(),
+  bearing: z.number().min(0).max(360).optional(),
+  speed: z.number().min(0).optional(),
+  status: z.enum(['enroute', 'arrived', 'working', 'break', 'returning']),
+  address: z.string().optional(),
+  landmark: z.string().optional(),
+  distanceToCustomer: z.number().optional(),
+  estimatedArrival: z.date().optional(),
+  isSharedWithCustomer: z.boolean().default(true),
+  shareLevel: z.enum(['exact', 'approximate', 'area_only']).default('approximate'),
+  deviceInfo: z.any().optional(),
+});
+
+// Order Chat Messages schemas
+export const insertOrderChatMessageSchema = z.object({
+  orderId: z.string().uuid(),
+  senderId: z.string().uuid(),
+  senderRole: z.enum(['customer', 'provider', 'admin', 'system']),
+  messageType: z.enum(['text', 'image', 'audio', 'video', 'location', 'document', 'system', 'status_update']).default('text'),
+  content: z.string().min(1),
+  metadata: z.any().optional(),
+  attachments: z.array(z.string()).optional(),
+  replyToId: z.string().uuid().optional(),
+  threadId: z.string().optional(),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+  isSystemMessage: z.boolean().default(false),
+});
+
+// Order Ratings schemas
+export const insertOrderRatingSchema = z.object({
+  orderId: z.string().uuid(),
+  raterId: z.string().uuid(),
+  raterRole: z.enum(['customer', 'provider']),
+  overallRating: z.number().min(1).max(5),
+  qualityRating: z.number().min(1).max(5).optional(),
+  timelinessRating: z.number().min(1).max(5).optional(),
+  communicationRating: z.number().min(1).max(5).optional(),
+  professionalismRating: z.number().min(1).max(5).optional(),
+  valueRating: z.number().min(1).max(5).optional(),
+  reviewText: z.string().max(1000).optional(),
+  positives: z.array(z.string()).optional(),
+  improvements: z.array(z.string()).optional(),
+  photos: z.array(z.string()).optional(),
+  videos: z.array(z.string()).optional(),
+  isVerified: z.boolean().default(false),
+  isPublic: z.boolean().default(true),
+});
+
+// Service Scheduling Rules schemas
+export const insertServiceSchedulingRuleSchema = z.object({
+  serviceId: z.string().uuid().optional(),
+  categoryId: z.string().uuid().optional(),
+  minAdvanceBookingHours: z.number().min(0).default(2),
+  maxAdvanceBookingDays: z.number().min(1).default(30),
+  estimatedDurationMinutes: z.number().min(15),
+  bufferMinutes: z.number().min(0).default(15),
+  availableDays: z.array(z.number().min(0).max(6)).default([1,2,3,4,5,6,0]),
+  timeSlots: z.array(z.object({
+    start: z.string().regex(/^\d{2}:\d{2}$/),
+    end: z.string().regex(/^\d{2}:\d{2}$/),
+    maxBookings: z.number().min(1).optional(),
+  })),
+  serviceRadius: z.number().min(1).default(25),
+  maxDailyBookings: z.number().min(1).optional(),
+  maxHourlyBookings: z.number().min(1).optional(),
+  weatherDependent: z.boolean().default(false),
+  seasonalAvailability: z.any().optional(),
+  rushHours: z.any().optional(),
+  rushHourMultiplier: z.number().default(1.5),
+  isActive: z.boolean().default(true),
+  priority: z.number().default(0),
+});
+
+// Insert types
+export type InsertOrderStatusHistory = z.infer<typeof insertOrderStatusHistorySchema>;
+export type InsertOrderDocument = z.infer<typeof insertOrderDocumentSchema>;
+export type InsertCancellationPolicy = z.infer<typeof insertCancellationPolicySchema>;
+export type InsertOrderCancellation = z.infer<typeof insertOrderCancellationSchema>;
+export type InsertProviderAvailability = z.infer<typeof insertProviderAvailabilitySchema>;
+export type InsertOrderLocationUpdate = z.infer<typeof insertOrderLocationUpdateSchema>;
+export type InsertOrderChatMessage = z.infer<typeof insertOrderChatMessageSchema>;
+export type InsertOrderRating = z.infer<typeof insertOrderRatingSchema>;
+export type InsertServiceSchedulingRule = z.infer<typeof insertServiceSchedulingRuleSchema>;
+
+// SECURITY: Order lifecycle validation schemas for RBAC endpoints
+export const orderAcceptanceSchema = z.object({
+  estimatedArrival: z.string().optional(),
+  notes: z.string().max(500).optional(),
+  requiresSpecialEquipment: z.boolean().optional().default(false),
+  specialEquipmentNotes: z.string().max(200).optional(),
+  estimatedDuration: z.number().min(15).max(480).optional(), // 15 minutes to 8 hours
+  customPrice: z.number().min(0).optional(),
+  priceJustification: z.string().max(300).optional()
+});
+
+export const orderDeclineSchema = z.object({
+  reason: z.enum([
+    'not_available',
+    'outside_service_area',
+    'insufficient_skills',
+    'equipment_unavailable',
+    'safety_concerns',
+    'pricing_disagreement',
+    'other'
+  ]),
+  customReason: z.string().min(10).max(300).optional(),
+  suggestedAlternative: z.string().max(200).optional()
+});
+
+export const orderStatusUpdateSchema = z.object({
+  notes: z.string().max(500).optional(),
+  estimatedCompletion: z.string().optional(),
+  workProgress: z.number().min(0).max(100).optional(),
+  images: z.array(z.string().url()).max(5).optional(),
+  customerNotification: z.string().max(200).optional()
+});
+
+export const orderLocationUpdateSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracy: z.number().min(0).optional(),
+  heading: z.number().min(0).max(360).optional(),
+  speed: z.number().min(0).optional(),
+  timestamp: z.string().optional()
+});
+
+export const orderChatMessageSchema = z.object({
+  message: z.string().min(1).max(1000),
+  messageType: z.enum(['text', 'image', 'location', 'system']).default('text'),
+  attachments: z.array(z.object({
+    url: z.string().url(),
+    type: z.enum(['image', 'document', 'audio']),
+    filename: z.string().optional()
+  })).max(3).optional()
+});
+
+export type OrderAcceptanceData = z.infer<typeof orderAcceptanceSchema>;
+export type OrderDeclineData = z.infer<typeof orderDeclineSchema>;
+export type OrderStatusUpdateData = z.infer<typeof orderStatusUpdateSchema>;
+export type OrderLocationUpdateData = z.infer<typeof orderLocationUpdateSchema>;
+export type OrderChatMessageData = z.infer<typeof orderChatMessageSchema>;
+
+// ========================================
+// ENHANCED ORDER STATE MACHINE ENUMS
+// ========================================
+
+// Complete order state machine for service bookings
+export const OrderStateEnum = z.enum([
+  "requested",       // Initial customer request
+  "matching",        // BackgroundMatcher is finding providers
+  "matched",         // Provider found and job request sent
+  "accepted",        // Provider accepted the job
+  "assigned",        // Provider officially assigned to order
+  "enroute",         // Provider is traveling to location
+  "arrived",         // Provider has arrived at location
+  "started",         // Work has begun
+  "in_progress",     // Work is ongoing
+  "work_completed",  // Work finished, awaiting payment/confirmation
+  "completed",       // Order fully completed
+  "cancelled",       // Order cancelled
+  "refunded",        // Order refunded
+  "failed"           // Order failed to complete
+]);
+
+export const CancellationReasonEnum = z.enum([
+  "customer_change",
+  "provider_unavailable", 
+  "weather",
+  "emergency",
+  "technical_issue",
+  "payment_issue",
+  "quality_issue",
+  "safety_concern",
+  "other"
+]);
+
+export const RefundStatusEnum = z.enum([
+  "pending",
+  "processing", 
+  "completed",
+  "failed",
+  "partial"
+]);
+
+// ========================================
+// API OPERATION SCHEMAS
+// ========================================
+
+// Order state transition validation
+export const orderStateTransitionSchema = z.object({
+  fromState: OrderStateEnum,
+  toState: OrderStateEnum,
+  reason: z.string().optional(),
+  metadata: z.object({
+    location: z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+      address: z.string().optional(),
+    }).optional(),
+    photos: z.array(z.string()).optional(),
+    notes: z.string().optional(),
+    estimatedTime: z.string().optional(),
+    actualTime: z.string().optional(),
+  }).optional(),
+});
+
+// Provider availability update schema
+export const providerAvailabilityUpdateSchema = z.object({
+  dayOfWeek: z.number().min(0).max(6).optional(),
+  specificDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  availabilityType: z.enum(["available", "busy", "break", "unavailable"]).optional(),
+  maxBookings: z.number().min(1).optional(),
+  bufferMinutes: z.number().min(0).optional(),
+  serviceRadius: z.number().min(1).optional(),
+  preferredAreas: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+});
+
+// Location sharing update schema
+export const locationUpdateSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracy: z.number().min(0).optional(),
+  altitude: z.number().optional(),
+  bearing: z.number().min(0).max(360).optional(),
+  speed: z.number().min(0).optional(),
+  status: z.enum(["enroute", "arrived", "working", "break", "returning"]),
+  address: z.string().optional(),
+  landmark: z.string().optional(),
+  shareLevel: z.enum(["exact", "approximate", "area_only"]).optional(),
+});
+
+// Chat message creation schema
+export const orderChatMessageCreateSchema = z.object({
+  orderId: z.string().uuid(),
+  messageType: z.enum(["text", "image", "audio", "video", "location", "document", "system", "status_update"]).default("text"),
+  content: z.string().min(1),
+  attachments: z.array(z.string()).optional(),
+  replyToId: z.string().uuid().optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  metadata: z.object({
+    fileName: z.string().optional(),
+    fileSize: z.number().optional(),
+    duration: z.number().optional(),
+    coordinates: z.object({
+      latitude: z.number(),
+      longitude: z.number(),
+    }).optional(),
+    workPhase: z.string().optional(),
+    beforeAfter: z.enum(["before", "after", "during"]).optional(),
+  }).optional(),
+});
+
+// Order rating creation schema
+export const orderRatingCreateSchema = z.object({
+  orderId: z.string().uuid(),
+  overallRating: z.number().min(1).max(5),
+  qualityRating: z.number().min(1).max(5).optional(),
+  timelinessRating: z.number().min(1).max(5).optional(),
+  communicationRating: z.number().min(1).max(5).optional(),
+  professionalismRating: z.number().min(1).max(5).optional(),
+  valueRating: z.number().min(1).max(5).optional(),
+  reviewText: z.string().max(1000).optional(),
+  positives: z.array(z.string()).optional(),
+  improvements: z.array(z.string()).optional(),
+  photos: z.array(z.string()).optional(),
+  videos: z.array(z.string()).optional(),
+});
+
+// Order cancellation request schema
+export const orderCancellationRequestSchema = z.object({
+  orderId: z.string().uuid(),
+  reason: CancellationReasonEnum,
+  customReason: z.string().max(500).optional(),
+}).refine(data => {
+  if (data.reason === 'other' && !data.customReason) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Custom reason is required when reason is "other"',
+  path: ['customReason'],
+});
+
+// Service scheduling constraint schema
+export const serviceSchedulingConstraintSchema = z.object({
+  serviceId: z.string().uuid().optional(),
+  categoryId: z.string().uuid().optional(),
+  minAdvanceBookingHours: z.number().min(0).default(2),
+  maxAdvanceBookingDays: z.number().min(1).default(30),
+  estimatedDurationMinutes: z.number().min(15),
+  bufferMinutes: z.number().min(0).default(15),
+  availableDays: z.array(z.number().min(0).max(6)).default([1,2,3,4,5,6,0]),
+  timeSlots: z.array(z.object({
+    start: z.string().regex(/^\d{2}:\d{2}$/),
+    end: z.string().regex(/^\d{2}:\d{2}$/),
+    maxBookings: z.number().min(1).optional(),
+  })),
+  serviceRadius: z.number().min(1).default(25),
+  maxDailyBookings: z.number().min(1).optional(),
+  maxHourlyBookings: z.number().min(1).optional(),
+  weatherDependent: z.boolean().default(false),
+});
+
+// ========================================
+// API OPERATION TYPES
+// ========================================
+
+export type OrderStateTransitionData = z.infer<typeof orderStateTransitionSchema>;
+export type ProviderAvailabilityUpdateData = z.infer<typeof providerAvailabilityUpdateSchema>;
+export type LocationUpdateData = z.infer<typeof locationUpdateSchema>;
+export type OrderChatMessageCreateData = z.infer<typeof orderChatMessageCreateSchema>;
+export type OrderRatingCreateData = z.infer<typeof orderRatingCreateSchema>;
+export type OrderCancellationRequestData = z.infer<typeof orderCancellationRequestSchema>;
+export type ServiceSchedulingConstraintData = z.infer<typeof serviceSchedulingConstraintSchema>;
+
 // API operation types for Service Provider Profiles
 export type ServiceProviderProfileUpdateData = z.infer<typeof serviceProviderProfileUpdateSchema>;
 export type ServiceProviderDocumentSubmissionData = z.infer<typeof serviceProviderDocumentSubmissionSchema>;
@@ -3131,6 +3558,381 @@ export type ServiceProviderStatusUpdateData = z.infer<typeof serviceProviderStat
 
 // Enum types for consistent usage
 export type ServiceProviderBusinessType = z.infer<typeof serviceProviderBusinessTypeEnum>;
+
+// ========================================
+// ORDER LIFECYCLE ENHANCEMENT TABLES
+// ========================================
+
+// Order Status History - Complete audit trail for service bookings
+export const orderStatusHistory = pgTable("order_status_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull(),
+  fromStatus: varchar("from_status"),
+  toStatus: varchar("to_status").notNull(),
+  changedBy: varchar("changed_by").references(() => users.id),
+  changedByRole: varchar("changed_by_role", { enum: ["customer", "provider", "admin", "system"] }).default("system"),
+  reason: text("reason"),
+  metadata: jsonb("metadata").$type<{
+    location?: { latitude: number; longitude: number; address?: string };
+    estimatedTime?: string;
+    actualTime?: string;
+    photos?: string[];
+    notes?: string;
+    automaticTransition?: boolean;
+    triggerEvent?: string;
+  }>(),
+  timestamp: timestamp("timestamp").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("osh_order_idx").on(table.orderId),
+  statusIdx: index("osh_status_idx").on(table.toStatus),
+  timestampIdx: index("osh_timestamp_idx").on(table.timestamp),
+  changedByIdx: index("osh_changed_by_idx").on(table.changedBy),
+}));
+
+// Order Documents and Receipts
+export const orderDocuments = pgTable("order_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull(),
+  documentType: varchar("document_type", { 
+    enum: ["receipt", "invoice", "completion_certificate", "warranty", "before_photo", "after_photo", "work_evidence", "payment_proof"] 
+  }).notNull(),
+  title: varchar("title").notNull(),
+  description: text("description"),
+  url: varchar("url").notNull(),
+  fileName: varchar("file_name"),
+  fileSize: integer("file_size"), // in bytes
+  mimeType: varchar("mime_type"),
+  uploadedBy: varchar("uploaded_by").references(() => users.id),
+  uploadedByRole: varchar("uploaded_by_role", { enum: ["customer", "provider", "admin", "system"] }),
+  isPublic: boolean("is_public").default(false), // Whether customer can view
+  metadata: jsonb("metadata").$type<{
+    coordinates?: { latitude: number; longitude: number };
+    timestamp?: string;
+    workPhase?: string;
+    quality?: "before" | "after" | "during";
+    tags?: string[];
+  }>(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("od_order_idx").on(table.orderId),
+  typeIdx: index("od_type_idx").on(table.documentType),
+  uploadedByIdx: index("od_uploaded_by_idx").on(table.uploadedBy),
+  publicIdx: index("od_public_idx").on(table.isPublic),
+}));
+
+// Cancellation Policies and Rules
+export const cancellationPolicies = pgTable("cancellation_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serviceId: varchar("service_id").references(() => services.id),
+  categoryId: varchar("category_id").references(() => serviceCategories.id),
+  policyName: varchar("policy_name").notNull(),
+  description: text("description"),
+  
+  // Time-based rules
+  freeHours: integer("free_hours").default(0), // Hours before service start for free cancellation
+  partialRefundHours: integer("partial_refund_hours").default(24), // Hours for partial refund
+  noRefundHours: integer("no_refund_hours").default(2), // Hours before no refund
+  
+  // Refund percentages
+  freeRefundPercent: integer("free_refund_percent").default(100),
+  partialRefundPercent: integer("partial_refund_percent").default(50),
+  noRefundPercent: integer("no_refund_percent").default(0),
+  
+  // Provider penalties
+  providerPenaltyPercent: integer("provider_penalty_percent").default(10), // If provider cancels
+  lateArrivalPenaltyPercent: integer("late_arrival_penalty_percent").default(5),
+  
+  // Special rules
+  emergencyExemption: boolean("emergency_exemption").default(true),
+  weatherExemption: boolean("weather_exemption").default(true),
+  
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  serviceIdx: index("cp_service_idx").on(table.serviceId),
+  categoryIdx: index("cp_category_idx").on(table.categoryId),
+  activeIdx: index("cp_active_idx").on(table.isActive),
+}));
+
+// Cancellation Records
+export const orderCancellations = pgTable("order_cancellations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull().unique(),
+  cancelledBy: varchar("cancelled_by").references(() => users.id).notNull(),
+  cancelledByRole: varchar("cancelled_by_role", { enum: ["customer", "provider", "admin"] }).notNull(),
+  reason: varchar("reason", { 
+    enum: ["customer_change", "provider_unavailable", "weather", "emergency", "technical_issue", "payment_issue", "other"] 
+  }).notNull(),
+  customReason: text("custom_reason"),
+  
+  // Policy application
+  policyId: varchar("policy_id").references(() => cancellationPolicies.id),
+  hoursBeforeService: decimal("hours_before_service", { precision: 6, scale: 2 }),
+  appliedRefundPercent: integer("applied_refund_percent"),
+  refundAmount: decimal("refund_amount", { precision: 10, scale: 2 }),
+  penaltyAmount: decimal("penalty_amount", { precision: 10, scale: 2 }),
+  
+  // Processing
+  refundStatus: varchar("refund_status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending"),
+  refundTransactionId: varchar("refund_transaction_id"),
+  processedAt: timestamp("processed_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("oc_order_idx").on(table.orderId),
+  cancelledByIdx: index("oc_cancelled_by_idx").on(table.cancelledBy),
+  reasonIdx: index("oc_reason_idx").on(table.reason),
+  refundStatusIdx: index("oc_refund_status_idx").on(table.refundStatus),
+}));
+
+// Provider Availability and Scheduling
+export const providerAvailability = pgTable("provider_availability", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Time slots
+  dayOfWeek: integer("day_of_week"), // 0-6 (Sunday-Saturday), null for specific dates
+  specificDate: varchar("specific_date"), // YYYY-MM-DD for specific date overrides
+  startTime: varchar("start_time").notNull(), // HH:MM format
+  endTime: varchar("end_time").notNull(), // HH:MM format
+  
+  // Availability type
+  availabilityType: varchar("availability_type", { 
+    enum: ["available", "busy", "break", "unavailable"] 
+  }).default("available"),
+  
+  // Capacity and booking limits
+  maxBookings: integer("max_bookings").default(1), // How many bookings can be accepted in this slot
+  currentBookings: integer("current_bookings").default(0),
+  bufferMinutes: integer("buffer_minutes").default(15), // Time between bookings
+  
+  // Location constraints
+  serviceRadius: integer("service_radius").default(25), // km
+  preferredAreas: jsonb("preferred_areas").$type<string[]>(),
+  
+  // Recurrence
+  isRecurring: boolean("is_recurring").default(true),
+  effectiveFrom: timestamp("effective_from").defaultNow(),
+  effectiveUntil: timestamp("effective_until"),
+  
+  // Metadata
+  notes: text("notes"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("pa_provider_idx").on(table.providerId),
+  dayTimeIdx: index("pa_day_time_idx").on(table.dayOfWeek, table.startTime),
+  dateIdx: index("pa_date_idx").on(table.specificDate),
+  typeIdx: index("pa_type_idx").on(table.availabilityType),
+  capacityIdx: index("pa_capacity_idx").on(table.maxBookings, table.currentBookings),
+}));
+
+// Real-time Location Sharing
+export const orderLocationUpdates = pgTable("order_location_updates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull(),
+  providerId: varchar("provider_id").references(() => users.id).notNull(),
+  
+  // Location data
+  latitude: decimal("latitude", { precision: 10, scale: 8 }).notNull(),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }).notNull(),
+  accuracy: decimal("accuracy", { precision: 8, scale: 2 }), // meters
+  altitude: decimal("altitude", { precision: 8, scale: 2 }), // meters
+  bearing: decimal("bearing", { precision: 6, scale: 2 }), // degrees
+  speed: decimal("speed", { precision: 6, scale: 2 }), // m/s
+  
+  // Contextual information
+  status: varchar("status", { 
+    enum: ["enroute", "arrived", "working", "break", "returning"] 
+  }).notNull(),
+  address: text("address"),
+  landmark: varchar("landmark"),
+  
+  // Distance calculations
+  distanceToCustomer: decimal("distance_to_customer", { precision: 8, scale: 2 }), // meters
+  estimatedArrival: timestamp("estimated_arrival"),
+  
+  // Privacy and sharing
+  isSharedWithCustomer: boolean("is_shared_with_customer").default(true),
+  shareLevel: varchar("share_level", { enum: ["exact", "approximate", "area_only"] }).default("approximate"),
+  
+  // Metadata
+  deviceInfo: jsonb("device_info").$type<{
+    type?: "mobile" | "web" | "gps_device";
+    userAgent?: string;
+    batteryLevel?: number;
+  }>(),
+  
+  timestamp: timestamp("timestamp").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("olu_order_idx").on(table.orderId),
+  providerIdx: index("olu_provider_idx").on(table.providerId),
+  timestampIdx: index("olu_timestamp_idx").on(table.timestamp),
+  statusIdx: index("olu_status_idx").on(table.status),
+  sharedIdx: index("olu_shared_idx").on(table.isSharedWithCustomer),
+}));
+
+// Enhanced Chat Messages for Orders
+export const orderChatMessages = pgTable("order_chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull(),
+  senderId: varchar("sender_id").references(() => users.id).notNull(),
+  senderRole: varchar("sender_role", { enum: ["customer", "provider", "admin", "system"] }).notNull(),
+  
+  // Message content
+  messageType: varchar("message_type", { 
+    enum: ["text", "image", "audio", "video", "location", "document", "system", "status_update"] 
+  }).default("text"),
+  content: text("content").notNull(),
+  metadata: jsonb("metadata").$type<{
+    fileName?: string;
+    fileSize?: number;
+    duration?: number; // for audio/video
+    coordinates?: { latitude: number; longitude: number };
+    workPhase?: string;
+    beforeAfter?: "before" | "after" | "during";
+    isAutoGenerated?: boolean;
+  }>(),
+  
+  // Attachments
+  attachments: jsonb("attachments").$type<string[]>(),
+  
+  // Status and delivery
+  isRead: boolean("is_read").default(false),
+  readAt: timestamp("read_at"),
+  deliveredAt: timestamp("delivered_at"),
+  isEdited: boolean("is_edited").default(false),
+  editedAt: timestamp("edited_at"),
+  
+  // Threading and replies
+  replyToId: varchar("reply_to_id"),
+  threadId: varchar("thread_id"), // For grouping related messages
+  
+  // Priority and urgency
+  priority: varchar("priority", { enum: ["low", "normal", "high", "urgent"] }).default("normal"),
+  isSystemMessage: boolean("is_system_message").default(false),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("ocm_order_idx").on(table.orderId),
+  senderIdx: index("ocm_sender_idx").on(table.senderId),
+  typeIdx: index("ocm_type_idx").on(table.messageType),
+  readIdx: index("ocm_read_idx").on(table.isRead),
+  timestampIdx: index("ocm_timestamp_idx").on(table.createdAt),
+  replyIdx: index("ocm_reply_idx").on(table.replyToId),
+  systemIdx: index("ocm_system_idx").on(table.isSystemMessage),
+}));
+
+// Order Rating and Reviews (Enhanced)
+export const orderRatings = pgTable("order_ratings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").references(() => serviceBookings.id).notNull(),
+  
+  // Rater information
+  raterId: varchar("rater_id").references(() => users.id).notNull(),
+  raterRole: varchar("rater_role", { enum: ["customer", "provider"] }).notNull(),
+  
+  // Rating details
+  overallRating: integer("overall_rating").notNull(), // 1-5
+  qualityRating: integer("quality_rating"), // 1-5
+  timelinessRating: integer("timeliness_rating"), // 1-5
+  communicationRating: integer("communication_rating"), // 1-5
+  professionalismRating: integer("professionalism_rating"), // 1-5
+  valueRating: integer("value_rating"), // 1-5
+  
+  // Written feedback
+  reviewText: text("review_text"),
+  positives: jsonb("positives").$type<string[]>(), // What went well
+  improvements: jsonb("improvements").$type<string[]>(), // What could be better
+  
+  // Media attachments
+  photos: jsonb("photos").$type<string[]>(),
+  videos: jsonb("videos").$type<string[]>(),
+  
+  // Verification and moderation
+  isVerified: boolean("is_verified").default(false),
+  isPublic: boolean("is_public").default(true),
+  moderationStatus: varchar("moderation_status", { 
+    enum: ["pending", "approved", "rejected", "flagged"] 
+  }).default("pending"),
+  moderationNotes: text("moderation_notes"),
+  
+  // Response and interaction
+  helpfulVotes: integer("helpful_votes").default(0),
+  flagCount: integer("flag_count").default(0),
+  responseText: text("response_text"), // Provider response to customer review
+  responseAt: timestamp("response_at"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  orderIdx: index("or_order_idx").on(table.orderId),
+  raterIdx: index("or_rater_idx").on(table.raterId),
+  roleIdx: index("or_role_idx").on(table.raterRole),
+  overallRatingIdx: index("or_overall_rating_idx").on(table.overallRating),
+  publicIdx: index("or_public_idx").on(table.isPublic),
+  moderationIdx: index("or_moderation_idx").on(table.moderationStatus),
+  // Unique constraint: one rating per order per role
+  uniqueOrderRaterRole: index("or_unique_order_rater_role").on(table.orderId, table.raterRole),
+}));
+
+// Service Scheduling Constraints
+export const serviceSchedulingRules = pgTable("service_scheduling_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serviceId: varchar("service_id").references(() => services.id),
+  categoryId: varchar("category_id").references(() => serviceCategories.id),
+  
+  // Time constraints
+  minAdvanceBookingHours: integer("min_advance_booking_hours").default(2), // Minimum time before booking
+  maxAdvanceBookingDays: integer("max_advance_booking_days").default(30), // Maximum days in advance
+  estimatedDurationMinutes: integer("estimated_duration_minutes").notNull(),
+  bufferMinutes: integer("buffer_minutes").default(15), // Time between bookings
+  
+  // Availability windows
+  availableDays: jsonb("available_days").$type<number[]>().default(sql`'[1,2,3,4,5,6,0]'::jsonb`), // 0-6, Sunday-Saturday
+  timeSlots: jsonb("time_slots").$type<Array<{
+    start: string; // "09:00"
+    end: string;   // "18:00"
+    maxBookings?: number;
+  }>>(),
+  
+  // Geographic constraints
+  serviceRadius: integer("service_radius").default(25), // km
+  rushHourMultiplier: decimal("rush_hour_multiplier", { precision: 3, scale: 2 }).default("1.5"),
+  rushHours: jsonb("rush_hours").$type<Array<{
+    start: string;
+    end: string;
+    days: number[];
+  }>>(),
+  
+  // Weather and seasonal constraints
+  weatherDependent: boolean("weather_dependent").default(false),
+  seasonalAvailability: jsonb("seasonal_availability").$type<{
+    summer?: boolean;
+    monsoon?: boolean;
+    winter?: boolean;
+  }>(),
+  
+  // Capacity management
+  maxDailyBookings: integer("max_daily_bookings"),
+  maxHourlyBookings: integer("max_hourly_bookings"),
+  
+  isActive: boolean("is_active").default(true),
+  priority: integer("priority").default(0), // Higher priority rules override lower
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  serviceIdx: index("ssr_service_idx").on(table.serviceId),
+  categoryIdx: index("ssr_category_idx").on(table.categoryId),
+  activeIdx: index("ssr_active_idx").on(table.isActive),
+  priorityIdx: index("ssr_priority_idx").on(table.priority),
+}));
 
 // Additional types for WebSocket communication and UI components
 

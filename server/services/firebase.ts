@@ -140,7 +140,7 @@ export const db = {
   })
 };
 
-export const storage = {
+export const firebaseStorage = {
   bucket: () => ({
     file: (path: string) => ({
       save: async (data: any) => ({ path }),
