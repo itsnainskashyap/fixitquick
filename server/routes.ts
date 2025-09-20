@@ -825,14 +825,7 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  // Catch all other API routes
-  app.all('/api/*', (req, res) => {
-    res.status(501).json({ 
-      message: 'API endpoint temporarily unavailable',
-      error: 'Feature under maintenance',
-      endpoint: req.path
-    });
-  });
+  // Catch-all route REMOVED to prevent 501 errors - let specific routes handle requests
 
   // Health check endpoint
   app.get('/health', (req, res) => {
