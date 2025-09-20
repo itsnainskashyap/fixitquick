@@ -160,7 +160,7 @@ export default function PartsProvider() {
   // Add part mutation
   const addPartMutation = useMutation({
     mutationFn: async (partData: any) => {
-      const response = await apiRequest('POST', '/api/v1/parts-provider/parts', partData);
+      const response = await apiRequest('POST', '/api/v1/parts', partData);
       return response.json();
     },
     onSuccess: () => {
@@ -185,7 +185,7 @@ export default function PartsProvider() {
   // Update stock mutation
   const updateStockMutation = useMutation({
     mutationFn: async ({ partId, stock }: { partId: string; stock: number }) => {
-      const response = await apiRequest('PUT', `/api/v1/parts-provider/parts/${partId}/stock`, { stock });
+      const response = await apiRequest('PUT', `/api/v1/parts-provider/inventory/${partId}`, { stock });
       return response.json();
     },
     onSuccess: () => {

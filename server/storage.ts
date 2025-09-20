@@ -871,9 +871,17 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async getPartsCategories(): Promise<PartsCategory[]> {
-    return await db.select().from(partsCategories)
-      .where(eq(partsCategories.isActive, true))
-      .orderBy(asc(partsCategories.sortOrder), asc(partsCategories.name));
+    try {
+      return await db.select().from(partsCategories)
+        .where(eq(partsCategories.isActive, true))
+        .orderBy(asc(partsCategories.sortOrder), asc(partsCategories.name));
+    } catch (error) {
+      console.error('Error in getPartsCategories:', error);
+      // Fallback: try without ordering by sortOrder in case of column name mismatch
+      return await db.select().from(partsCategories)
+        .where(eq(partsCategories.isActive, true))
+        .orderBy(asc(partsCategories.name));
+    }
   }
 
   async createPartsCategory(category: InsertPartsCategory): Promise<PartsCategory> {
