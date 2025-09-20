@@ -1,3 +1,5 @@
+console.log("🚀 BOOTSTRAP: server/index.ts loaded");
+
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
@@ -230,13 +232,13 @@ app.use((req, res, next) => {
     credentials: true,
   }));
   
-  // Setup upload routes first (includes authentication setup)
-  setupUploadRoutes(app);
-  console.log('✅ Upload routes registered successfully');
-
-  // Setup main routes with fixed parts provider endpoints  
+  // CRITICAL: Setup main routes FIRST to prevent upload catch-all from intercepting category routes
   registerRoutes(app);
   console.log('✅ Main routes registered successfully');
+
+  // Setup upload routes after main routes (includes authentication setup)
+  setupUploadRoutes(app);
+  console.log('✅ Upload routes registered successfully');
   
   // Create server
   const { createServer } = await import('http');

@@ -282,7 +282,7 @@ function validateBody(schema: z.ZodSchema<any>) {
 }
 
 // EMERGENCY FIX: Create minimal routes that only use existing storage methods
-export function registerRoutes(app: Express): Server {
+export function registerRoutes(app: Express): void {
   // CORS configuration
   app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
@@ -317,6 +317,63 @@ export function registerRoutes(app: Express): Server {
 
   // Apply general rate limiting
   app.use('/api', limiter);
+
+  // ============================
+  // CRITICAL: Category GET routes MUST be registered first to avoid 404s
+  // ============================
+  
+  // GET /api/v1/service-categories - Public list of active service categories
+  app.get('/api/v1/service-categories', async (req: Request, res: Response) => {
+    try {
+      const categories = await storage.getMainCategories(true); // Only active categories
+      console.log('✅ GET /api/v1/service-categories: Retrieved', categories.length, 'categories');
+      res.json({ 
+        success: true, 
+        data: categories
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/service-categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch service categories: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch service categories'
+      });
+    }
+  });
+
+  // GET /api/v1/categories/tree - Public category hierarchy tree
+  app.get('/api/v1/categories/tree', async (req: Request, res: Response) => {
+    try {
+      // Get all categories and build tree structure
+      const mainCategories = await storage.getMainCategories(true);
+      const categoryTree = [];
+      
+      for (const mainCategory of mainCategories) {
+        const subCategories = await storage.getSubCategories(mainCategory.id, true);
+        categoryTree.push({
+          ...mainCategory,
+          subcategories: subCategories
+        });
+      }
+      
+      console.log('✅ GET /api/v1/categories/tree: Built tree with', categoryTree.length, 'main categories');
+      res.json({ 
+        success: true, 
+        data: categoryTree
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/categories/tree error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch category tree: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch category tree'
+      });
+    }
+  });
+
+  console.log('🔧 CRITICAL: Category GET routes registered at top of function');
 
   // ============================
   // WORKING OTP ENDPOINTS - PRESERVE THESE!
@@ -891,8 +948,8 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // POST /api/v1/service-categories - Create new service category
-  app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), validateBody(apiCreateServiceCategorySchema), async (req: Request, res: Response) => {
+  // POST /api/v1/admin/categories - Create new service category (admin only)
+  app.post('/api/v1/admin/categories', authMiddleware, requireRole(['admin']), validateBody(apiCreateServiceCategorySchema), async (req: Request, res: Response) => {
     try {
       // Generate slug from name
       const slug = req.body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -922,12 +979,96 @@ export function registerRoutes(app: Express): Server {
         message: 'Category created successfully'
       });
     } catch (error) {
-      console.error('❌ POST /api/v1/service-categories error:', error);
+      console.error('❌ POST /api/v1/admin/categories error:', error);
       res.status(500).json({ 
         success: false,
         message: process.env.NODE_ENV === 'development' 
           ? `Failed to create category: ${error instanceof Error ? error.message : 'Unknown error'}`
           : 'Failed to create category'
+      });
+    }
+  });
+
+  // PUT /api/v1/admin/categories/:categoryId - Update existing service category (admin only)
+  app.put('/api/v1/admin/categories/:categoryId', authMiddleware, requireRole(['admin']), validateBody(apiUpdateServiceCategorySchema), async (req: Request, res: Response) => {
+    try {
+      const { categoryId } = req.params;
+      
+      // Generate slug from name if name is being updated
+      let updateData = { ...req.body };
+      if (req.body.name) {
+        updateData.slug = req.body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
+      
+      // Determine level based on parentId if parentId is being updated
+      if (req.body.parentId !== undefined) {
+        updateData.level = req.body.parentId ? 1 : 0;
+      }
+      
+      updateData.updatedAt = new Date();
+
+      // Update the category directly in database
+      const [updatedCategory] = await db.update(serviceCategories)
+        .set(updateData)
+        .where(eq(serviceCategories.id, categoryId))
+        .returning();
+      
+      if (!updatedCategory) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'Category not found'
+        });
+      }
+      
+      res.json({ 
+        success: true, 
+        data: updatedCategory,
+        message: 'Category updated successfully'
+      });
+    } catch (error) {
+      console.error('❌ PUT /api/v1/admin/categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to update category: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to update category'
+      });
+    }
+  });
+
+  // DELETE /api/v1/admin/categories/:categoryId - Delete service category (admin only)
+  app.delete('/api/v1/admin/categories/:categoryId', authMiddleware, requireRole(['admin']), async (req: Request, res: Response) => {
+    try {
+      const { categoryId } = req.params;
+      
+      // Soft delete by setting isActive to false
+      const [deletedCategory] = await db.update(serviceCategories)
+        .set({ 
+          isActive: false,
+          updatedAt: new Date()
+        })
+        .where(eq(serviceCategories.id, categoryId))
+        .returning();
+      
+      if (!deletedCategory) {
+        return res.status(404).json({ 
+          success: false,
+          message: 'Category not found'
+        });
+      }
+      
+      res.json({ 
+        success: true, 
+        data: deletedCategory,
+        message: 'Category deleted successfully'
+      });
+    } catch (error) {
+      console.error('❌ DELETE /api/v1/admin/categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to delete category: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to delete category'
       });
     }
   });
@@ -2523,11 +2664,7 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  // Create HTTP server
-  const server = createServer(app);
-
-  // Initialize WebSocket
-  initializeWebSocket(server);
-
-  return server;
+  // FIXED: No longer creating duplicate server - routes registered on passed app
+  console.log('✅ All routes registered successfully on provided Express app');
+  console.log('🔧 Category GET endpoints should now work: /api/v1/service-categories, /api/v1/categories/tree');
 }
