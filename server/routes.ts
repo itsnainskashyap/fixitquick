@@ -7,7 +7,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc, count, gte } from "drizzle-orm";
 import { db } from "./db";
 import { storage } from "./storage";
 import { authMiddleware, optionalAuth, requireRole, adminSessionMiddleware, type AuthenticatedRequest } from "./middleware/auth";
@@ -86,7 +86,13 @@ import {
   orderStatusUpdateSchema,
   orderLocationUpdateSchema,
   orderChatMessageSchema,
-  insertOrderRatingSchema
+  insertOrderRatingSchema,
+  // Database tables
+  services,
+  serviceCategories,
+  walletTransactions,
+  orders,
+  serviceBookings
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";
@@ -546,7 +552,128 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Service details endpoint - uses existing getService
+  // Suggested services endpoint - returns popular and recommended services
+  app.get('/api/v1/services/suggested', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      let userLocation: { latitude: number; longitude: number } | null = null;
+
+      // Get user location if available for location-based suggestions
+      if (userId) {
+        try {
+          const user = await storage.getUser(userId);
+          if (user?.location) {
+            userLocation = {
+              latitude: parseFloat(String(user.location.latitude || '0')),
+              longitude: parseFloat(String(user.location.longitude || '0'))
+            };
+          }
+        } catch (err) {
+          console.warn('Could not fetch user location for suggestions:', err);
+        }
+      }
+
+      // Get popular services based on booking count and ratings
+      const popularServices = await db.select({
+        id: services.id,
+        name: services.name,
+        description: services.description,
+        basePrice: services.basePrice,
+        estimatedDuration: services.estimatedDuration,
+        icon: services.icon,
+        rating: services.rating,
+        totalBookings: services.totalBookings,
+        categoryId: services.categoryId,
+        isActive: services.isActive,
+        createdAt: services.createdAt,
+        // Calculate a suggestion score based on ratings and bookings
+        suggestionScore: sql<number>`COALESCE(${services.rating}, 0) * 0.3 + COALESCE(${services.totalBookings}, 0) * 0.001`
+      })
+      .from(services)
+      .where(and(
+        eq(services.isActive, true),
+        gte(services.rating, '3.5') // Only suggest services with good ratings
+      ))
+      .orderBy(sql`COALESCE(${services.rating}, 0) * 0.3 + COALESCE(${services.totalBookings}, 0) * 0.001 DESC`)
+      .limit(12);
+
+      // Get diverse category representation
+      const categorizedSuggestions = await db.select({
+        serviceId: services.id,
+        serviceName: services.name,
+        serviceDescription: services.description,
+        basePrice: services.basePrice,
+        estimatedDuration: services.estimatedDuration,
+        icon: services.icon,
+        rating: services.rating,
+        totalBookings: services.totalBookings,
+        categoryId: services.categoryId,
+        categoryName: serviceCategories.name,
+        isActive: services.isActive
+      })
+      .from(services)
+      .innerJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+      .where(and(
+        eq(services.isActive, true),
+        eq(serviceCategories.isActive, true),
+        gte(services.rating, '3.0')
+      ))
+      .orderBy(sql`RANDOM()`)
+      .limit(8);
+
+      // Combine suggestions with priority to popular services
+      const allSuggestions = [
+        ...popularServices.slice(0, 8).map(service => ({
+          ...service,
+          suggestionReason: 'popular',
+          price: parseFloat(service.basePrice || '0'),
+          rating: parseFloat(service.rating || '0'),
+          totalBookings: service.totalBookings || 0
+        })),
+        ...categorizedSuggestions.slice(0, 4).map(service => ({
+          id: service.serviceId,
+          name: service.serviceName,
+          description: service.serviceDescription,
+          basePrice: service.basePrice,
+          estimatedDuration: service.estimatedDuration,
+          icon: service.icon,
+          rating: parseFloat(service.rating || '0'),
+          totalBookings: service.totalBookings || 0,
+          categoryId: service.categoryId,
+          isActive: service.isActive,
+          suggestionReason: 'diverse',
+          categoryName: service.categoryName,
+          price: parseFloat(service.basePrice || '0')
+        }))
+      ];
+
+      // Remove duplicates and limit to 10 suggestions
+      const uniqueSuggestions = allSuggestions
+        .filter((service, index, arr) => arr.findIndex(s => s.id === service.id) === index)
+        .slice(0, 10)
+        .map(transformServiceForFrontend);
+
+      res.json({ 
+        success: true, 
+        data: uniqueSuggestions,
+        meta: {
+          userLocation: userLocation ? 'available' : 'not_available',
+          suggestionTypes: ['popular', 'diverse'],
+          totalSuggestions: uniqueSuggestions.length
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/services/suggested error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development'
+          ? `Failed to fetch suggested services: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch suggested services'
+      });
+    }
+  });
+
+  // Service details endpoint - uses existing getService (placed after specific routes)
   app.get('/api/v1/services/:id', async (req, res) => {
     try {
       const { id } = req.params;
@@ -753,6 +880,115 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // /api/v1/wallet/transactions - Get user wallet transaction history
+  app.get('/api/v1/wallet/transactions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      // Parse query parameters for pagination and filtering
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 20, 100); // Max 100 per page
+      const offset = (page - 1) * limit;
+      const type = req.query.type as string; // 'credit' | 'debit'
+      const category = req.query.category as string; // 'topup' | 'payment' | 'refund' etc.
+
+      // Build where conditions
+      const whereConditions = [eq(walletTransactions.userId, userId)];
+      
+      if (type && ['credit', 'debit'].includes(type)) {
+        whereConditions.push(eq(walletTransactions.type, type as 'credit' | 'debit'));
+      }
+      
+      if (category && ['topup', 'payment', 'refund', 'withdrawal', 'commission', 'redemption', 'penalty', 'bonus'].includes(category)) {
+        whereConditions.push(eq(walletTransactions.category, category as any));
+      }
+
+      // Get transactions with pagination
+      const [transactions, totalCountResult] = await Promise.all([
+        db.select({
+          id: walletTransactions.id,
+          type: walletTransactions.type,
+          amount: walletTransactions.amount,
+          description: walletTransactions.description,
+          category: walletTransactions.category,
+          orderId: walletTransactions.orderId,
+          reference: walletTransactions.reference,
+          paymentMethod: walletTransactions.paymentMethod,
+          status: walletTransactions.status,
+          metadata: walletTransactions.metadata,
+          balanceBefore: walletTransactions.balanceBefore,
+          balanceAfter: walletTransactions.balanceAfter,
+          createdAt: walletTransactions.createdAt,
+          completedAt: walletTransactions.completedAt
+        })
+        .from(walletTransactions)
+        .where(and(...whereConditions))
+        .orderBy(desc(walletTransactions.createdAt))
+        .limit(limit)
+        .offset(offset),
+
+        // Get total count for pagination
+        db.select({ count: count() })
+          .from(walletTransactions)
+          .where(and(...whereConditions))
+      ]);
+
+      const totalCount = totalCountResult[0].count;
+      const totalPages = Math.ceil(totalCount / limit);
+
+      // Format transaction data
+      const formattedTransactions = transactions.map(transaction => ({
+        id: transaction.id,
+        type: transaction.type,
+        amount: parseFloat(transaction.amount || '0'),
+        description: transaction.description || '',
+        category: transaction.category,
+        orderId: transaction.orderId,
+        reference: transaction.reference,
+        paymentMethod: transaction.paymentMethod,
+        status: transaction.status,
+        metadata: transaction.metadata || {},
+        balanceBefore: transaction.balanceBefore ? parseFloat(transaction.balanceBefore) : null,
+        balanceAfter: transaction.balanceAfter ? parseFloat(transaction.balanceAfter) : null,
+        createdAt: transaction.createdAt,
+        completedAt: transaction.completedAt,
+        // Add display helpers
+        displayAmount: transaction.type === 'credit' ? `+₹${parseFloat(transaction.amount || '0')}` : `-₹${parseFloat(transaction.amount || '0')}`,
+        displayStatus: transaction.status === 'completed' ? 'Success' : 
+                     transaction.status === 'pending' ? 'Pending' :
+                     transaction.status === 'failed' ? 'Failed' : 'Cancelled'
+      }));
+
+      res.json({
+        success: true,
+        data: formattedTransactions,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalCount,
+          limit,
+          hasNextPage: page < totalPages,
+          hasPreviousPage: page > 1
+        },
+        filters: {
+          type: type || null,
+          category: category || null
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/wallet/transactions error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development'
+          ? `Failed to fetch wallet transactions: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch wallet transactions'
+      });
+    }
+  });
+
   // /api/login - Remove conflicting fallback, let replitAuth.ts handle it
 
   // ============================
@@ -767,11 +1003,87 @@ export function registerRoutes(app: Express): Server {
     });
   });
 
-  app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {
-    res.status(501).json({ 
-      message: 'Recent orders endpoint temporarily unavailable',
-      error: 'Feature under maintenance' 
-    });
+  app.get('/api/v1/orders/recent', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      // Get recent orders from both orders and serviceBookings tables
+      const [recentOrders, recentBookings] = await Promise.all([
+        // Query recent orders
+        db.select({
+          id: orders.id,
+          type: sql<string>`'order'`,
+          userId: orders.userId,
+          serviceId: orders.serviceId,
+          status: orders.status,
+          providerId: orders.providerId,
+          acceptedAt: orders.acceptedAt,
+          meta: orders.meta,
+          createdAt: orders.createdAt,
+          updatedAt: orders.updatedAt
+        })
+        .from(orders)
+        .where(eq(orders.userId, userId))
+        .orderBy(desc(orders.createdAt))
+        .limit(10),
+
+        // Query recent service bookings
+        db.select({
+          id: serviceBookings.id,
+          type: sql<string>`'booking'`,
+          userId: serviceBookings.userId,
+          serviceId: serviceBookings.serviceId,
+          status: serviceBookings.status,
+          assignedProviderId: serviceBookings.assignedProviderId,
+          requestedAt: serviceBookings.requestedAt,
+          scheduledAt: serviceBookings.scheduledAt,
+          totalAmount: serviceBookings.totalAmount,
+          paymentMethod: serviceBookings.paymentMethod,
+          serviceLocation: serviceBookings.serviceLocation,
+          notes: serviceBookings.notes
+        })
+        .from(serviceBookings)
+        .where(eq(serviceBookings.userId, userId))
+        .orderBy(desc(serviceBookings.requestedAt))
+        .limit(10)
+      ]);
+
+      // Combine and sort by date
+      const combinedRecords = [
+        ...recentOrders.map(order => ({
+          ...order,
+          displayDate: order.createdAt,
+          totalAmount: order.meta?.totalAmount || 0,
+          paymentStatus: order.meta?.paymentStatus || 'pending',
+          location: order.meta?.location
+        })),
+        ...recentBookings.map(booking => ({
+          ...booking,
+          displayDate: booking.requestedAt,
+          providerId: booking.assignedProviderId,
+          totalAmount: parseFloat(booking.totalAmount || '0'),
+          location: booking.serviceLocation
+        }))
+      ]
+      .sort((a, b) => new Date(b.displayDate || 0).getTime() - new Date(a.displayDate || 0).getTime())
+      .slice(0, 10);
+
+      res.json({ 
+        success: true, 
+        data: combinedRecords
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/orders/recent error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development'
+          ? `Failed to fetch recent orders: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch recent orders'
+      });
+    }
   });
 
   app.get('/api/v1/orders/:id', authMiddleware, async (req, res) => {

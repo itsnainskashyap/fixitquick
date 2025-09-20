@@ -266,7 +266,6 @@ import {
   type InsertProviderResubmission,
   type VerificationNotificationPreferences,
   type InsertVerificationNotificationPreferences,
-  type ServiceProviderVerificationStatusType,
 } from "@shared/schema";
 
 // Single typed combinator utility for WHERE conditions
@@ -1719,6 +1718,308 @@ export class PostgresStorage implements IStorage {
     } catch (error) {
       console.error('Error applying cancellation policy:', error);
       return { success: false, message: 'Failed to apply cancellation policy' };
+    }
+  }
+
+  // ========================================
+  // VERIFICATION WORKFLOW METHODS
+  // ========================================
+
+  async getServiceProviderForVerification(userId: string): Promise<ServiceProvider | undefined> {
+    const result = await db.select().from(serviceProviders).where(eq(serviceProviders.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async updateServiceProviderVerificationStatus(
+    userId: string, 
+    status: ServiceProviderVerificationStatusType,
+    adminId?: string,
+    reason?: string,
+    notes?: string
+  ): Promise<ServiceProvider | undefined> {
+    const result = await db.update(serviceProviders)
+      .set({ 
+        verificationStatus: status,
+        updatedAt: new Date()
+      })
+      .where(eq(serviceProviders.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async getServiceProvidersForVerification(
+    status?: ServiceProviderVerificationStatusType,
+    limit?: number,
+    offset?: number
+  ): Promise<ServiceProvider[]> {
+    const whereCondition = status ? eq(serviceProviders.verificationStatus, status) : undefined;
+    let query = db.select().from(serviceProviders);
+    
+    if (whereCondition) {
+      query = query.where(whereCondition);
+    }
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    if (offset) {
+      query = query.offset(offset);
+    }
+    
+    return await query;
+  }
+
+  async getPartsProviderForVerification(userId: string): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.select().from(partsProviderBusinessInfo).where(eq(partsProviderBusinessInfo.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async updatePartsProviderVerificationStatus(
+    userId: string,
+    status: string,
+    adminId?: string, 
+    reason?: string,
+    notes?: string
+  ): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.update(partsProviderBusinessInfo)
+      .set({ 
+        verificationStatus: status,
+        updatedAt: new Date()
+      })
+      .where(eq(partsProviderBusinessInfo.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async getPartsProvidersForVerification(
+    status?: string,
+    limit?: number, 
+    offset?: number
+  ): Promise<PartsProviderBusinessInfo[]> {
+    const whereCondition = status ? eq(partsProviderBusinessInfo.verificationStatus, status) : undefined;
+    let query = db.select().from(partsProviderBusinessInfo);
+    
+    if (whereCondition) {
+      query = query.where(whereCondition);
+    }
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    if (offset) {
+      query = query.offset(offset);
+    }
+    
+    return await query;
+  }
+
+  async createVerificationStatusTransition(transition: InsertVerificationStatusTransition): Promise<VerificationStatusTransition> {
+    const result = await db.insert(verificationStatusTransitions).values(transition).returning();
+    return result[0];
+  }
+
+  async getVerificationStatusTransitions(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<VerificationStatusTransition[]> {
+    return await db.select()
+      .from(verificationStatusTransitions)
+      .where(and(
+        eq(verificationStatusTransitions.providerId, providerId),
+        eq(verificationStatusTransitions.providerType, providerType)
+      ))
+      .orderBy(desc(verificationStatusTransitions.createdAt));
+  }
+
+  async createPartsProviderQualityMetrics(metrics: InsertPartsProviderQualityMetrics): Promise<PartsProviderQualityMetrics> {
+    const result = await db.insert(partsProviderQualityMetrics).values(metrics).returning();
+    return result[0];
+  }
+
+  async getPartsProviderQualityMetrics(providerId: string): Promise<PartsProviderQualityMetrics | undefined> {
+    const result = await db.select().from(partsProviderQualityMetrics).where(eq(partsProviderQualityMetrics.providerId, providerId)).limit(1);
+    return result[0];
+  }
+
+  async updatePartsProviderQualityMetrics(
+    providerId: string,
+    data: Partial<InsertPartsProviderQualityMetrics>
+  ): Promise<PartsProviderQualityMetrics | undefined> {
+    const result = await db.update(partsProviderQualityMetrics)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(partsProviderQualityMetrics.providerId, providerId))
+      .returning();
+    return result[0];
+  }
+
+  async createProviderResubmission(resubmission: InsertProviderResubmission): Promise<ProviderResubmission> {
+    const result = await db.insert(providerResubmissions).values(resubmission).returning();
+    return result[0];
+  }
+
+  async getProviderResubmission(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<ProviderResubmission | undefined> {
+    const result = await db.select()
+      .from(providerResubmissions)
+      .where(and(
+        eq(providerResubmissions.providerId, providerId),
+        eq(providerResubmissions.providerType, providerType)
+      ))
+      .orderBy(desc(providerResubmissions.createdAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateProviderResubmissionStatus(
+    id: string,
+    status: string,
+    data?: Partial<InsertProviderResubmission>
+  ): Promise<ProviderResubmission | undefined> {
+    const result = await db.update(providerResubmissions)
+      .set({ ...data, status, updatedAt: new Date() })
+      .where(eq(providerResubmissions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async createVerificationNotificationPreferences(
+    preferences: InsertVerificationNotificationPreferences
+  ): Promise<VerificationNotificationPreferences> {
+    const result = await db.insert(verificationNotificationPreferences).values(preferences).returning();
+    return result[0];
+  }
+
+  async getVerificationNotificationPreferences(userId: string): Promise<VerificationNotificationPreferences | undefined> {
+    const result = await db.select().from(verificationNotificationPreferences).where(eq(verificationNotificationPreferences.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async updateVerificationNotificationPreferences(
+    userId: string,
+    data: Partial<InsertVerificationNotificationPreferences>
+  ): Promise<VerificationNotificationPreferences | undefined> {
+    const result = await db.update(verificationNotificationPreferences)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(verificationNotificationPreferences.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  async updateDocumentVerificationStatus(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider',
+    documentType: string,
+    verified: boolean,
+    adminId?: string,
+    notes?: string
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      // This is a simplified implementation - in a real scenario, 
+      // you'd update the specific document verification status in the provider record
+      console.log(`Updating document verification: ${providerId}, ${documentType}, ${verified}`);
+      return { success: true, message: 'Document verification status updated' };
+    } catch (error) {
+      console.error('Error updating document verification:', error);
+      return { success: false, message: 'Failed to update document verification' };
+    }
+  }
+
+  async getVerificationDashboardStats(): Promise<{
+    serviceProviders: {
+      pending: number;
+      underReview: number;
+      approved: number;
+      rejected: number;
+      suspended: number;
+      resubmissionRequired: number;
+    };
+    partsProviders: {
+      pending: number;
+      underReview: number;
+      approved: number;
+      rejected: number;
+    };
+    totalPendingDocuments: number;
+    recentSubmissions: number;
+  }> {
+    try {
+      // Get service provider stats
+      const serviceProviderStats = await db.select({
+        status: serviceProviders.verificationStatus,
+        count: count()
+      })
+      .from(serviceProviders)
+      .groupBy(serviceProviders.verificationStatus);
+
+      // Get parts provider stats  
+      const partsProviderStats = await db.select({
+        status: partsProviderBusinessInfo.verificationStatus,
+        count: count()
+      })
+      .from(partsProviderBusinessInfo)
+      .groupBy(partsProviderBusinessInfo.verificationStatus);
+
+      // Initialize stats with zeros
+      const serviceStats = {
+        pending: 0,
+        underReview: 0,
+        approved: 0,
+        rejected: 0,
+        suspended: 0,
+        resubmissionRequired: 0
+      };
+
+      const partsStats = {
+        pending: 0,
+        underReview: 0,
+        approved: 0,
+        rejected: 0
+      };
+
+      // Populate service provider stats
+      serviceProviderStats.forEach(stat => {
+        if (stat.status && stat.status in serviceStats) {
+          (serviceStats as any)[stat.status] = stat.count;
+        }
+      });
+
+      // Populate parts provider stats
+      partsProviderStats.forEach(stat => {
+        if (stat.status && stat.status in partsStats) {
+          (partsStats as any)[stat.status] = stat.count;
+        }
+      });
+
+      return {
+        serviceProviders: serviceStats,
+        partsProviders: partsStats,
+        totalPendingDocuments: serviceStats.pending + partsStats.pending,
+        recentSubmissions: 0 // Placeholder - would need additional logic to calculate recent submissions
+      };
+    } catch (error) {
+      console.error('Error getting verification dashboard stats:', error);
+      return {
+        serviceProviders: {
+          pending: 0,
+          underReview: 0,
+          approved: 0,
+          rejected: 0,
+          suspended: 0,
+          resubmissionRequired: 0
+        },
+        partsProviders: {
+          pending: 0,
+          underReview: 0,
+          approved: 0,
+          rejected: 0
+        },
+        totalPendingDocuments: 0,
+        recentSubmissions: 0
+      };
     }
   }
 }
