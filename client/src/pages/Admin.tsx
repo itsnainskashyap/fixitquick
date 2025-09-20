@@ -3959,7 +3959,7 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
             <div className="flex items-center space-x-3 mb-2">
               <h3 className="text-xl font-semibold text-foreground">{provider.businessName}</h3>
               <Badge className={getStatusColor(provider.verificationStatus)}>
-                {provider.verificationStatus.replace('_', ' ').toUpperCase()}
+                {provider.verificationStatus ? provider.verificationStatus.replace('_', ' ').toUpperCase() : 'UNKNOWN'}
               </Badge>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm text-muted-foreground">
@@ -4160,7 +4160,7 @@ const ProviderVerificationCard: React.FC<ProviderVerificationCardProps> = ({
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-medium">Current Status</span>
                     <Badge className={getStatusColor(provider.verificationStatus)}>
-                      {provider.verificationStatus.replace('_', ' ').toUpperCase()}
+                      {provider.verificationStatus ? provider.verificationStatus.replace('_', ' ').toUpperCase() : 'UNKNOWN'}
                     </Badge>
                   </div>
                   {provider.verificationDate && (
@@ -5975,7 +5975,7 @@ export default function Admin() {
                       </TableCell>
                       <TableCell>
                         <Badge className={getRoleColor(user.role)}>
-                          {user.role.replace('_', ' ').toUpperCase()}
+                          {user.role ? user.role.replace('_', ' ').toUpperCase() : 'UNKNOWN'}
                         </Badge>
                       </TableCell>
                       <TableCell>

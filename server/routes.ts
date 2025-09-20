@@ -2222,8 +2222,8 @@ export function registerRoutes(app: Express): void {
       }
 
       // Check authorization - user must be customer or provider involved in the order
-      const hasAccess = order.customerId === user.id || 
-                       (order.items && order.items.some((item: any) => item.providerId === user.id));
+      const hasAccess = order.userId === user.id || 
+                       (order.meta?.items && order.meta.items.some((item: any) => item.providerId === user.id));
 
       if (!hasAccess) {
         return res.status(403).json({
@@ -2809,12 +2809,12 @@ export function registerRoutes(app: Express): void {
   app.get('/api/v1/admin/orders', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
       const orders = await db.execute(sql`
-        SELECT o.id, o.customer_id, o.service_id, o.total_amount, 
+        SELECT o.id, o.user_id as customer_id, o.service_id, o.meta->>'totalAmount' as total_amount, 
                o.status, o.created_at,
                u.first_name, u.last_name, u.email as customer_email,
                s.name as service_name
         FROM orders o
-        LEFT JOIN users u ON o.customer_id = u.id
+        LEFT JOIN users u ON o.user_id = u.id
         LEFT JOIN services s ON o.service_id = s.id
         ORDER BY o.created_at DESC 
         LIMIT 50
@@ -2947,6 +2947,377 @@ export function registerRoutes(app: Express): void {
 
   // Catch-all route REMOVED to prevent 501 errors - let specific routes handle requests
 
+  // =====================================
+  // SERVICE BOOKING WORKFLOW ENDPOINTS
+  // =====================================
+
+  // POST /api/v1/service-bookings - Create a new service booking (instant or scheduled)
+  app.post('/api/v1/service-bookings', authMiddleware, validateBody(insertServiceBookingSchema), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const bookingData = {
+        ...req.body,
+        userId: user.id,
+        requestedAt: new Date(),
+        status: 'pending'
+      };
+
+      // Validate booking type and scheduling
+      if (bookingData.bookingType === 'scheduled' && !bookingData.scheduledAt) {
+        return res.status(400).json({
+          success: false,
+          message: 'Scheduled bookings must include a scheduledAt time'
+        });
+      }
+
+      // For instant bookings, set matching expiration (5 minutes)
+      if (bookingData.bookingType === 'instant') {
+        bookingData.matchingExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+        bookingData.status = 'matching';
+      }
+
+      const booking = await storage.createServiceBooking(bookingData);
+
+      // Send notification for instant bookings
+      if (bookingData.bookingType === 'instant' && webSocketManager) {
+        webSocketManager.broadcastToProviders({
+          type: 'new_booking_request',
+          bookingId: booking.id,
+          serviceId: booking.serviceId,
+          location: booking.serviceLocation,
+          urgency: booking.urgency,
+          estimatedPrice: booking.serviceDetails?.basePrice
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        data: booking,
+        message: bookingData.bookingType === 'instant' 
+          ? 'Booking created and searching for providers...' 
+          : 'Booking scheduled successfully'
+      });
+    } catch (error) {
+      console.error('Error creating service booking:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create booking'
+      });
+    }
+  });
+
+  // GET /api/v1/service-bookings - Get user's service bookings
+  app.get('/api/v1/service-bookings', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { status, limit = 20, offset = 0 } = req.query;
+
+      const bookings = await storage.getUserServiceBookings(user.id, {
+        status: status as string,
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string)
+      });
+
+      res.json({
+        success: true,
+        data: bookings
+      });
+    } catch (error) {
+      console.error('Error fetching user bookings:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch bookings'
+      });
+    }
+  });
+
+  // GET /api/v1/service-bookings/:id - Get specific booking details
+  app.get('/api/v1/service-bookings/:id', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id } = req.params;
+
+      const booking = await storage.getServiceBookingById(id);
+      
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found'
+        });
+      }
+
+      // Check authorization - user must be customer or assigned provider
+      const hasAccess = booking.userId === user.id || booking.assignedProviderId === user.id;
+      if (!hasAccess) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized to view this booking'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: booking
+      });
+    } catch (error) {
+      console.error('Error fetching booking:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch booking'
+      });
+    }
+  });
+
+  // POST /api/v1/service-bookings/:id/accept - Provider accepts the booking
+  app.post('/api/v1/service-bookings/:id/accept', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: bookingId } = req.params;
+
+      const booking = await storage.getServiceBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found'
+        });
+      }
+
+      // Check if booking is still available for acceptance
+      if (booking.status !== 'matching' && booking.status !== 'provider_search') {
+        return res.status(400).json({
+          success: false,
+          message: 'Booking is no longer available for acceptance'
+        });
+      }
+
+      // Check if provider is eligible for this booking
+      const providerProfile = await storage.getServiceProviderProfile(user.id);
+      if (!providerProfile || !providerProfile.servicesOffered.includes(booking.serviceId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'You are not qualified to provide this service'
+        });
+      }
+
+      // Accept the booking
+      const updatedBooking = await storage.updateServiceBooking(bookingId, {
+        status: 'accepted',
+        assignedProviderId: user.id,
+        assignedAt: new Date(),
+        assignmentMethod: 'manual'
+      });
+
+      // Cancel other job requests for this booking
+      await storage.cancelAllJobRequestsForBooking(bookingId);
+
+      // Send notification to customer
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'booking_accepted',
+          bookingId: bookingId,
+          providerId: user.id,
+          providerName: user.firstName + ' ' + user.lastName,
+          estimatedArrival: '15-30 minutes'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: updatedBooking,
+        message: 'Booking accepted successfully'
+      });
+    } catch (error) {
+      console.error('Error accepting booking:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to accept booking'
+      });
+    }
+  });
+
+  // POST /api/v1/service-bookings/:id/decline - Provider declines the booking
+  app.post('/api/v1/service-bookings/:id/decline', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: bookingId } = req.params;
+      const { reason } = req.body;
+
+      // Mark job request as declined
+      await storage.declineJobRequest(bookingId, user.id, reason);
+
+      res.json({
+        success: true,
+        message: 'Booking declined successfully'
+      });
+    } catch (error) {
+      console.error('Error declining booking:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to decline booking'
+      });
+    }
+  });
+
+  // PATCH /api/v1/service-bookings/:id/status - Update booking status
+  app.patch('/api/v1/service-bookings/:id/status', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: bookingId } = req.params;
+      const { newStatus, notes } = req.body;
+
+      const booking = await storage.getServiceBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found'
+        });
+      }
+
+      // Check authorization
+      const isCustomer = booking.userId === user.id;
+      const isAssignedProvider = booking.assignedProviderId === user.id;
+      
+      if (!isCustomer && !isAssignedProvider) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized to update this booking'
+        });
+      }
+
+      // Validate status transition
+      const validTransitions = await storage.getValidStatusTransitions(booking.status, user.role);
+      if (!validTransitions.includes(newStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status transition from ${booking.status} to ${newStatus}`
+        });
+      }
+
+      const updatedBooking = await storage.updateServiceBooking(bookingId, {
+        status: newStatus,
+        notes: notes || booking.notes
+      });
+
+      // Send status update notification
+      if (webSocketManager) {
+        const targetUserId = isCustomer ? booking.assignedProviderId : booking.userId;
+        if (targetUserId) {
+          webSocketManager.sendToUser(targetUserId, {
+            type: 'booking_status_update',
+            bookingId: bookingId,
+            status: newStatus,
+            message: `Booking status updated to ${newStatus}`,
+            notes: notes
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        data: updatedBooking,
+        message: 'Booking status updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating booking status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update booking status'
+      });
+    }
+  });
+
+  // POST /api/v1/service-bookings/:id/complete - Mark booking as completed
+  app.post('/api/v1/service-bookings/:id/complete', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { id: bookingId } = req.params;
+      const { finalAmount, workNotes, photosUrls } = req.body;
+
+      const booking = await storage.getServiceBookingById(bookingId);
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found'
+        });
+      }
+
+      if (booking.assignedProviderId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only the assigned provider can complete the booking'
+        });
+      }
+
+      if (booking.status !== 'in_progress' && booking.status !== 'work_completed') {
+        return res.status(400).json({
+          success: false,
+          message: 'Booking must be in progress to be completed'
+        });
+      }
+
+      const completionData = {
+        status: 'work_completed',
+        completedAt: new Date(),
+        serviceDetails: {
+          ...booking.serviceDetails,
+          finalAmount: finalAmount || booking.serviceDetails?.basePrice,
+          workNotes,
+          photosUrls
+        }
+      };
+
+      const updatedBooking = await storage.updateServiceBooking(bookingId, completionData);
+
+      // Send completion notification to customer
+      if (webSocketManager) {
+        webSocketManager.sendToUser(booking.userId, {
+          type: 'booking_completed',
+          bookingId: bookingId,
+          finalAmount: finalAmount,
+          message: 'Your service has been completed. Please review and pay.',
+          photosUrls
+        });
+      }
+
+      res.json({
+        success: true,
+        data: updatedBooking,
+        message: 'Booking marked as completed successfully'
+      });
+    } catch (error) {
+      console.error('Error completing booking:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to complete booking'
+      });
+    }
+  });
+
+  // GET /api/v1/provider/bookings - Provider's assigned bookings
+  app.get('/api/v1/provider/bookings', authMiddleware, requireRole(['service_provider']), async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      const { status, limit = 20, offset = 0 } = req.query;
+
+      const bookings = await storage.getProviderBookings(user.id, {
+        status: status as string,
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string)
+      });
+
+      res.json({
+        success: true,
+        data: bookings
+      });
+    } catch (error) {
+      console.error('Error fetching provider bookings:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch bookings'
+      });
+    }
+  });
+
   // Health check endpoint
   app.get('/health', (req, res) => {
     res.json({ 
@@ -2959,4 +3330,5 @@ export function registerRoutes(app: Express): void {
   // FIXED: No longer creating duplicate server - routes registered on passed app
   console.log('✅ All routes registered successfully on provided Express app');
   console.log('🔧 Category GET endpoints should now work: /api/v1/service-categories, /api/v1/categories/tree');
+  console.log('🚀 Service booking endpoints added: POST /api/v1/service-bookings, GET /api/v1/service-bookings, etc.');
 }

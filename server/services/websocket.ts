@@ -111,14 +111,14 @@ class WebSocketManager {
       }
     });
     
-    // Close connection if not authenticated within 30 seconds
+    // Close connection if not authenticated within 5 minutes (allow for testing)
     setTimeout(() => {
       const connection = this.connections.get(connectionId);
       if (connection && !connection.isAuthenticated) {
         console.log(`Closing unauthenticated connection: ${connectionId}`);
         connection.close(1008, 'Authentication timeout');
       }
-    }, 30000);
+    }, 300000);
   }
 
   private async handleMessage(connectionId: string, data: any) {
@@ -1439,16 +1439,22 @@ class WebSocketManager {
     this.pingInterval = setInterval(() => {
       this.connections.forEach((ws, connectionId) => {
         if (ws.readyState === WebSocket.OPEN) {
-          // Check if connection has been inactive
+          // Check if connection has been inactive - increased timeout to 5 minutes
           const now = Date.now();
-          if (ws.lastPing && (now - ws.lastPing > 60000)) { // 60 seconds
-            console.log(`Terminating inactive connection: ${connectionId}`);
+          if (ws.lastPing && (now - ws.lastPing > 300000)) { // 5 minutes
+            console.log(`Terminating inactive connection after 5 minutes: ${connectionId}`);
             ws.terminate();
             return;
           }
 
-          // Send ping
-          ws.ping();
+          // Send ping and update lastPing immediately
+          try {
+            ws.ping();
+            ws.lastPing = now;
+          } catch (error) {
+            console.warn(`Failed to ping connection ${connectionId}:`, error);
+            this.handleDisconnection(connectionId);
+          }
         } else {
           this.handleDisconnection(connectionId);
         }

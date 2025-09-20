@@ -2425,6 +2425,237 @@ export class PostgresStorage implements IStorage {
       };
     }
   }
+
+  // ========================================
+  // SERVICE BOOKING WORKFLOW METHODS
+  // ========================================
+
+  async createServiceBooking(bookingData: InsertServiceBooking): Promise<ServiceBooking> {
+    const result = await db.insert(serviceBookings).values({
+      ...bookingData,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async getUserServiceBookings(userId: string, options: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<ServiceBooking[]> {
+    const { status, limit = 20, offset = 0 } = options;
+    
+    let query = db.select()
+      .from(serviceBookings)
+      .where(eq(serviceBookings.userId, userId))
+      .orderBy(desc(serviceBookings.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    if (status) {
+      query = query.where(and(
+        eq(serviceBookings.userId, userId),
+        eq(serviceBookings.status, status)
+      ));
+    }
+
+    return await query;
+  }
+
+  async getServiceBookingById(id: string): Promise<ServiceBooking | undefined> {
+    const result = await db.select()
+      .from(serviceBookings)
+      .where(eq(serviceBookings.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async getServiceProviderProfile(providerId: string): Promise<ServiceProviderProfile | undefined> {
+    const result = await db.select()
+      .from(serviceProviderProfiles)
+      .where(eq(serviceProviderProfiles.providerId, providerId))
+      .limit(1);
+    return result[0];
+  }
+
+  async cancelAllJobRequestsForBooking(bookingId: string): Promise<void> {
+    await db.update(providerJobRequests)
+      .set({ 
+        status: 'cancelled',
+        updatedAt: new Date()
+      })
+      .where(and(
+        eq(providerJobRequests.bookingId, bookingId),
+        eq(providerJobRequests.status, 'pending')
+      ));
+  }
+
+  async declineJobRequest(bookingId: string, providerId: string, reason?: string): Promise<void> {
+    await db.update(providerJobRequests)
+      .set({ 
+        status: 'declined',
+        response: 'declined',
+        declineReason: reason,
+        respondedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(and(
+        eq(providerJobRequests.bookingId, bookingId),
+        eq(providerJobRequests.providerId, providerId)
+      ));
+  }
+
+  async getValidStatusTransitions(currentStatus: string, userRole: string): Promise<string[]> {
+    // Define valid status transitions based on Urban Company workflow
+    const transitions: Record<string, Record<string, string[]>> = {
+      'pending': {
+        'customer': ['requested', 'cancelled'],
+        'service_provider': [],
+        'admin': ['matching', 'cancelled']
+      },
+      'requested': {
+        'customer': ['cancelled'],
+        'service_provider': [],
+        'admin': ['matching', 'cancelled']
+      },
+      'matching': {
+        'customer': ['cancelled'],
+        'service_provider': ['accepted'],
+        'admin': ['provider_search', 'cancelled']
+      },
+      'provider_search': {
+        'customer': ['cancelled'],
+        'service_provider': ['accepted'],
+        'admin': ['cancelled']
+      },
+      'accepted': {
+        'customer': ['cancelled'],
+        'service_provider': ['enroute', 'cancelled'],
+        'admin': ['enroute', 'cancelled']
+      },
+      'enroute': {
+        'customer': [],
+        'service_provider': ['arrived'],
+        'admin': ['arrived', 'cancelled']
+      },
+      'arrived': {
+        'customer': [],
+        'service_provider': ['started'],
+        'admin': ['started', 'cancelled']
+      },
+      'started': {
+        'customer': [],
+        'service_provider': ['in_progress'],
+        'admin': ['in_progress', 'cancelled']
+      },
+      'in_progress': {
+        'customer': [],
+        'service_provider': ['work_completed'],
+        'admin': ['work_completed', 'cancelled']
+      },
+      'work_completed': {
+        'customer': ['payment_pending', 'completed'],
+        'service_provider': [],
+        'admin': ['payment_pending', 'completed', 'cancelled']
+      },
+      'payment_pending': {
+        'customer': ['completed'],
+        'service_provider': [],
+        'admin': ['completed', 'refunded']
+      },
+      'completed': {
+        'customer': [],
+        'service_provider': [],
+        'admin': ['refunded']
+      },
+      'cancelled': {
+        'customer': [],
+        'service_provider': [],
+        'admin': ['refunded']
+      },
+      'refunded': {
+        'customer': [],
+        'service_provider': [],
+        'admin': []
+      }
+    };
+
+    return transitions[currentStatus]?.[userRole] || [];
+  }
+
+  async getProviderBookings(providerId: string, options: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<ServiceBooking[]> {
+    const { status, limit = 20, offset = 0 } = options;
+    
+    let query = db.select()
+      .from(serviceBookings)
+      .where(eq(serviceBookings.assignedProviderId, providerId))
+      .orderBy(desc(serviceBookings.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    if (status) {
+      query = query.where(and(
+        eq(serviceBookings.assignedProviderId, providerId),
+        eq(serviceBookings.status, status)
+      ));
+    }
+
+    return await query;
+  }
+
+  // Time slot availability for scheduled bookings
+  async getProviderAvailableSlots(providerId: string, serviceId: string, date: string): Promise<string[]> {
+    // Get provider's availability for the specific date
+    const provider = await this.getServiceProviderProfile(providerId);
+    if (!provider) return [];
+
+    // Get existing bookings for that day
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const existingBookings = await db.select()
+      .from(serviceBookings)
+      .where(and(
+        eq(serviceBookings.assignedProviderId, providerId),
+        sql`${serviceBookings.scheduledAt} >= ${startOfDay}`,
+        sql`${serviceBookings.scheduledAt} <= ${endOfDay}`,
+        ne(serviceBookings.status, 'cancelled')
+      ));
+
+    // Generate available slots (simplified - in production, this would consider service duration, provider availability, etc.)
+    const allSlots = [
+      '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+      '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
+      '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
+    ];
+
+    const bookedSlots = existingBookings.map(booking => {
+      if (booking.scheduledAt) {
+        return booking.scheduledAt.toTimeString().slice(0, 5);
+      }
+      return null;
+    }).filter(Boolean);
+
+    return allSlots.filter(slot => !bookedSlots.includes(slot));
+  }
+
+  // Enhanced order status tracking
+  async createServiceBookingStatusHistory(bookingId: string, fromStatus: string, toStatus: string, notes?: string, updatedBy?: string): Promise<void> {
+    // This would insert into a status history table if it exists
+    // For now, we'll just log it
+    console.log(`Booking ${bookingId} status changed from ${fromStatus} to ${toStatus}`, {
+      notes,
+      updatedBy,
+      timestamp: new Date().toISOString()
+    });
+  }
 }
 
 export const storage = new PostgresStorage();

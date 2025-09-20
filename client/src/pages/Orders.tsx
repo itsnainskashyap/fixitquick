@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { format } from 'date-fns';
+import { LiveOrderTracking } from '@/components/LiveOrderTracking';
+import { useOrderTracking } from '@/hooks/useSocket';
 import { 
   Package, 
   Clock, 
@@ -23,7 +25,12 @@ import {
   Star,
   MessageCircle,
   Phone,
-  MapPin as LocationIcon
+  MapPin as LocationIcon,
+  Zap,
+  Timer,
+  RefreshCw,
+  Filter,
+  Search
 } from 'lucide-react';
 
 interface Order {
@@ -61,6 +68,53 @@ interface Order {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+interface ServiceBooking {
+  id: string;
+  userId: string;
+  serviceId: string;
+  bookingType: 'instant' | 'scheduled';
+  urgency?: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'pending' | 'requested' | 'matching' | 'matched' | 'accepted' | 'enroute' | 'arrived' | 'started' | 'in_progress' | 'work_completed' | 'payment_pending' | 'completed' | 'cancelled' | 'refunded';
+  requestedAt: string;
+  scheduledAt?: string;
+  assignedProviderId?: string;
+  assignedAt?: string;
+  serviceLocation: {
+    type: 'current' | 'alternate';
+    address: string;
+    latitude: number;
+    longitude: number;
+    instructions?: string;
+    landmarkDetails?: string;
+  };
+  serviceDetails?: {
+    basePrice: number;
+    estimatedDuration: number;
+    workflowSteps: string[];
+    specialRequirements?: string[];
+    finalAmount?: number;
+    workNotes?: string;
+    photosUrls?: string[];
+  };
+  notes?: string;
+  attachments?: string[];
+  createdAt: string;
+  updatedAt: string;
+  service?: {
+    id: string;
+    name: string;
+    description: string;
+    basePrice: number;
+  };
+  provider?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    rating: number;
+    profileImage?: string;
+  };
 }
 
 interface OrderCardProps {
