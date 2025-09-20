@@ -86,78 +86,9 @@ export async function setupUploadRoutes(app: Express) {
   });
 
   // Essential auth endpoint - check user authentication status
-  app.get('/api/auth/user', async (req: any, res) => {
-    try {
-      console.log('🔍 /api/auth/user: Checking authentication...');
-      
-      // PRIORITY 1: Check for admin token in cookies FIRST
-      if (req.cookies?.adminToken) {
-        console.log('🍪 /api/auth/user: Found admin token in secure cookie, processing with ABSOLUTE HIGHEST PRIORITY');
-        try {
-          const { jwtService } = await import('./utils/jwt');
-          const jwtPayload = await jwtService.verifyAccessToken(req.cookies.adminToken);
-          if (jwtPayload) {
-            console.log(`🔑 /api/auth/user: Admin JWT token verified for userId: ${jwtPayload.userId}`);
-            const user = await storage.getUser(jwtPayload.userId);
-            
-            if (user && user.isActive && user.role === 'admin') {
-              console.log(`✅ /api/auth/user: Admin user ${jwtPayload.userId} authenticated successfully`);
-              const userWithDisplayName = {
-                ...user,
-                displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Administrator'
-              };
-              return res.json(userWithDisplayName);
-            } else {
-              console.error(`❌ /api/auth/user: Admin user ${jwtPayload.userId} not found or not admin`);
-              // Clear invalid admin cookie
-              res.clearCookie('adminToken', { path: '/', httpOnly: true });
-            }
-          }
-        } catch (adminJwtError) {
-          console.log('❌ /api/auth/user: Admin JWT token expired/invalid, clearing cookie...');
-          // Clear expired admin cookie
-          res.clearCookie('adminToken', { path: '/', httpOnly: true });
-        }
-      }
-      
-      // PRIORITY 2: Check if user is authenticated via Replit session
-      if (req.user) {
-        const userId = req.user.id || req.user.claims?.sub;
-        if (userId) {
-          console.log(`🔐 /api/auth/user: Session authentication found for userId: ${userId}`);
-          const user = await storage.getUser(userId);
-          
-          if (user && user.isActive) {
-            console.log(`✅ /api/auth/user: Session user ${userId} authenticated successfully`);
-            const userWithDisplayName = {
-              ...user,
-              displayName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
-            };
-            return res.json(userWithDisplayName);
-          }
-        }
-      }
-      
-      // No valid authentication found
-      console.log('ℹ️ /api/auth/user: No valid authentication found, returning null');
-      res.json(null);
-      
-    } catch (error) {
-      console.error("❌ /api/auth/user: Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user data" });
-    }
-  });
+  // Removed conflicting /api/auth/user route - handled by routes.ts
 
-  // Essential API routes for categories and services
-  app.get('/api/v1/services/categories/main', async (req, res) => {
-    try {
-      const categories = await storage.getMainCategories();
-      res.json(categories);
-    } catch (error) {
-      console.error('Error fetching main categories:', error);
-      res.status(500).json({ message: 'Failed to fetch categories' });
-    }
-  });
+  // Removed conflicting /api/v1/services/categories/main route - handled by routes.ts
 
   // Parts provider registration endpoint
   app.post('/api/v1/providers/register', authMiddleware, async (req, res) => {

@@ -599,7 +599,7 @@ export function registerRoutes(app: Express): Server {
 
       // Extract and verify token
       const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-      const decoded = jwtService.verifyAccessToken(token);
+      const decoded = await jwtService.verifyAccessToken(token);
       
       if (!decoded) {
         return res.status(401).json({ 
