@@ -62,6 +62,7 @@ import {
   insertServiceCategorySchema,
   apiCreateServiceCategorySchema,
   apiUpdateServiceCategorySchema,
+  type InsertServiceCategory,
   insertServiceSchema,
   // Tax management schemas
   insertTaxCategorySchema,
@@ -798,6 +799,135 @@ export function registerRoutes(app: Express): Server {
         message: process.env.NODE_ENV === 'development' 
           ? `Failed to fetch categories: ${error instanceof Error ? error.message : 'Unknown error'}`
           : 'Failed to fetch categories'
+      });
+    }
+  });
+
+  // /api/v1/service-categories - Get service categories with optional filters
+  app.get('/api/v1/service-categories', async (req: Request, res: Response) => {
+    try {
+      const { level, activeOnly = 'true' } = req.query;
+      const isActiveOnly = activeOnly === 'true';
+      
+      let categories;
+      if (level !== undefined) {
+        categories = await storage.getServiceCategoriesByLevel(parseInt(level as string), isActiveOnly);
+      } else {
+        categories = await storage.getMainCategories(isActiveOnly);
+      }
+      
+      res.json({ 
+        success: true, 
+        data: categories
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/service-categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch service categories: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch service categories'
+      });
+    }
+  });
+
+  // /api/v1/categories/tree - Get category hierarchy tree structure
+  app.get('/api/v1/categories/tree', async (req: Request, res: Response) => {
+    try {
+      // Get all categories and build tree structure
+      const mainCategories = await storage.getMainCategories(true);
+      const categoryTree = [];
+      
+      for (const mainCategory of mainCategories) {
+        const subCategories = await storage.getSubCategories(mainCategory.id, true);
+        categoryTree.push({
+          ...mainCategory,
+          subcategories: subCategories
+        });
+      }
+      
+      res.json({ 
+        success: true, 
+        data: categoryTree
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/categories/tree error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch category tree: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch category tree'
+      });
+    }
+  });
+
+  // /api/v1/admin/categories - Get all categories for admin management
+  app.get('/api/v1/admin/categories', authMiddleware, requireRole(['admin']), async (req: Request, res: Response) => {
+    try {
+      // Get all categories (including inactive ones for admin)
+      const allCategories = await storage.getServiceCategoriesByLevel(0, false); // Main categories
+      const allSubCategories = [];
+      
+      // Get subcategories for each main category
+      for (const category of allCategories) {
+        const subCategories = await storage.getSubCategories(category.id, false);
+        allSubCategories.push(...subCategories);
+      }
+      
+      const combinedCategories = [...allCategories, ...allSubCategories];
+      
+      res.json({ 
+        success: true, 
+        data: combinedCategories
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/admin/categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to fetch admin categories: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch admin categories'
+      });
+    }
+  });
+
+  // POST /api/v1/service-categories - Create new service category
+  app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), validateBody(apiCreateServiceCategorySchema), async (req: Request, res: Response) => {
+    try {
+      // Generate slug from name
+      const slug = req.body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      
+      // Determine level based on parentId
+      let level = 0;
+      if (req.body.parentId) {
+        // If has parentId, it's a subcategory (level 1)
+        level = 1;
+      }
+      
+      const categoryData: InsertServiceCategory = {
+        ...req.body,
+        slug,
+        level,
+        sortOrder: req.body.sortOrder || 0,
+        isActive: req.body.isActive ?? true,
+        serviceCount: 0
+      };
+
+      // Insert the category directly into database since createServiceCategory method doesn't exist
+      const [newCategory] = await db.insert(serviceCategories).values(categoryData).returning();
+      
+      res.status(201).json({ 
+        success: true, 
+        data: newCategory,
+        message: 'Category created successfully'
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/service-categories error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to create category: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to create category'
       });
     }
   });
