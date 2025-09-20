@@ -410,7 +410,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createService(service: InsertService): Promise<Service> {
-    const result = await db.insert(services).values(service).returning();
+    const result = await db.insert(services).values([service]).returning();
     return result[0];
   }
 
@@ -1259,7 +1259,7 @@ export class PostgresStorage implements IStorage {
       };
       
       const result = await db.insert(orderLocationUpdates)
-        .values(processedData)
+        .values([processedData])
         .returning();
 
       return result[0];
