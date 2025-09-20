@@ -282,7 +282,11 @@ function validateBody(schema: z.ZodSchema<any>) {
 }
 
 // EMERGENCY FIX: Create minimal routes that only use existing storage methods
-export function registerRoutes(app: Express): void {
+export async function registerRoutes(app: Express): Promise<void> {
+  // CRITICAL FIX: Setup authentication FIRST - this initializes Passport session middleware
+  await setupAuth(app);
+  console.log('✅ Authentication routes registered');
+
   // CORS configuration
   app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
@@ -418,6 +422,62 @@ export function registerRoutes(app: Express): void {
   });
 
   console.log('🔧 CRITICAL: Category GET routes registered at top of function');
+
+  // ============================
+  // CRITICAL: Missing /api/auth/user endpoint - Frontend useAuth hook depends on this!
+  // ============================
+  
+  // GET /api/auth/user - Get authenticated user data (PRODUCTION-BLOCKING FIX)
+  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      if (!req.user) {
+        console.error('❌ GET /api/auth/user: No user object found in request after authMiddleware');
+        return res.status(401).json({ 
+          success: false,
+          message: 'User not authenticated' 
+        });
+      }
+
+      // Get fresh user data from database to ensure consistency
+      const user = await storage.getUser(req.user.id);
+      if (!user || !user.isActive) {
+        console.error(`❌ GET /api/auth/user: User ${req.user.id} not found or inactive in database`);
+        return res.status(404).json({ 
+          success: false,
+          message: 'User not found or inactive' 
+        });
+      }
+
+      console.log(`✅ GET /api/auth/user: User ${user.id} data retrieved successfully`);
+      
+      // Return user object in format expected by frontend useAuth hook
+      res.json({
+        id: user.id,
+        email: user.email || undefined,
+        phone: user.phone || undefined,
+        role: user.role || 'user',
+        isVerified: user.isVerified || false,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profileImageUrl: user.profileImageUrl,
+        walletBalance: user.walletBalance,
+        fixiPoints: user.fixiPoints,
+        location: user.location,
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      });
+    } catch (error) {
+      console.error('❌ GET /api/auth/user error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to get user data: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to get user data'
+      });
+    }
+  });
 
   // ============================
   // WORKING OTP ENDPOINTS - PRESERVE THESE!
@@ -612,42 +672,6 @@ export function registerRoutes(app: Express): void {
   // BASIC WORKING ENDPOINTS - ONLY USING EXISTING STORAGE METHODS
   // ============================
 
-  // User authentication state endpoint - required by frontend useAuth hook
-  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ message: 'Authentication required' });
-      }
-
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-
-      // Return user data in the format expected by frontend
-      res.json({
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role || 'user',
-        isVerified: user.isVerified || false,
-        profileImageUrl: user.profileImageUrl,
-        walletBalance: user.walletBalance || 0,
-        fixiPoints: user.fixiPoints || 0,
-        location: user.location,
-        isActive: user.isActive,
-        lastLoginAt: user.lastLoginAt,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      });
-    } catch (error) {
-      console.error('Error fetching user auth state:', error);
-      res.status(500).json({ success: false, message: 'Failed to fetch user authentication state' });
-    }
-  });
 
   // User profile endpoint - uses existing getUserByPhone
   app.get('/api/v1/user/profile', authMiddleware, async (req, res) => {
@@ -909,12 +933,21 @@ export function registerRoutes(app: Express): void {
   // CORE FRONTEND API ENDPOINTS
   // ============================
 
-  // Temporary debugging endpoint to check session state
+  // Enhanced debugging endpoint to check session state
   app.get('/api/debug/session', (req: Request, res: Response) => {
     const sessionExists = !!req.session;
     const userInReq = !!(req as any).user;
     const userData = (req as any).user || {};
     const isAuthenticated = req.isAuthenticated?.() || false;
+    
+    // More detailed session debugging
+    const sessionDetails = req.session ? {
+      sessionId: req.sessionID,
+      hasPassport: !!(req.session as any).passport,
+      passportUser: (req.session as any).passport?.user || null,
+      sessionKeys: Object.keys(req.session),
+      sessionDataSize: JSON.stringify(req.session).length
+    } : null;
     
     res.json({
       sessionExists,
@@ -922,11 +955,16 @@ export function registerRoutes(app: Express): void {
       isAuthenticated,
       hasAuthHeader: !!req.headers.authorization,
       userKeys: Object.keys(userData),
-      sessionId: req.sessionID,
+      sessionDetails,
       userClaims: userData.claims ? {
         sub: userData.claims.sub,
         email: userData.claims.email
-      } : null
+      } : null,
+      debugInfo: {
+        hasIsAuthenticated: typeof req.isAuthenticated === 'function',
+        userType: typeof userData,
+        timestamp: new Date().toISOString()
+      }
     });
   });
 
@@ -1922,6 +1960,9 @@ export function registerRoutes(app: Express): void {
   app.get('/api/v1/parts-provider/dashboard', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
       const user = (req as AuthenticatedRequest).user;
+      if (!user) {
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
+      }
       const dashboardData = await storage.getPartsProviderDashboard(user.id);
       
       res.json({
@@ -1941,6 +1982,9 @@ export function registerRoutes(app: Express): void {
   app.get('/api/v1/parts-provider/orders', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
       const user = (req as AuthenticatedRequest).user;
+      if (!user) {
+        return res.status(401).json({ success: false, message: 'User not authenticated' });
+      }
       const { status, page = '1', limit = '20' } = req.query;
 
       const pageNum = parseInt(page as string);
@@ -2559,6 +2603,13 @@ export function registerRoutes(app: Express): void {
         // Update role to admin if needed
         console.log('🔄 Updating user role to admin');
         adminUser = await storage.updateUser(adminUser.id, { role: 'admin' });
+      }
+      
+      if (!adminUser) {
+        return res.status(500).json({
+          message: 'Failed to create or retrieve admin user',
+          error: 'Internal server error'
+        });
       }
       
       // Generate JWT access token for admin
@@ -3620,7 +3671,7 @@ export function registerRoutes(app: Express): void {
             : (result.application as any).userId;
           
           if (userId) {
-            await notificationService.sendNotification(userId, {
+            await notificationService.sendPushNotification(userId, {
               title: 'Application Status Update',
               message: publicMessage || `Your ${type.replace('_', ' ')} application status has been updated to: ${status}`,
               type: 'application_status',

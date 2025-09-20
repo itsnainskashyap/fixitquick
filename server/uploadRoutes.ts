@@ -216,7 +216,21 @@ export async function setupUploadRoutes(app: Express) {
   });
 
   app.get('/api/v1/promotional-media/active', async (req, res) => {
-    res.json([]);
+    try {
+      // Frontend expects {media: [...]} structure - see PromotionalMediaCarousel.tsx line 80
+      console.log('✅ GET /api/v1/promotional-media/active: Returning empty media array');
+      res.json({ 
+        success: true,
+        media: [] // Frontend expects result.media 
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/promotional-media/active error:', error);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to fetch promotional media',
+        media: [] // Ensure media is always defined even on error
+      });
+    }
   });
 
   app.get('/api/v1/orders/recent', authMiddleware, async (req, res) => {

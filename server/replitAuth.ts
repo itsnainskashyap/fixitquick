@@ -81,6 +81,8 @@ function updateUserSession(
   user.access_token = tokens.access_token;
   user.refresh_token = tokens.refresh_token;
   user.expires_at = user.claims?.exp;
+  // CRITICAL FIX: Set user.id from claims.sub for session authentication
+  user.id = user.claims?.sub;
 }
 
 async function upsertUser(
@@ -320,8 +322,17 @@ export async function setupAuth(app: Express) {
         console.log(`🔗 OAuth success - no return URL stored, redirecting to homepage`);
       }
       
-      res.redirect(redirectPath);
-      console.log(`✅ OAuth callback successful, redirecting to: ${redirectPath}`);
+      // CRITICAL FIX: Save session data to database before redirect
+      req.session.save((saveError: any) => {
+        if (saveError) {
+          console.error('❌ Failed to save session after OAuth:', saveError);
+          return res.redirect('/api/login?error=session_save_failed');
+        }
+        
+        console.log(`💾 Session successfully saved after OAuth for user: ${req.user?.id || 'unknown'}`);
+        res.redirect(redirectPath);
+        console.log(`✅ OAuth callback successful, redirecting to: ${redirectPath}`);
+      });
     });
   });
 

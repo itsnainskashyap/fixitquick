@@ -233,7 +233,7 @@ app.use((req, res, next) => {
   }));
   
   // CRITICAL: Setup main routes FIRST to prevent upload catch-all from intercepting category routes
-  registerRoutes(app);
+  await registerRoutes(app);
   console.log('✅ Main routes registered successfully');
 
   // Setup upload routes after main routes (includes authentication setup)
