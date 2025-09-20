@@ -343,7 +343,7 @@ export function registerRoutes(app: Express): void {
   });
 
   // POST /api/v1/service-categories - Backward compatibility alias for category creation (delegates to admin logic)
-  app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), validateBody(apiCreateServiceCategorySchema), async (req: Request, res: Response) => {
+  app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), async (req: Request, res: Response) => {
     try {
       console.log('🔄 POST /api/v1/service-categories: Back-compat alias - delegating to admin create logic');
       
