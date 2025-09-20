@@ -1,13 +1,25 @@
-import express from 'express';
-import cookieParser from 'cookie-parser';
-import cors from 'cors';
-import helmet from 'helmet';
-import { authMiddleware } from './middleware/auth';
-import { uploadDocument } from './middleware/fileUpload';
-import { objectStorageService } from './services/objectStorage';
-import { storage } from './storage';
+console.log('🚀 BOOTSTRAP: server/minimalServer.ts loaded');
 
-const app = express();
+// Delegate to main server unless explicitly forced to use minimal
+if (process.env.FORCE_MINIMAL_SERVER !== 'true') {
+  console.log('🔄 Delegating to server/index.ts for full functionality');
+  import('./index')
+    .then(() => console.log('✅ Delegation succeeded'))
+    .catch(err => console.error('❌ Delegation failed:', err));
+} else {
+  console.log('⚡ Running minimal server mode (limited functionality)');
+  
+  (async () => {
+    const express = (await import('express')).default;
+    const cookieParser = (await import('cookie-parser')).default;
+    const cors = (await import('cors')).default;
+    const helmet = (await import('helmet')).default;
+    const { authMiddleware } = await import('./middleware/auth');
+    const { uploadDocument } = await import('./middleware/fileUpload');
+    const { objectStorageService } = await import('./services/objectStorage');
+    const { storage } = await import('./storage');
+
+    const app = express();
 
 // Basic middleware
 app.use(express.json());
