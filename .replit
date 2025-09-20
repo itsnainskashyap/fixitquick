@@ -28,10 +28,6 @@ localPort = 42219
 externalPort = 5000
 
 [[ports]]
-localPort = 42897
-externalPort = 3000
-
-[[ports]]
 localPort = 43075
 externalPort = 3001
 
@@ -66,10 +62,10 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[workflows.workflow.metadata]
-outputType = "webview"
-
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "NODE_ENV=production ALLOW_DEV_AUTH=false DEV_ADMIN_ENABLED=false JWT_SECRET_KEY=185359b2b55bbaa9b23a4eb220af7099832bd2dcf1f4b4abca8e1d2e7f7e40ff TWILIO_DEV_FALLBACK=false npm run dev"
+args = "NODE_ENV=production ALLOW_DEV_AUTH=false DEV_ADMIN_ENABLED=false TWILIO_DEV_FALLBACK=false npm run dev"
 waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
