@@ -31,22 +31,48 @@ interface Part {
   id: string;
   name: string;
   description: string;
+  brand?: string;
+  model?: string;
+  sku?: string;
   price: string;
+  comparePrice?: string;
   stock: number;
-  images: string[];
-  specifications: Record<string, any>;
+  reservedStock?: number;
+  lowStockThreshold?: number;
+  images?: string[];
+  specifications?: Record<string, any>;
+  features?: string[];
   categoryId: string;
   providerId: string;
   rating: string;
   totalSold: number;
+  totalReviews?: number;
+  viewCount?: number;
+  weight?: string;
+  dimensions?: {
+    length?: number;
+    width?: number;
+    height?: number;
+    unit?: 'cm' | 'mm' | 'inch';
+  };
+  warrantyPeriod?: number;
+  warrantyTerms?: string;
   isActive: boolean;
+  isFeatured?: boolean;
+  availabilityStatus?: 'in_stock' | 'low_stock' | 'out_of_stock' | 'discontinued' | 'pre_order';
   createdAt: string;
+  updatedAt: string;
   provider?: {
     id: string;
     name: string;
     isVerified: boolean;
   };
   relatedParts?: Part[];
+}
+
+interface PartApiResponse {
+  success: boolean;
+  data: Part;
 }
 
 export default function PartDetail() {
@@ -61,23 +87,29 @@ export default function PartDetail() {
   const [isWishlisted, setIsWishlisted] = useState(false);
 
   // Fetch part details
-  const { data: part, isLoading, error } = useQuery<Part>({
-    queryKey: ['/api/v1/parts', partId],
-    queryFn: async () => {
-      const response = await fetch(`/api/v1/parts/${partId}`);
-      if (!response.ok) throw new Error('Failed to fetch part details');
-      return response.json();
-    },
+  const { data: partResponse, isLoading, error } = useQuery<PartApiResponse>({
+    queryKey: [`/api/v1/parts/${partId}`],
     enabled: !!partId,
   });
+  
+  const part = partResponse?.data;
 
-  const isOutOfStock = part ? part.stock <= 0 : false;
-  const isLowStock = part ? part.stock > 0 && part.stock <= 5 : false;
+  const isOutOfStock = part ? (part.stock <= 0 || part.availabilityStatus === 'out_of_stock') : false;
+  const isLowStock = part ? (part.availabilityStatus === 'low_stock' || (part.stock > 0 && part.stock <= (part.lowStockThreshold || 5))) : false;
   const maxQuantity = part ? Math.min(part.stock, 10) : 1; // Limit to max 10 or available stock
 
   useEffect(() => {
     if (part) {
       document.title = `${part.name} - FixitQuick Parts`;
+      // Add meta description for SEO
+      const metaDescription = document.querySelector('meta[name="description"]');
+      if (metaDescription) {
+        metaDescription.setAttribute('content', 
+          part.description ? 
+            `${part.description.substring(0, 150)}...` : 
+            `Buy ${part.name} - Quality parts for repair and maintenance. Price: ₹${part.price}`
+        );
+      }
     }
   }, [part]);
 
@@ -110,7 +142,8 @@ export default function PartDetail() {
       price: parseFloat(part.price),
       quantity: quantity,
       type: 'part',
-      category: part.categoryId,
+      category: 'Parts', // Category name for display
+      categoryId: part.categoryId, // Category ID for backend
       providerId: part.providerId,
     });
 
@@ -272,7 +305,7 @@ export default function PartDetail() {
                       {parseFloat(part.rating).toFixed(1)}
                     </span>
                     <span className="text-muted-foreground">
-                      ({part.totalSold} sold)
+                      ({part.totalReviews || 0} reviews • {part.totalSold} sold)
                     </span>
                   </div>
 
@@ -307,12 +340,31 @@ export default function PartDetail() {
 
               {/* Price */}
               <div className="border-t border-b py-4">
-                <div className="text-3xl font-bold text-primary" data-testid="text-part-price">
-                  ₹{parseFloat(part.price).toLocaleString()}
+                <div className="flex items-center space-x-3">
+                  <div className="text-3xl font-bold text-primary" data-testid="text-part-price">
+                    ₹{parseFloat(part.price).toLocaleString()}
+                  </div>
+                  {part.comparePrice && parseFloat(part.comparePrice) > parseFloat(part.price) && (
+                    <div className="flex flex-col">
+                      <span className="text-lg text-muted-foreground line-through">
+                        ₹{parseFloat(part.comparePrice).toLocaleString()}
+                      </span>
+                      <span className="text-sm text-green-600 font-medium">
+                        {Math.round(((parseFloat(part.comparePrice) - parseFloat(part.price)) / parseFloat(part.comparePrice)) * 100)}% OFF
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">
                   Inclusive of all taxes
                 </p>
+                {part.brand && (
+                  <p className="text-sm text-muted-foreground">
+                    Brand: <span className="font-medium">{part.brand}</span>
+                    {part.model && <span> • Model: {part.model}</span>}
+                    {part.sku && <span> • SKU: {part.sku}</span>}
+                  </p>
+                )}
               </div>
 
               {/* Quantity Selector */}

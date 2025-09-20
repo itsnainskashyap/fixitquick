@@ -21,31 +21,82 @@ import {
   Search,
   Eye,
   CheckCircle,
-  XCircle
+  XCircle,
+  AlertCircle,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface Part {
   id: string;
   name: string;
   description: string;
+  brand?: string;
+  model?: string;
+  sku?: string;
   price: string;
+  comparePrice?: string;
   stock: number;
-  images: string[];
-  specifications: Record<string, any>;
+  reservedStock?: number;
+  lowStockThreshold?: number;
+  images?: string[];
+  specifications?: Record<string, any>;
+  features?: string[];
   categoryId: string;
   providerId: string;
   rating: string;
   totalSold: number;
+  totalReviews?: number;
+  viewCount?: number;
+  weight?: string;
+  dimensions?: {
+    length?: number;
+    width?: number;
+    height?: number;
+    unit?: 'cm' | 'mm' | 'inch';
+  };
+  warrantyPeriod?: number;
+  warrantyTerms?: string;
   isActive: boolean;
+  isFeatured?: boolean;
+  availabilityStatus?: 'in_stock' | 'low_stock' | 'out_of_stock' | 'discontinued' | 'pre_order';
   createdAt: string;
+  updatedAt: string;
 }
 
 interface PartsCategory {
   id: string;
+  parentId?: string;
   name: string;
-  icon: string;
-  description: string;
+  slug?: string;
+  icon?: string;
+  description?: string;
+  level?: number;
+  sortOrder?: number;
+  metaTitle?: string;
+  metaDescription?: string;
+  commissionRate?: string;
   isActive: boolean;
+  createdAt: string;
+}
+
+interface PartsApiResponse {
+  success: boolean;
+  data: {
+    parts: Part[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  };
+}
+
+interface CategoriesApiResponse {
+  success: boolean;
+  data: PartsCategory[];
 }
 
 export default function Parts() {
@@ -59,6 +110,9 @@ export default function Parts() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [inStockOnly, setInStockOnly] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [retryCount, setRetryCount] = useState(0);
 
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
@@ -70,33 +124,45 @@ export default function Parts() {
     }
   }, [categoryFromUrl]);
 
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, sortBy, priceRange, inStockOnly, searchQuery]);
+
+  // Add SEO metadata
+  useEffect(() => {
+    document.title = 'Parts Marketplace - FixitQuick | Quality Parts for Repair & Maintenance';
+    
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription) {
+      metaDescription.setAttribute('content', 
+        'Browse and buy quality parts for repair and maintenance. Fast delivery, verified providers, competitive prices. Find the right parts for your needs.'
+      );
+    }
+  }, []);
+
   // Fetch parts categories
-  const { data: categories, isLoading: loadingCategories } = useQuery<PartsCategory[]>({
+  const { data: categoriesResponse, isLoading: loadingCategories } = useQuery<CategoriesApiResponse>({
     queryKey: ['/api/v1/parts/categories'],
   });
+  
+  const categories = categoriesResponse?.data || [];
 
-  // Fetch parts
-  const { data: parts, isLoading: loadingParts } = useQuery<Part[]>({
+  // Fetch parts with proper pagination and filtering
+  const { data: partsResponse, isLoading: loadingParts, error: partsError, refetch } = useQuery<PartsApiResponse>({
     queryKey: ['/api/v1/parts', { 
       category: selectedCategory !== 'all' ? selectedCategory : undefined,
       sortBy,
       priceRange: priceRange !== 'all' ? priceRange : undefined,
       inStock: inStockOnly ? 'true' : undefined,
-      search: searchQuery || undefined
+      search: searchQuery || undefined,
+      page: currentPage,
+      limit: pageSize
     }],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedCategory !== 'all') params.append('category', selectedCategory);
-      if (sortBy) params.append('sortBy', sortBy);
-      if (priceRange !== 'all') params.append('priceRange', priceRange);
-      if (inStockOnly) params.append('inStock', 'true');
-      if (searchQuery) params.append('search', searchQuery);
-
-      const response = await fetch(`/api/v1/parts?${params.toString()}`);
-      if (!response.ok) throw new Error('Failed to fetch parts');
-      return response.json();
-    },
   });
+  
+  const parts = partsResponse?.data?.parts || [];
+  const pagination = partsResponse?.data?.pagination;
 
   const handlePartView = (partId: string) => {
     setLocation(`/parts/${partId}`);
@@ -121,7 +187,8 @@ export default function Parts() {
         description: part.description,
         price: parseFloat(part.price),
         type: 'part',
-        category: part.categoryId,
+        category: 'Parts', // Category name for display
+        categoryId: part.categoryId, // Category ID for backend
         providerId: part.providerId,
       });
 
@@ -133,8 +200,8 @@ export default function Parts() {
   };
 
   const PartCard = ({ part }: { part: Part }) => {
-    const isOutOfStock = part.stock <= 0;
-    const isLowStock = part.stock > 0 && part.stock <= 5;
+    const isOutOfStock = part.stock <= 0 || part.availabilityStatus === 'out_of_stock';
+    const isLowStock = part.availabilityStatus === 'low_stock' || (part.stock > 0 && part.stock <= (part.lowStockThreshold || 5));
 
     return (
       <motion.div
@@ -201,19 +268,27 @@ export default function Parts() {
               </p>
 
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-col">
                   <span 
                     className="text-lg font-bold text-primary"
                     data-testid={`text-part-price-${part.id}`}
                   >
                     ₹{parseFloat(part.price).toLocaleString()}
                   </span>
+                  {part.comparePrice && parseFloat(part.comparePrice) > parseFloat(part.price) && (
+                    <span className="text-xs text-muted-foreground line-through">
+                      ₹{parseFloat(part.comparePrice).toLocaleString()}
+                    </span>
+                  )}
                 </div>
                 
                 <div className="flex items-center space-x-1">
                   <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                  <span className="text-xs text-muted-foreground">
-                    {parseFloat(part.rating).toFixed(1)}
+                  <span 
+                    className="text-xs text-muted-foreground"
+                    data-testid={`text-part-rating-${part.id}`}
+                  >
+                    {parseFloat(part.rating).toFixed(1)} ({part.totalReviews || 0})
                   </span>
                 </div>
               </div>
@@ -321,9 +396,10 @@ export default function Parts() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Prices</SelectItem>
-                <SelectItem value="low">Under ₹500</SelectItem>
-                <SelectItem value="medium">₹500 - ₹2,000</SelectItem>
-                <SelectItem value="high">Above ₹2,000</SelectItem>
+                <SelectItem value="0-500">Under ₹500</SelectItem>
+                <SelectItem value="500-2000">₹500 - ₹2,000</SelectItem>
+                <SelectItem value="2000-5000">₹2,000 - ₹5,000</SelectItem>
+                <SelectItem value="5000-">Above ₹5,000</SelectItem>
               </SelectContent>
             </Select>
 
@@ -334,9 +410,10 @@ export default function Parts() {
               <SelectContent>
                 <SelectItem value="popular">Most Popular</SelectItem>
                 <SelectItem value="rating">Highest Rated</SelectItem>
-                <SelectItem value="price-low">Price: Low to High</SelectItem>
-                <SelectItem value="price-high">Price: High to Low</SelectItem>
+                <SelectItem value="price_low">Price: Low to High</SelectItem>
+                <SelectItem value="price_high">Price: High to Low</SelectItem>
                 <SelectItem value="newest">Newest First</SelectItem>
+                <SelectItem value="name">Name A-Z</SelectItem>
               </SelectContent>
             </Select>
 
@@ -373,25 +450,92 @@ export default function Parts() {
           </div>
         </div>
 
-        {/* Results Count */}
-        {parts && (
-          <div className="mb-4">
+        {/* Results Count and Pagination Info */}
+        {pagination && (
+          <div className="mb-4 flex justify-between items-center">
             <p className="text-sm text-muted-foreground" data-testid="text-results-count">
-              {parts.length} parts found
+              {pagination.total} parts found
               {selectedCategory !== 'all' && (
                 <span> in {categories?.find(c => c.id === selectedCategory)?.name}</span>
               )}
+              {pagination.total > 0 && (
+                <span> • Showing {((pagination.page - 1) * pagination.limit) + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}</span>
+              )}
             </p>
+            {pagination.totalPages > 1 && (
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page <= 1}
+                  onClick={() => setCurrentPage(pagination.page - 1)}
+                  data-testid="button-prev-page"
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => setCurrentPage(pagination.page + 1)}
+                  data-testid="button-next-page"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Error State */}
+        {partsError && (
+          <div className="text-center py-12">
+            <AlertCircle className="h-16 w-16 text-destructive mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Failed to Load Parts</h3>
+            <p className="text-muted-foreground mb-4">
+              There was an error loading the parts list. Please try again.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setRetryCount(prev => prev + 1);
+                  refetch();
+                }}
+                data-testid="button-retry-parts"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Retry ({retryCount + 1})
+              </Button>
+              <Button 
+                variant="secondary"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setPriceRange('all');
+                  setInStockOnly(false);
+                  setCurrentPage(1);
+                  setRetryCount(0);
+                }}
+                data-testid="button-reset-filters"
+              >
+                Reset Filters
+              </Button>
+            </div>
           </div>
         )}
 
         {/* Parts Grid */}
-        <div className={`grid gap-4 ${
-          viewMode === 'grid' 
-            ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
-            : 'grid-cols-1 lg:grid-cols-2'
-        }`}>
-          {loadingParts ? (
+        {!partsError && (
+          <div className={`grid gap-4 ${
+            viewMode === 'grid' 
+              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
+              : 'grid-cols-1 lg:grid-cols-2'
+          }`}>
+            {loadingParts ? (
             // Loading skeletons
             Array.from({ length: 8 }, (_, i) => (
               <PartCardSkeleton key={i} />
@@ -416,6 +560,7 @@ export default function Parts() {
                   setSelectedCategory('all');
                   setPriceRange('all');
                   setInStockOnly(false);
+                  setCurrentPage(1);
                 }}
                 data-testid="button-clear-filters"
               >
@@ -423,7 +568,8 @@ export default function Parts() {
               </Button>
             </div>
           )}
-        </div>
+          </div>
+        )}
       </main>
 
       <CartSidebar isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
