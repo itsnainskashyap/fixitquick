@@ -342,6 +342,50 @@ export function registerRoutes(app: Express): void {
     }
   });
 
+  // POST /api/v1/service-categories - Backward compatibility alias for category creation (delegates to admin logic)
+  app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), validateBody(apiCreateServiceCategorySchema), async (req: Request, res: Response) => {
+    try {
+      console.log('🔄 POST /api/v1/service-categories: Back-compat alias - delegating to admin create logic');
+      
+      // Generate slug from name (same as admin handler)
+      const slug = req.body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      
+      // Determine level based on parentId (same as admin handler)
+      let level = 0;
+      if (req.body.parentId) {
+        level = 1;
+      }
+      
+      const categoryData: InsertServiceCategory = {
+        ...req.body,
+        slug,
+        level,
+        sortOrder: req.body.sortOrder || 0,
+        isActive: req.body.isActive ?? true,
+        serviceCount: 0
+      };
+
+      // Insert the category directly into database (same as admin handler)
+      const [newCategory] = await db.insert(serviceCategories).values(categoryData).returning();
+      
+      console.log('✅ POST /api/v1/service-categories: Back-compat category created successfully:', newCategory.id);
+      
+      res.status(201).json({
+        success: true, 
+        data: newCategory,
+        message: 'Category created successfully'
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/service-categories error:', error);
+      res.status(500).json({
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to create category: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to create category'
+      });
+    }
+  });
+
   // GET /api/v1/categories/tree - Public category hierarchy tree
   app.get('/api/v1/categories/tree', async (req: Request, res: Response) => {
     try {
