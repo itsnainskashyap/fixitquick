@@ -83,13 +83,30 @@ function updateUserSession(
 async function upsertUser(
   claims: any,
 ) {
-  await storage.upsertUser({
-    id: claims["sub"],
+  console.log('🔐 replitAuth.upsertUser: Starting upsert for user', { 
+    id: claims["sub"], 
     email: claims["email"],
     firstName: claims["first_name"],
-    lastName: claims["last_name"],
-    profileImageUrl: claims["profile_image_url"],
+    lastName: claims["last_name"] 
   });
+  
+  try {
+    await storage.upsertUser({
+      id: claims["sub"],
+      email: claims["email"],
+      firstName: claims["first_name"],
+      lastName: claims["last_name"],
+      profileImageUrl: claims["profile_image_url"],
+    });
+    console.log('✅ replitAuth.upsertUser: Successfully upserted user', claims["sub"]);
+  } catch (error: any) {
+    console.error('❌ replitAuth.upsertUser: Failed to upsert user', { 
+      userId: claims["sub"], 
+      error: error.message,
+      stack: error.stack 
+    });
+    throw error; // Re-throw to ensure OAuth fails if user creation fails
+  }
 }
 
 // Store registered domains for lookup
