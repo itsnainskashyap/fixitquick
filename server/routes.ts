@@ -583,7 +583,112 @@ export function registerRoutes(app: Express): Server {
   });
 
   // ============================
-  // 501 NOT IMPLEMENTED RESPONSES FOR ALL PROBLEMATIC ENDPOINTS
+  // CORE FRONTEND API ENDPOINTS
+  // ============================
+
+  // /api/auth/user - Get current authenticated user
+  app.get('/api/auth/user', async (req: Request, res: Response) => {
+    try {
+      // Check for authorization header
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ 
+          message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
+        });
+      }
+
+      // Extract and verify token
+      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+      const decoded = jwtService.verifyAccessToken(token);
+      
+      if (!decoded) {
+        return res.status(401).json({ 
+          message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
+        });
+      }
+
+      // Get user data
+      const user = await storage.getUser(decoded.userId);
+      if (!user) {
+        return res.status(404).json({ 
+          message: 'User not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          id: user.id,
+          phone: user.phone,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          profileImageUrl: user.profileImageUrl,
+          role: user.role,
+          isActive: user.isActive,
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/auth/user error:', error);
+      res.status(401).json({ 
+        message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]'
+      });
+    }
+  });
+
+  // /api/v1/services/categories/main - Get main service categories
+  app.get('/api/v1/services/categories/main', async (req: Request, res: Response) => {
+    try {
+      const categories = await storage.getMainCategories(true); // Only active categories
+      res.json({ 
+        success: true, 
+        data: categories
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/services/categories/main error:', error);
+      res.status(501).json({ 
+        message: 'API endpoint temporarily unavailable',
+        error: 'Feature under maintenance'
+      });
+    }
+  });
+
+  // /api/v1/wallet/balance - Get user wallet balance
+  app.get('/api/v1/wallet/balance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+      
+      // For now, return mock wallet data since wallet functionality is not implemented
+      res.json({
+        success: true,
+        data: {
+          balance: 0,
+          fixiPoints: 0
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/wallet/balance error:', error);
+      res.status(501).json({ 
+        message: 'API endpoint temporarily unavailable',
+        error: 'Feature under maintenance'
+      });
+    }
+  });
+
+  // /api/login - This is handled by replitAuth.ts but we need a fallback
+  app.get('/api/login', (req: Request, res: Response) => {
+    res.status(501).json({ 
+      message: '[REDACTED: Authentication/Payment Response - Use dev tools to inspect in dev mode]',
+      error: 'Feature under maintenance',
+      endpoint: '/api/login'
+    });
+  });
+
+  // ============================
+  // 501 NOT IMPLEMENTED RESPONSES FOR OTHER ENDPOINTS
   // ============================
 
   // Orders - EMERGENCY FIX for getOrdersByUser runtime error
