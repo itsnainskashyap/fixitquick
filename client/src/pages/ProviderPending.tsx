@@ -109,18 +109,59 @@ export default function ProviderPending() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
 
-  // Fetch provider profile - connect to real API
-  const { data: response, isLoading, error, refetch } = useQuery({
-    queryKey: ['/api/v1/providers/profile'],
+  // Fetch current user's provider applications using new user-based endpoint
+  const { data: applicationsResponse, isLoading: applicationsLoading, error, refetch } = useQuery({
+    queryKey: ['/api/v1/providers/applications', { me: true }],
+    queryFn: async () => {
+      const res = await fetch('/api/v1/providers/applications?me=true', {
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        const error = new Error(errorData.message || 'Failed to fetch applications');
+        (error as any).status = res.status;
+        throw error;
+      }
+      return res.json();
+    },
     enabled: !!user,
     retry: (failureCount, error: any) => {
-      // Don't retry if it's a 404 (no provider profile found)
+      // Don't retry if it's a 404 (no application found)
+      if (error?.status === 404) return false;
+      return failureCount < 3;
+    },
+  });
+  
+  // Get the most recent service provider application for this user
+  const applications = applicationsResponse?.data || [];
+  const serviceProviderApp = applications.find((app: any) => app.type === 'service_provider');
+  
+  // If we have a service provider application, get its details for display
+  const { data: detailsResponse, isLoading: detailsLoading } = useQuery({
+    queryKey: ['/api/v1/providers/applications', serviceProviderApp?.id, 'details'],
+    queryFn: async () => {
+      if (!serviceProviderApp?.id) return null;
+      const res = await fetch(`/api/v1/providers/applications/${serviceProviderApp.id}`, {
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        const error = new Error(errorData.message || 'Failed to fetch application details');
+        (error as any).status = res.status;
+        throw error;
+      }
+      return res.json();
+    },
+    enabled: !!serviceProviderApp?.id,
+    retry: (failureCount, error: any) => {
       if (error?.status === 404) return false;
       return failureCount < 3;
     },
   });
 
-  const provider = response?.profile as ProviderProfile | undefined;
+  const isLoading = profileLoading || statusLoading;
+  const provider = response?.data?.application as ProviderProfile | undefined;
+  const statusHistory = response?.data?.statusHistory || [];
 
   if (!user) {
     setLocation('/login');

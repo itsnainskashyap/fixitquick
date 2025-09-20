@@ -1,7 +1,18 @@
-// Real Firebase Client SDK for Production FCM Push Notifications
+// Enhanced Firebase Client SDK for Google Authentication and Push Notifications
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, deleteToken, Messaging } from 'firebase/messaging';
-import { getAuth, User, Auth } from 'firebase/auth';
+import { 
+  getAuth, 
+  User, 
+  Auth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  UserCredential 
+} from 'firebase/auth';
 
 // Firebase Configuration - Use environment variables for production
 const firebaseConfig = {
@@ -201,77 +212,224 @@ export const isFCMAvailable = (): boolean => {
   return isFirebaseAvailable && typeof window !== 'undefined' && 'serviceWorker' in navigator;
 };
 
-// Mock auth state management
-let mockCurrentUser: User | null = null;
+// Enhanced Google Authentication Implementation
+const googleProvider = new GoogleAuthProvider();
+// Configure Google Auth provider for provider registration
+googleProvider.addScope('email');
+googleProvider.addScope('profile');
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
 
-// Auth functions
-export const signInWithGoogle = async (): Promise<User> => {
-  console.log('Mock: Signing in with Google');
+// Enhanced Google Sign-In for Provider Registration
+export const signInWithGoogleForProviders = async (providerType: 'service_provider' | 'parts_provider' = 'service_provider'): Promise<UserCredential | null> => {
+  try {
+    if (!isFirebaseAvailable || !auth) {
+      console.log('⚠️ Firebase not available, using mock authentication for development');
+      // Return mock credential for development
+      return createMockUserCredential(providerType);
+    }
+
+    console.log(`🔑 Starting Google Sign-In for ${providerType}...`);
+    
+    // Try popup first, fallback to redirect
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log('✅ Google Sign-In successful (popup):', result.user.email);
+      
+      // Store provider type preference
+      localStorage.setItem('pending_provider_type', providerType);
+      localStorage.setItem('auth_method', 'google_popup');
+      
+      return result;
+    } catch (popupError: any) {
+      if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/cancelled-popup-request') {
+        console.log('🔄 Popup blocked, falling back to redirect authentication...');
+        
+        // Store provider type for after redirect
+        localStorage.setItem('pending_provider_type', providerType);
+        localStorage.setItem('auth_method', 'google_redirect');
+        
+        await signInWithRedirect(auth, googleProvider);
+        return null; // Will be handled by redirect result
+      } else {
+        throw popupError;
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Google Sign-In failed:', error);
+    throw new Error(`Google Sign-In failed: ${error.message}`);
+  }
+};
+
+// Handle redirect result for Google authentication
+export const handleGoogleRedirectResult = async (): Promise<UserCredential | null> => {
+  try {
+    if (!isFirebaseAvailable || !auth) {
+      console.log('⚠️ Firebase not available, skipping redirect result handling');
+      return null;
+    }
+
+    const result = await getRedirectResult(auth);
+    if (result) {
+      console.log('✅ Google Sign-In redirect successful:', result.user.email);
+      
+      // Clear redirect tracking
+      localStorage.removeItem('auth_method');
+      
+      return result;
+    }
+    
+    return null;
+  } catch (error: any) {
+    console.error('❌ Error handling Google redirect result:', error);
+    localStorage.removeItem('auth_method');
+    localStorage.removeItem('pending_provider_type');
+    throw error;
+  }
+};
+
+// Enhanced sign out for providers
+export const signOutProvider = async (): Promise<void> => {
+  try {
+    if (!isFirebaseAvailable || !auth) {
+      console.log('Mock: Signing out provider');
+      
+      // Clear all auth-related localStorage
+      localStorage.removeItem('pending_provider_type');
+      localStorage.removeItem('auth_method');
+      localStorage.removeItem('provider_registration_data');
+      
+      // Trigger auth state change for mock
+      if (authStateChangeCallback) {
+        setTimeout(() => authStateChangeCallback!(null), 100);
+      }
+      return;
+    }
+
+    await firebaseSignOut(auth);
+    
+    // Clear provider-related data
+    localStorage.removeItem('pending_provider_type');
+    localStorage.removeItem('auth_method');
+    localStorage.removeItem('provider_registration_data');
+    
+    console.log('✅ Provider signed out successfully');
+  } catch (error) {
+    console.error('❌ Error signing out provider:', error);
+    throw error;
+  }
+};
+
+// Auth state observer for provider registration
+let authStateChangeCallback: ((user: User | null) => void) | null = null;
+
+export const onProviderAuthStateChange = (callback: (user: User | null) => void): (() => void) => {
+  try {
+    if (!isFirebaseAvailable || !auth) {
+      console.log('Mock: Setting up provider auth state observer');
+      authStateChangeCallback = callback;
+      
+      // Mock initial state
+      setTimeout(() => {
+        const mockUser = localStorage.getItem('mock_provider_user');
+        callback(mockUser ? JSON.parse(mockUser) : null);
+      }, 100);
+      
+      return () => {
+        authStateChangeCallback = null;
+      };
+    }
+
+    console.log('✅ Setting up Firebase provider auth state observer');
+    return onAuthStateChanged(auth, (user) => {
+      console.log('🔄 Provider auth state changed:', user?.email || 'signed out');
+      callback(user);
+    });
+  } catch (error) {
+    console.error('❌ Error setting up auth state observer:', error);
+    return () => {};
+  }
+};
+
+// Helper function to create mock user credential for development
+const createMockUserCredential = (providerType: string): UserCredential => {
   const mockUser = {
-    uid: 'mock-user-' + Date.now(),
-    email: 'user@mock.com', 
-    displayName: 'Mock User',
+    uid: `mock-${providerType}-${Date.now()}`,
+    email: `${providerType}@mock.com`,
+    displayName: `Mock ${providerType.replace('_', ' ')} User`,
     photoURL: 'https://via.placeholder.com/150',
     phoneNumber: null,
-    providerId: 'mock.com',
+    providerId: 'google.com',
     emailVerified: true,
     isAnonymous: false,
-    metadata: {},
-    providerData: [],
-    refreshToken: '',
+    metadata: {
+      creationTime: new Date().toISOString(),
+      lastSignInTime: new Date().toISOString()
+    },
+    providerData: [{
+      providerId: 'google.com',
+      uid: `google-mock-${Date.now()}`,
+      displayName: `Mock ${providerType.replace('_', ' ')} User`,
+      email: `${providerType}@mock.com`,
+      phoneNumber: null,
+      photoURL: 'https://via.placeholder.com/150'
+    }],
+    refreshToken: `mock-refresh-token-${Date.now()}`,
     tenantId: null,
     delete: async () => {},
-    getIdToken: async () => '',
-    getIdTokenResult: async () => ({} as any),
+    getIdToken: async () => `mock-id-token-${Date.now()}`,
+    getIdTokenResult: async () => ({
+      token: `mock-id-token-${Date.now()}`,
+      authTime: new Date().toISOString(),
+      issuedAtTime: new Date().toISOString(),
+      expirationTime: new Date(Date.now() + 3600000).toISOString(),
+      signInProvider: 'google.com',
+      claims: {
+        email: `${providerType}@mock.com`,
+        email_verified: true,
+        name: `Mock ${providerType.replace('_', ' ')} User`,
+        picture: 'https://via.placeholder.com/150'
+      }
+    } as any),
     reload: async () => {},
     toJSON: () => ({})
   } as User;
-  
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  mockCurrentUser = mockUser;
-  
-  // Trigger auth state change
-  if (authStateChangeCallback) {
-    setTimeout(() => authStateChangeCallback!(mockUser), 100);
-  }
-  
-  return mockUser;
+
+  // Store mock user for persistence
+  localStorage.setItem('mock_provider_user', JSON.stringify({
+    uid: mockUser.uid,
+    email: mockUser.email,
+    displayName: mockUser.displayName,
+    photoURL: mockUser.photoURL
+  }));
+
+  return {
+    user: mockUser,
+    providerId: 'google.com',
+    operationType: 'signIn'
+  } as UserCredential;
 };
 
-export const signOutUser = async (): Promise<void> => {
-  console.log('Mock: Signing out user');
-  
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  mockCurrentUser = null;
-  
-  // Trigger auth state change
-  if (authStateChangeCallback) {
-    setTimeout(() => authStateChangeCallback!(null), 100);
+// Get current provider authentication state
+export const getCurrentProviderUser = (): User | null => {
+  if (!isFirebaseAvailable || !auth) {
+    const mockUser = localStorage.getItem('mock_provider_user');
+    return mockUser ? JSON.parse(mockUser) : null;
   }
+  
+  return auth.currentUser;
 };
 
-// Auth state observer
-let authStateChangeCallback: ((user: User | null) => void) | null = null;
+// Check if user is currently in provider registration flow
+export const isInProviderRegistrationFlow = (): boolean => {
+  return !!(localStorage.getItem('pending_provider_type') || 
+           localStorage.getItem('provider_registration_data'));
+};
 
-export const onAuthStateChange = (callback: (user: User | null) => void) => {
-  console.log('Mock: Setting up auth state observer');
-  authStateChangeCallback = callback;
-  
-  // Immediately call with current user (null on first load)
-  setTimeout(() => {
-    console.log('Mock: Triggering auth state change with user:', mockCurrentUser);
-    callback(mockCurrentUser);
-  }, 50);
-  
-  // Return unsubscribe function
-  return () => {
-    console.log('Mock: Unsubscribing from auth state changes');
-    authStateChangeCallback = null;
-  };
+// Get provider type from storage
+export const getPendingProviderType = (): 'service_provider' | 'parts_provider' | null => {
+  return localStorage.getItem('pending_provider_type') as 'service_provider' | 'parts_provider' | null;
 };
 
 // FCM token management

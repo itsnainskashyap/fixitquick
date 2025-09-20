@@ -2497,10 +2497,103 @@ export function registerRoutes(app: Express): void {
 
   // Admin endpoints
   app.post('/api/v1/admin/login', adminLoginLimiter, validateBody(adminLoginSchema), async (req, res) => {
-    res.status(501).json({ 
-      message: 'Admin login temporarily unavailable',
-      error: 'Feature under maintenance' 
-    });
+    try {
+      const { email, password } = req.body;
+      console.log('🔑 Admin login attempt:', { email, hasPassword: !!password });
+      
+      // Get admin credentials from environment
+      const adminEmail = process.env.ADMIN_EMAIL || 'nainspagal@gmail.com';
+      const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+      
+      // Dev fallback for password if no hash is set
+      const devPassword = 'Sinha@1357';
+      
+      if (!adminPasswordHash && process.env.NODE_ENV === 'production') {
+        return res.status(500).json({
+          message: 'Admin authentication not configured',
+          error: 'Missing admin password hash in environment'
+        });
+      }
+      
+      // Verify email
+      if (email !== adminEmail) {
+        console.log('❌ Admin login failed: Invalid email');
+        return res.status(401).json({
+          message: 'Invalid credentials',
+          error: 'Authentication failed'
+        });
+      }
+      
+      // Verify password
+      let passwordValid = false;
+      if (adminPasswordHash) {
+        // Production: use bcrypt hash
+        passwordValid = await bcrypt.compare(password, adminPasswordHash);
+      } else if (process.env.NODE_ENV === 'development') {
+        // Development: allow plain text password
+        passwordValid = password === devPassword;
+      }
+      
+      if (!passwordValid) {
+        console.log('❌ Admin login failed: Invalid password');
+        return res.status(401).json({
+          message: 'Invalid credentials',
+          error: 'Authentication failed'
+        });
+      }
+      
+      // Create or get admin user in database
+      let adminUser = await storage.getUserByEmail(adminEmail);
+      if (!adminUser) {
+        console.log('👤 Creating admin user in database');
+        adminUser = await storage.createUser({
+          email: adminEmail,
+          firstName: 'Admin',
+          lastName: 'User',
+          phone: null,
+          role: 'admin',
+          isActive: true,
+          profileImageUrl: null
+        });
+      } else if (adminUser.role !== 'admin') {
+        // Update role to admin if needed
+        console.log('🔄 Updating user role to admin');
+        adminUser = await storage.updateUser(adminUser.id, { role: 'admin' });
+      }
+      
+      // Generate JWT access token for admin
+      const accessToken = await jwtService.generateAccessToken(adminUser.id, 'admin');
+      
+      // Set secure HTTP-only cookie for admin authentication
+      res.cookie('adminToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 2 * 60 * 60 * 1000, // 2 hours
+        path: '/'
+      });
+      
+      console.log('✅ Admin login successful:', { userId: adminUser.id, email: adminUser.email });
+      
+      res.json({
+        success: true,
+        message: 'Admin login successful',
+        user: {
+          id: adminUser.id,
+          email: adminUser.email,
+          firstName: adminUser.firstName,
+          lastName: adminUser.lastName,
+          role: adminUser.role,
+          profileImageUrl: adminUser.profileImageUrl
+        }
+      });
+    } catch (error) {
+      console.error('❌ Admin login error:', error);
+      res.status(500).json({
+        message: 'Login failed',
+        error: 'Internal server error'
+      });
+    }
   });
 
   // ========================================
@@ -2744,6 +2837,222 @@ export function registerRoutes(app: Express): void {
   });
 
   // Provider endpoints (legacy)
+  // ========================================
+  // PROVIDER APPLICATION ENDPOINTS
+  // ========================================
+
+  // POST /api/v1/providers/applications - Submit service provider application
+  app.post('/api/v1/providers/applications', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required' 
+        });
+      }
+
+      // Check if application already exists
+      const existingApplication = await storage.getServiceProviderApplication(userId);
+      if (existingApplication) {
+        return res.status(409).json({
+          success: false,
+          message: 'Application already submitted',
+          applicationId: existingApplication.id
+        });
+      }
+
+      // Create service provider application
+      const application = await storage.createServiceProviderApplication({
+        userId,
+        ...req.body,
+        verificationStatus: 'pending'
+      });
+
+      // Update user role to service_provider
+      await storage.updateUser(userId, { role: 'service_provider' });
+
+      console.log(`✅ Service provider application submitted for user ${userId}`);
+
+      res.status(201).json({
+        success: true,
+        data: {
+          applicationId: application.id,
+          status: application.verificationStatus,
+          submittedAt: application.createdAt
+        },
+        message: 'Application submitted successfully'
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/providers/applications error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to submit application'
+      });
+    }
+  });
+
+  // POST /api/v1/parts-providers/applications - Submit parts provider application
+  app.post('/api/v1/parts-providers/applications', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required' 
+        });
+      }
+
+      // Check if application already exists
+      const existingApplication = await storage.getPartsProviderApplication(userId);
+      if (existingApplication) {
+        return res.status(409).json({
+          success: false,
+          message: 'Application already submitted',
+          applicationId: existingApplication.id
+        });
+      }
+
+      // Create parts provider application
+      const application = await storage.createPartsProviderApplication({
+        userId,
+        ...req.body,
+        verificationStatus: 'pending'
+      });
+
+      // Update user role to parts_provider
+      await storage.updateUser(userId, { role: 'parts_provider' });
+
+      console.log(`✅ Parts provider application submitted for user ${userId}`);
+
+      res.status(201).json({
+        success: true,
+        data: {
+          applicationId: application.id,
+          status: application.verificationStatus,
+          submittedAt: application.createdAt
+        },
+        message: 'Application submitted successfully'
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/parts-providers/applications error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to submit application'
+      });
+    }
+  });
+
+  // GET /api/v1/providers/applications/:id - Get application status for applicant
+  app.get('/api/v1/providers/applications/:id', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required' 
+        });
+      }
+
+      // Try to get service provider application first
+      let application = await storage.getServiceProviderApplication(userId);
+      let providerType: 'service_provider' | 'parts_provider' = 'service_provider';
+      
+      if (!application) {
+        // Try parts provider application
+        application = await storage.getPartsProviderApplication(userId);
+        providerType = 'parts_provider';
+      }
+
+      if (!application || application.id !== id) {
+        return res.status(404).json({
+          success: false,
+          message: 'Application not found'
+        });
+      }
+
+      // Get status history
+      const statusHistory = await storage.getVerificationStatusTransitions(application.id!, providerType);
+
+      res.json({
+        success: true,
+        data: {
+          application: {
+            id: application.id,
+            businessName: application.businessName,
+            verificationStatus: application.verificationStatus,
+            submittedAt: application.createdAt,
+            updatedAt: application.updatedAt
+          },
+          statusHistory: statusHistory.map(transition => ({
+            status: transition.toStatus,
+            changedAt: transition.createdAt,
+            reason: transition.reason,
+            publicMessage: transition.publicMessage
+          }))
+        }
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/providers/applications/:id error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch application'
+      });
+    }
+  });
+
+  // GET /api/v1/providers/applications - Get current user's provider applications
+  app.get('/api/v1/providers/applications', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user?.id;
+      const { me } = req.query;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required' 
+        });
+      }
+      
+      // If me=true, fetch applications for current user
+      if (me === 'true') {
+        console.log(`🔍 Fetching provider applications for user: ${userId}`);
+        
+        const applications = await storage.getProviderApplicationsByUser(userId);
+        
+        if (!applications || applications.length === 0) {
+          console.log(`📭 No provider applications found for user: ${userId}`);
+          return res.json({
+            success: true,
+            data: [],
+            message: 'No applications found for current user'
+          });
+        }
+        
+        console.log(`✅ Found ${applications.length} application(s) for user: ${userId}`);
+        
+        res.json({
+          success: true,
+          data: applications
+        });
+      } else {
+        // Without me=true, return error - this should be admin-only
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Use admin endpoints to view all applications or add ?me=true to view your own applications'
+        });
+      }
+    } catch (error) {
+      console.error('❌ GET /api/v1/providers/applications error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch applications'
+      });
+    }
+  });
+
   app.get('/api/v1/providers', async (req, res) => {
     res.status(501).json({ 
       message: 'Providers endpoint temporarily unavailable',
@@ -3167,6 +3476,187 @@ export function registerRoutes(app: Express): void {
   });
 
   // Admin: Test services endpoint for verification
+  // ========================================
+  // ADMIN PROVIDER APPLICATION REVIEW ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/admin/provider-applications - Admin list with filters (pending/approved/rejected)
+  app.get('/api/v1/admin/provider-applications', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { 
+        status, 
+        providerType, 
+        limit = 50, 
+        offset = 0, 
+        sortBy = 'createdAt', 
+        sortOrder = 'desc' 
+      } = req.query;
+
+      const result = await storage.getAllProviderApplications({
+        status: status as string,
+        providerType: providerType as 'service_provider' | 'parts_provider',
+        limit: parseInt(limit as string),
+        offset: parseInt(offset as string),
+        sortBy: sortBy as string,
+        sortOrder: sortOrder as 'asc' | 'desc'
+      });
+
+      console.log(`✅ Admin retrieved ${result.applications.length} provider applications`);
+
+      res.json({
+        success: true,
+        data: result.applications,
+        pagination: {
+          total: result.total,
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string),
+          hasMore: result.total > parseInt(offset as string) + parseInt(limit as string)
+        }
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/admin/provider-applications error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch provider applications'
+      });
+    }
+  });
+
+  // GET /api/v1/admin/provider-applications/:id/:type - Get specific application details for admin review
+  app.get('/api/v1/admin/provider-applications/:id/:type', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { id, type } = req.params;
+      
+      if (!['service_provider', 'parts_provider'].includes(type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid provider type. Must be service_provider or parts_provider'
+        });
+      }
+
+      const result = await storage.getProviderApplicationDetails(
+        id, 
+        type as 'service_provider' | 'parts_provider'
+      );
+
+      if (!result.application) {
+        return res.status(404).json({
+          success: false,
+          message: 'Application not found'
+        });
+      }
+
+      console.log(`✅ Admin retrieved application details for ${type} ${id}`);
+
+      res.json({
+        success: true,
+        data: {
+          application: result.application,
+          user: result.user,
+          statusHistory: result.statusHistory,
+          documents: result.documents
+        }
+      });
+    } catch (error) {
+      console.error('❌ GET /api/v1/admin/provider-applications/:id/:type error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch application details'
+      });
+    }
+  });
+
+  // PATCH /api/v1/admin/provider-applications/:id/:type/status - Admin review (approve/reject with reasons)
+  app.patch('/api/v1/admin/provider-applications/:id/:type/status', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { id, type } = req.params;
+      const { status, reason, adminNotes, publicMessage } = req.body;
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Admin authentication required'
+        });
+      }
+
+      if (!['service_provider', 'parts_provider'].includes(type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid provider type. Must be service_provider or parts_provider'
+        });
+      }
+
+      const validStatuses = ['pending', 'under_review', 'approved', 'rejected', 'suspended', 'resubmission_required'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        });
+      }
+
+      const result = await storage.updateProviderApplicationStatus(
+        id,
+        type as 'service_provider' | 'parts_provider',
+        status,
+        adminId,
+        reason,
+        adminNotes,
+        publicMessage
+      );
+
+      if (!result.success) {
+        return res.status(404).json({
+          success: false,
+          message: 'Application not found'
+        });
+      }
+
+      // Send notification to provider (if notification service is available)
+      try {
+        if (result.application && notificationService) {
+          const userId = type === 'service_provider' 
+            ? (result.application as any).userId 
+            : (result.application as any).userId;
+          
+          if (userId) {
+            await notificationService.sendNotification(userId, {
+              title: 'Application Status Update',
+              message: publicMessage || `Your ${type.replace('_', ' ')} application status has been updated to: ${status}`,
+              type: 'application_status',
+              data: {
+                applicationId: id,
+                status,
+                reason
+              }
+            });
+            console.log(`📱 Notification sent to provider ${userId} about status change to ${status}`);
+          }
+        }
+      } catch (notificationError) {
+        console.error('Failed to send notification:', notificationError);
+        // Don't fail the whole request if notification fails
+      }
+
+      console.log(`✅ Admin ${adminId} updated ${type} application ${id} status to ${status}`);
+
+      res.json({
+        success: true,
+        data: {
+          application: result.application,
+          statusTransition: result.statusTransition
+        },
+        message: `Application status updated to ${status}`
+      });
+    } catch (error) {
+      console.error('❌ PATCH /api/v1/admin/provider-applications/:id/:type/status error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update application status'
+      });
+    }
+  });
+
   app.get('/api/v1/admin/test-services', authMiddleware, requireRole(['admin']), async (req, res) => {
     try {
       const testServices = await db.execute(sql`

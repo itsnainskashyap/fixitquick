@@ -47,6 +47,9 @@ import ProviderRegistration from "@/pages/ProviderRegistration";
 import PartProviderRegistration from "@/pages/PartProviderRegistration";
 import ProviderPending from "@/pages/ProviderPending";
 import PartsProviderPending from "@/pages/PartsProviderPending";
+import ProviderAuth from "@/pages/ProviderAuth";
+import EnhancedProviderRegistration from "@/pages/EnhancedProviderRegistration";
+import EnhancedPartsProviderRegistration from "@/pages/EnhancedPartsProviderRegistration";
 import ServiceProviderDashboard from "@/pages/ProviderDashboard";
 import PartsProviderDashboard from "@/pages/PartsProviderDashboard";
 import LanguageRegion from "@/pages/LanguageRegion";
@@ -227,7 +230,26 @@ function Router() {
       {/* Service Request Route */}
       <Route path="/request-service" component={() => <Layout><ProtectedRoute component={ServiceRequest} /></Layout>} />
       
-      {/* Provider Registration Routes */}
+      {/* Provider Authentication and Registration Routes */}
+      <Route path="/provider/auth" component={() => <ProviderAuth />} />
+      <Route 
+        path="/provider-registration" 
+        component={() => <Layout><ProviderRegistration /></Layout>} 
+      />
+      <Route 
+        path="/parts-provider-registration" 
+        component={() => <Layout><PartProviderRegistration /></Layout>} 
+      />
+      
+      {/* Enhanced Registration Routes with Google Auth */}
+      <Route 
+        path="/provider-registration-enhanced" 
+        component={() => <Layout><EnhancedProviderRegistration /></Layout>} 
+      />
+      <Route 
+        path="/parts-provider-registration-enhanced" 
+        component={() => <Layout><EnhancedPartsProviderRegistration /></Layout>} 
+      />
       <Route 
         path="/provider/register" 
         component={() => <Layout><ProtectedRoute component={ProviderRegistration} /></Layout>} 

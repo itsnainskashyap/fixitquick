@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { auth, db } from '../services/firebase';
 import { jwtService } from '../utils/jwt';
 import { storage } from '../storage';
+import admin from 'firebase-admin';
 
 // Define AuthUser type to match database schema
 export interface AuthUser {

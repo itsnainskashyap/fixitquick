@@ -4574,15 +4574,15 @@ export default function Admin() {
   });
   const verifications = (verificationsResponse as any)?.data || [];
 
-  // Fetch all provider verifications (including approved/rejected)
-  const { data: allProvidersResponse } = useQuery({
-    queryKey: ['/api/v1/admin/providers'],
+  // Fetch all provider applications (including approved/rejected) - Updated to use new endpoint
+  const { data: allProviderApplicationsResponse } = useQuery({
+    queryKey: ['/api/v1/admin/provider-applications'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/providers');
+      return await apiRequest('GET', '/api/v1/admin/provider-applications');
     },
     enabled: !!user,
   });
-  const allProviders = (allProvidersResponse as any)?.data || [];
+  const allProviders = (allProviderApplicationsResponse as any)?.data || [];
 
   // Fetch parts provider verifications
   const { data: partsProvidersResponse } = useQuery({

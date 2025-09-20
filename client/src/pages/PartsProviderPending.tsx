@@ -147,16 +147,35 @@ export default function PartsProviderPending() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
 
-  // Fetch parts provider profile
-  const { data: profile, isLoading, error, refetch } = useQuery<PartsProviderProfile>({
+  // First get the user's application ID by checking their parts provider profile
+  const { data: userApplicationResponse, isLoading: profileLoading } = useQuery({
     queryKey: ['/api/v1/parts-provider/profile'],
     enabled: !!user && user.role === 'parts_provider',
     retry: (failureCount, error: any) => {
-      // Don't retry if it's a 404 (no profile found)
       if (error?.status === 404) return false;
       return failureCount < 3;
     },
   });
+
+  const applicationId = userApplicationResponse?.profile?.id;
+
+  // Fetch parts provider application status - using new endpoint
+  const { data: response, isLoading: statusLoading, error, refetch } = useQuery({
+    queryKey: ['/api/v1/providers/applications', applicationId],
+    queryFn: () => applicationId ? fetch(`/api/v1/providers/applications/${applicationId}`, {
+      credentials: 'include'
+    }).then(res => res.json()) : null,
+    enabled: !!user && !!applicationId && user.role === 'parts_provider',
+    retry: (failureCount, error: any) => {
+      // Don't retry if it's a 404 (no application found)
+      if (error?.status === 404) return false;
+      return failureCount < 3;
+    },
+  });
+
+  const isLoading = profileLoading || statusLoading;
+  const profile = response?.data?.application as PartsProviderProfile | undefined;
+  const statusHistory = response?.data?.statusHistory || [];
 
   if (!user) {
     setLocation('/login');

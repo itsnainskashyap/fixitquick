@@ -529,6 +529,86 @@ export interface IStorage {
     totalPendingDocuments: number;
     recentSubmissions: number;
   }>;
+
+  // ========================================
+  // PROVIDER APPLICATION CRUD METHODS
+  // ========================================
+
+  // Service Provider Application Methods
+  createServiceProviderApplication(application: InsertServiceProvider): Promise<ServiceProvider>;
+  getServiceProviderApplication(userId: string): Promise<ServiceProvider | undefined>;
+  updateServiceProviderApplication(userId: string, data: Partial<InsertServiceProvider>): Promise<ServiceProvider | undefined>;
+  
+  // Parts Provider Application Methods  
+  createPartsProviderApplication(application: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo>;
+  getPartsProviderApplication(userId: string): Promise<PartsProviderBusinessInfo | undefined>;
+  updatePartsProviderApplication(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined>;
+  
+  // User-based Application Fetching
+  getProviderApplicationsByUser(userId: string): Promise<Array<{
+    id: string;
+    userId: string;
+    type: 'service_provider' | 'parts_provider';
+    businessName?: string;
+    verificationStatus: string;
+    submittedAt: Date;
+    user?: {
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+    };
+  }>>;
+
+  // Admin Provider Application Review Methods
+  getAllProviderApplications(filters?: {
+    status?: string;
+    providerType?: 'service_provider' | 'parts_provider';
+    limit?: number;
+    offset?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }): Promise<{
+    applications: Array<{
+      id: string;
+      userId: string;
+      type: 'service_provider' | 'parts_provider';
+      businessName?: string;
+      verificationStatus: string;
+      submittedAt: Date;
+      user?: {
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+      };
+    }>;
+    total: number;
+  }>;
+
+  getProviderApplicationDetails(
+    applicationId: string, 
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<{
+    application: ServiceProvider | PartsProviderBusinessInfo | null;
+    user: User | null;
+    statusHistory: VerificationStatusTransition[];
+    documents: any;
+  }>;
+
+  updateProviderApplicationStatus(
+    applicationId: string,
+    providerType: 'service_provider' | 'parts_provider',
+    status: string,
+    adminId: string,
+    reason?: string,
+    adminNotes?: string,
+    publicMessage?: string
+  ): Promise<{
+    success: boolean;
+    application?: ServiceProvider | PartsProviderBusinessInfo;
+    statusTransition?: VerificationStatusTransition;
+  }>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -2698,6 +2778,431 @@ export class PostgresStorage implements IStorage {
       updatedBy,
       timestamp: new Date().toISOString()
     });
+  }
+
+  // ========================================
+  // PROVIDER APPLICATION CRUD METHODS IMPLEMENTATION
+  // ========================================
+
+  // Service Provider Application Methods
+  async createServiceProviderApplication(application: InsertServiceProvider): Promise<ServiceProvider> {
+    const result = await db.insert(serviceProviders).values({
+      ...application,
+      verificationStatus: 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async getServiceProviderApplication(userId: string): Promise<ServiceProvider | undefined> {
+    const result = await db.select()
+      .from(serviceProviders)
+      .where(eq(serviceProviders.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateServiceProviderApplication(userId: string, data: Partial<InsertServiceProvider>): Promise<ServiceProvider | undefined> {
+    const result = await db.update(serviceProviders)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(serviceProviders.userId, userId))
+      .returning();
+    return result[0];
+  }
+
+  // Parts Provider Application Methods  
+  async createPartsProviderApplication(application: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo> {
+    return await this.createPartsProviderBusinessInfo(application);
+  }
+
+  async getPartsProviderApplication(userId: string): Promise<PartsProviderBusinessInfo | undefined> {
+    return await this.getPartsProviderBusinessInfo(userId);
+  }
+
+  async updatePartsProviderApplication(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined> {
+    return await this.updatePartsProviderBusinessInfo(userId, data);
+  }
+  
+  // User-based Application Fetching Implementation
+  async getProviderApplicationsByUser(userId: string): Promise<Array<{
+    id: string;
+    userId: string;
+    type: 'service_provider' | 'parts_provider';
+    businessName?: string;
+    verificationStatus: string;
+    submittedAt: Date;
+    user?: {
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+      phone?: string;
+    };
+  }>> {
+    console.log(`🔍 getProviderApplicationsByUser: Fetching applications for userId: ${userId}`);
+    
+    try {
+      // Define queries without executing them immediately
+      const serviceProviderQuery = db.select({
+        id: serviceProviders.id,
+        userId: serviceProviders.userId,
+        businessName: serviceProviders.businessName,
+        verificationStatus: serviceProviders.verificationStatus,
+        createdAt: serviceProviders.createdAt,
+        userFirstName: users.firstName,
+        userLastName: users.lastName,
+        userEmail: users.email,
+        userPhone: users.phone
+      })
+        .from(serviceProviders)
+        .leftJoin(users, eq(serviceProviders.userId, users.id))
+        .where(eq(serviceProviders.userId, userId))
+        .orderBy(desc(serviceProviders.createdAt));
+      
+      const partsProviderQuery = db.select({
+        id: partsProviderBusinessInfo.id,
+        userId: partsProviderBusinessInfo.userId,
+        businessName: partsProviderBusinessInfo.businessName,
+        verificationStatus: partsProviderBusinessInfo.verificationStatus,
+        createdAt: partsProviderBusinessInfo.createdAt,
+        userFirstName: users.firstName,
+        userLastName: users.lastName,
+        userEmail: users.email,
+        userPhone: users.phone
+      })
+        .from(partsProviderBusinessInfo)
+        .leftJoin(users, eq(partsProviderBusinessInfo.userId, users.id))
+        .where(eq(partsProviderBusinessInfo.userId, userId))
+        .orderBy(desc(partsProviderBusinessInfo.createdAt));
+      
+      // Execute queries in parallel
+      const [serviceProviderResults, partsProviderResults] = await Promise.all([
+        serviceProviderQuery,
+        partsProviderQuery
+      ]);
+      
+      console.log(`📊 getProviderApplicationsByUser: Found ${serviceProviderResults.length} service provider and ${partsProviderResults.length} parts provider applications`);
+      
+      // Convert results to common format
+      const serviceProviderApps = serviceProviderResults.map(app => ({
+        id: app.id!,
+        userId: app.userId!,
+        type: 'service_provider' as const,
+        businessName: app.businessName || undefined,
+        verificationStatus: app.verificationStatus!,
+        submittedAt: app.createdAt!,
+        user: {
+          firstName: app.userFirstName || undefined,
+          lastName: app.userLastName || undefined,
+          email: app.userEmail || undefined,
+          phone: app.userPhone || undefined
+        }
+      }));
+      
+      const partsProviderApps = partsProviderResults.map(app => ({
+        id: app.id!,
+        userId: app.userId!,
+        type: 'parts_provider' as const,
+        businessName: app.businessName || undefined,
+        verificationStatus: app.verificationStatus!,
+        submittedAt: app.createdAt!,
+        user: {
+          firstName: app.userFirstName || undefined,
+          lastName: app.userLastName || undefined,
+          email: app.userEmail || undefined,
+          phone: app.userPhone || undefined
+        }
+      }));
+      
+      // Combine and sort by submission date (most recent first)
+      const allApplications = [...serviceProviderApps, ...partsProviderApps];
+      allApplications.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+      
+      console.log(`✅ getProviderApplicationsByUser: Returning ${allApplications.length} applications for userId: ${userId}`);
+      return allApplications;
+    } catch (error) {
+      console.error(`❌ getProviderApplicationsByUser: Error fetching applications for userId: ${userId}`, error);
+      throw error;
+    }
+  }
+
+  // Admin Provider Application Review Methods
+  async getAllProviderApplications(filters?: {
+    status?: string;
+    providerType?: 'service_provider' | 'parts_provider';
+    limit?: number;
+    offset?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }): Promise<{
+    applications: Array<{
+      id: string;
+      userId: string;
+      type: 'service_provider' | 'parts_provider';
+      businessName?: string;
+      verificationStatus: string;
+      submittedAt: Date;
+      user?: {
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+      };
+    }>;
+    total: number;
+  }> {
+    const { status, providerType, limit = 50, offset = 0, sortBy = 'createdAt', sortOrder = 'desc' } = filters || {};
+    
+    let serviceProviderApplications: any[] = [];
+    let partsProviderApplications: any[] = [];
+    let totalServiceProviders = 0;
+    let totalPartsProviders = 0;
+
+    // Fetch service provider applications
+    if (!providerType || providerType === 'service_provider') {
+      let spQuery = db.select({
+        id: serviceProviders.id,
+        userId: serviceProviders.userId,
+        businessName: serviceProviders.businessName,
+        verificationStatus: serviceProviders.verificationStatus,
+        submittedAt: serviceProviders.createdAt,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone
+      })
+      .from(serviceProviders)
+      .leftJoin(users, eq(serviceProviders.userId, users.id));
+
+      if (status) {
+        spQuery = spQuery.where(eq(serviceProviders.verificationStatus, status));
+      }
+
+      const spResults = await spQuery
+        .orderBy(sortOrder === 'desc' ? desc(serviceProviders.createdAt) : asc(serviceProviders.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      serviceProviderApplications = spResults.map(row => ({
+        id: row.id,
+        userId: row.userId,
+        type: 'service_provider' as const,
+        businessName: row.businessName,
+        verificationStatus: row.verificationStatus,
+        submittedAt: row.submittedAt,
+        user: {
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          phone: row.phone
+        }
+      }));
+
+      // Get total count for service providers
+      const spCountQuery = db.select({ count: count() }).from(serviceProviders);
+      if (status) {
+        spCountQuery.where(eq(serviceProviders.verificationStatus, status));
+      }
+      const spCountResult = await spCountQuery;
+      totalServiceProviders = spCountResult[0].count;
+    }
+
+    // Fetch parts provider applications  
+    if (!providerType || providerType === 'parts_provider') {
+      let ppQuery = db.select({
+        id: partsProviderBusinessInfo.id,
+        userId: partsProviderBusinessInfo.userId,
+        businessName: partsProviderBusinessInfo.businessName,
+        verificationStatus: partsProviderBusinessInfo.verificationStatus,
+        submittedAt: partsProviderBusinessInfo.createdAt,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone
+      })
+      .from(partsProviderBusinessInfo)
+      .leftJoin(users, eq(partsProviderBusinessInfo.userId, users.id));
+
+      if (status) {
+        ppQuery = ppQuery.where(eq(partsProviderBusinessInfo.verificationStatus, status));
+      }
+
+      const ppResults = await ppQuery
+        .orderBy(sortOrder === 'desc' ? desc(partsProviderBusinessInfo.createdAt) : asc(partsProviderBusinessInfo.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      partsProviderApplications = ppResults.map(row => ({
+        id: row.id,
+        userId: row.userId,
+        type: 'parts_provider' as const,
+        businessName: row.businessName,
+        verificationStatus: row.verificationStatus,
+        submittedAt: row.submittedAt,
+        user: {
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          phone: row.phone
+        }
+      }));
+
+      // Get total count for parts providers
+      const ppCountQuery = db.select({ count: count() }).from(partsProviderBusinessInfo);
+      if (status) {
+        ppCountQuery.where(eq(partsProviderBusinessInfo.verificationStatus, status));
+      }
+      const ppCountResult = await ppCountQuery;
+      totalPartsProviders = ppCountResult[0].count;
+    }
+
+    // Combine and sort results
+    const allApplications = [...serviceProviderApplications, ...partsProviderApplications];
+    allApplications.sort((a, b) => {
+      const aDate = new Date(a.submittedAt).getTime();
+      const bDate = new Date(b.submittedAt).getTime();
+      return sortOrder === 'desc' ? bDate - aDate : aDate - bDate;
+    });
+
+    return {
+      applications: allApplications,
+      total: totalServiceProviders + totalPartsProviders
+    };
+  }
+
+  async getProviderApplicationDetails(
+    applicationId: string, 
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<{
+    application: ServiceProvider | PartsProviderBusinessInfo | null;
+    user: User | null;
+    statusHistory: VerificationStatusTransition[];
+    documents: any;
+  }> {
+    let application: ServiceProvider | PartsProviderBusinessInfo | null = null;
+    let user: User | null = null;
+
+    if (providerType === 'service_provider') {
+      // Get service provider application
+      const spResult = await db.select()
+        .from(serviceProviders)
+        .where(eq(serviceProviders.id, applicationId))
+        .limit(1);
+      application = spResult[0] || null;
+      
+      if (application) {
+        const userResult = await db.select()
+          .from(users)
+          .where(eq(users.id, application.userId!))
+          .limit(1);
+        user = userResult[0] || null;
+      }
+    } else {
+      // Get parts provider application
+      const ppResult = await db.select()
+        .from(partsProviderBusinessInfo)
+        .where(eq(partsProviderBusinessInfo.id, applicationId))
+        .limit(1);
+      application = ppResult[0] || null;
+      
+      if (application) {
+        const userResult = await db.select()
+          .from(users)
+          .where(eq(users.id, application.userId))
+          .limit(1);
+        user = userResult[0] || null;
+      }
+    }
+
+    // Get status history
+    const statusHistory = application 
+      ? await this.getVerificationStatusTransitions(applicationId, providerType)
+      : [];
+
+    // Extract documents from application
+    const documents = application?.verificationDocuments || application?.documents || {};
+
+    return {
+      application,
+      user,
+      statusHistory,
+      documents
+    };
+  }
+
+  async updateProviderApplicationStatus(
+    applicationId: string,
+    providerType: 'service_provider' | 'parts_provider',
+    status: string,
+    adminId: string,
+    reason?: string,
+    adminNotes?: string,
+    publicMessage?: string
+  ): Promise<{
+    success: boolean;
+    application?: ServiceProvider | PartsProviderBusinessInfo;
+    statusTransition?: VerificationStatusTransition;
+  }> {
+    let application: ServiceProvider | PartsProviderBusinessInfo | undefined;
+    let currentStatus: string | undefined;
+
+    // Update the application status
+    if (providerType === 'service_provider') {
+      // Get current status first
+      const current = await db.select()
+        .from(serviceProviders)
+        .where(eq(serviceProviders.id, applicationId))
+        .limit(1);
+      currentStatus = current[0]?.verificationStatus;
+      
+      const result = await db.update(serviceProviders)
+        .set({ 
+          verificationStatus: status,
+          updatedAt: new Date()
+        })
+        .where(eq(serviceProviders.id, applicationId))
+        .returning();
+      application = result[0];
+    } else {
+      // Get current status first
+      const current = await db.select()
+        .from(partsProviderBusinessInfo)
+        .where(eq(partsProviderBusinessInfo.id, applicationId))
+        .limit(1);
+      currentStatus = current[0]?.verificationStatus;
+      
+      const result = await db.update(partsProviderBusinessInfo)
+        .set({ 
+          verificationStatus: status,
+          updatedAt: new Date()
+        })
+        .where(eq(partsProviderBusinessInfo.id, applicationId))
+        .returning();
+      application = result[0];
+    }
+
+    if (!application) {
+      return { success: false };
+    }
+
+    // Create status transition record
+    const statusTransition = await this.createVerificationStatusTransition({
+      providerId: applicationId,
+      providerType,
+      fromStatus: currentStatus,
+      toStatus: status,
+      changedBy: adminId,
+      reason,
+      adminNotes,
+      publicMessage,
+      notificationSent: false
+    });
+
+    return {
+      success: true,
+      application,
+      statusTransition
+    };
   }
 }
 

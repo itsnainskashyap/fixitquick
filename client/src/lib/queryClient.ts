@@ -23,11 +23,16 @@ export async function apiRequest(
   // Enhanced logging for development debugging
   if (import.meta.env.DEV) {
     const hasAuthToken = !!localStorage.getItem('accessToken');
+    const isAdminRoute = url.includes('/admin/');
+    const hasCookieAuth = document.cookie.includes('adminToken');
+    
     console.log('🔐 API Request:', { 
       method, 
       url, 
       hasAuthToken,
-      hasData: !!data 
+      hasData: !!data,
+      isAdminRoute,
+      hasCookieAuth: isAdminRoute ? hasCookieAuth : 'n/a'
     });
   }
 
@@ -38,13 +43,31 @@ export async function apiRequest(
     credentials: "include",
   });
 
-  // Enhanced error handling for auth issues
+  // Enhanced error handling for auth issues with token refresh
   if (res.status === 401) {
     console.warn('🚨 Authentication failed for:', url);
     
-    // Only clear tokens if this was an authentication-related endpoint
-    // Don't clear tokens for general 401s on other endpoints
-    if (url.includes('/api/auth/') || url.includes('/login') || url.includes('/verify')) {
+    const isAdminRoute = url.includes('/admin/');
+    const isAuthRoute = url.includes('/api/auth/') || url.includes('/login') || url.includes('/verify');
+    
+    if (isAdminRoute) {
+      console.error('🚨 ADMIN AUTH FAILURE - Admin route returned 401. Possible causes:');
+      console.error('  1. Admin JWT token expired - needs refresh');
+      console.error('  2. Admin not logged in or session invalid');
+      console.error('  3. User lacks admin role in database');
+      
+      if (import.meta.env.DEV) {
+        const hasAdminCookie = document.cookie.includes('adminToken');
+        console.error('  Debug info:', { hasAdminCookie, adminLoginUrl: '/admin-login' });
+        console.error('  💡 To fix: Go to /admin-login and login with admin credentials');
+      }
+      
+      // For admin routes, redirect to admin login on 401
+      if (typeof window !== 'undefined') {
+        console.log('🔄 Redirecting to admin login due to authentication failure');
+        window.location.href = '/admin-login';
+      }
+    } else if (isAuthRoute) {
       console.log('🧹 Clearing invalid auth tokens for auth endpoint');
       localStorage.removeItem('accessToken');
     }
@@ -102,6 +125,10 @@ function getAuthHeaders(): Record<string, string> {
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
+  
+  // CRITICAL FIX: Admin users authenticate via cookies, not localStorage tokens
+  // For admin routes, the auth middleware checks cookies automatically
+  // No explicit Authorization header needed for cookie-based auth
   
   return headers;
 }
