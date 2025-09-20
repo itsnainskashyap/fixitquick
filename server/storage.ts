@@ -558,11 +558,63 @@ export class PostgresStorage implements IStorage {
   }
 
   async upsertUser(user: UpsertUser): Promise<User> {
-    const result = await db.insert(users).values(user).onConflictDoUpdate({
-      target: users.id,
-      set: user
-    }).returning();
-    return result[0];
+    try {
+      // First try to insert as a new user
+      const result = await db.insert(users).values(user).returning();
+      console.log('🔐 upsertUser: Created new user via insert', { userId: user.id, email: user.email });
+      return result[0];
+    } catch (error: any) {
+      // If insertion fails due to conflict (user already exists), handle the conflict
+      if (error.code === '23505') { // PostgreSQL unique constraint violation
+        console.log('🔐 upsertUser: Handling unique constraint conflict', { userId: user.id, email: user.email });
+        
+        // Try to update by ID first
+        let result = await db.update(users)
+          .set(user)
+          .where(eq(users.id, user.id as string))
+          .returning();
+        
+        if (result.length > 0) {
+          console.log('🔐 upsertUser: Updated existing user by ID');
+          return result[0];
+        }
+        
+        // If update by ID didn't find a match, try to find and update by email
+        if (user.email) {
+          result = await db.update(users)
+            .set(user)
+            .where(eq(users.email, user.email as string))
+            .returning();
+          
+          if (result.length > 0) {
+            console.log('🔐 upsertUser: Updated existing user by email');
+            return result[0];
+          }
+        }
+        
+        // If neither ID nor email updates worked, try to select the existing conflicting user
+        let existingUser = await db.select().from(users).where(eq(users.id, user.id as string)).limit(1);
+        if (existingUser.length > 0) {
+          console.log('🔐 upsertUser: Returning existing user by ID');
+          return existingUser[0];
+        }
+        
+        if (user.email) {
+          existingUser = await db.select().from(users).where(eq(users.email, user.email as string)).limit(1);
+          if (existingUser.length > 0) {
+            console.log('🔐 upsertUser: Returning existing user by email');
+            return existingUser[0];
+          }
+        }
+        
+        // If we still can't find the user, this is an unexpected state
+        console.error('❌ upsertUser: Failed to upsert user - conflict detected but no user found', { userId: user.id, email: user.email });
+        throw new Error('Failed to upsert user: conflict detected but user not found');
+      }
+      // If it's a different error, re-throw it
+      console.error('❌ upsertUser: Unexpected error during user upsert', { error: error.message, userId: user.id });
+      throw error;
+    }
   }
 
   async getServices(): Promise<Service[]> {
