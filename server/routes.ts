@@ -73,6 +73,11 @@ import {
   insertPromotionalMediaAnalyticsSchema,
   promotionalMedia,
   promotionalMediaAnalytics,
+  // Verification schemas
+  insertVerificationStatusTransitionSchema,
+  insertPartsProviderQualityMetricsSchema,
+  insertProviderResubmissionSchema,
+  insertVerificationNotificationPreferencesSchema,
   // Service request schemas
   insertServiceRequestSchema,
   // SECURITY: Order lifecycle validation schemas
@@ -889,6 +894,271 @@ export function registerRoutes(app: Express): Server {
       message: 'Booking endpoint temporarily unavailable',
       error: 'Feature under maintenance' 
     });
+  });
+
+  // ========================================
+  // VERIFICATION WORKFLOW ENDPOINTS
+  // ========================================
+  
+  // Service Provider Verification Endpoints
+  app.get('/api/v1/verification/service-providers', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { status, limit = 50, offset = 0 } = req.query;
+      const providers = await storage.getServiceProvidersForVerification(
+        status as any, 
+        parseInt(limit as string), 
+        parseInt(offset as string)
+      );
+      res.json({ success: true, providers });
+    } catch (error) {
+      console.error('Error fetching service providers for verification:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch providers' });
+    }
+  });
+  
+  app.get('/api/v1/verification/service-providers/:userId', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const provider = await storage.getServiceProviderForVerification(userId);
+      if (!provider) {
+        return res.status(404).json({ success: false, message: 'Provider not found' });
+      }
+      res.json({ success: true, provider });
+    } catch (error) {
+      console.error('Error fetching service provider:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch provider' });
+    }
+  });
+  
+  app.patch('/api/v1/verification/service-providers/:userId/status', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    validateBody(z.object({
+      status: z.enum(['pending', 'under_review', 'approved', 'rejected', 'suspended', 'resubmission_required']),
+      reason: z.string().optional(),
+      notes: z.string().optional(),
+      documentsReviewed: z.array(z.object({
+        documentType: z.string(),
+        status: z.enum(['approved', 'rejected']),
+        notes: z.string().optional()
+      })).optional()
+    })), 
+    async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { status, reason, notes, documentsReviewed } = req.body;
+      const adminId = (req as AuthenticatedRequest).user.id;
+      
+      // Update provider status
+      const provider = await storage.updateServiceProviderVerificationStatus(
+        userId, status, adminId, reason, notes
+      );
+      
+      if (!provider) {
+        return res.status(404).json({ success: false, message: 'Provider not found' });
+      }
+      
+      // Create status transition record
+      await storage.createVerificationStatusTransition({
+        providerId: userId,
+        providerType: 'service_provider',
+        fromStatus: provider.verificationStatus,
+        toStatus: status,
+        changedBy: adminId,
+        reason,
+        adminNotes: notes,
+        documentsReviewed,
+        notificationSent: false,
+        notificationMethod: 'email'
+      });
+      
+      res.json({ success: true, provider, message: 'Status updated successfully' });
+    } catch (error) {
+      console.error('Error updating service provider status:', error);
+      res.status(500).json({ success: false, message: 'Failed to update status' });
+    }
+  });
+  
+  // Parts Provider Verification Endpoints
+  app.get('/api/v1/verification/parts-providers', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { status, limit = 50, offset = 0 } = req.query;
+      const providers = await storage.getPartsProvidersForVerification(
+        status as string, 
+        parseInt(limit as string), 
+        parseInt(offset as string)
+      );
+      res.json({ success: true, providers });
+    } catch (error) {
+      console.error('Error fetching parts providers for verification:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch providers' });
+    }
+  });
+  
+  app.patch('/api/v1/verification/parts-providers/:userId/status', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    validateBody(z.object({
+      status: z.enum(['pending', 'documents_submitted', 'under_review', 'approved', 'rejected']),
+      reason: z.string().optional(),
+      notes: z.string().optional()
+    })), 
+    async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { status, reason, notes } = req.body;
+      const adminId = (req as AuthenticatedRequest).user.id;
+      
+      const provider = await storage.updatePartsProviderVerificationStatus(
+        userId, status, adminId, reason, notes
+      );
+      
+      if (!provider) {
+        return res.status(404).json({ success: false, message: 'Provider not found' });
+      }
+      
+      res.json({ success: true, provider, message: 'Status updated successfully' });
+    } catch (error) {
+      console.error('Error updating parts provider status:', error);
+      res.status(500).json({ success: false, message: 'Failed to update status' });
+    }
+  });
+  
+  // Document Verification Endpoints
+  app.patch('/api/v1/verification/:providerType/:providerId/documents/:documentType', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    validateBody(z.object({
+      verified: z.boolean(),
+      notes: z.string().optional()
+    })), 
+    async (req, res) => {
+    try {
+      const { providerType, providerId, documentType } = req.params;
+      const { verified, notes } = req.body;
+      const adminId = (req as AuthenticatedRequest).user.id;
+      
+      const result = await storage.updateDocumentVerificationStatus(
+        providerId, 
+        providerType as 'service_provider' | 'parts_provider',
+        documentType,
+        verified,
+        adminId,
+        notes
+      );
+      
+      res.json(result);
+    } catch (error) {
+      console.error('Error updating document verification:', error);
+      res.status(500).json({ success: false, message: 'Failed to update document verification' });
+    }
+  });
+  
+  // Verification Dashboard Stats
+  app.get('/api/v1/verification/dashboard/stats', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const stats = await storage.getVerificationDashboardStats();
+      res.json({ success: true, stats });
+    } catch (error) {
+      console.error('Error fetching verification dashboard stats:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+    }
+  });
+  
+  // Parts Provider Quality Metrics Endpoints
+  app.get('/api/v1/verification/parts-providers/:providerId/quality-metrics', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const metrics = await storage.getPartsProviderQualityMetrics(providerId);
+      res.json({ success: true, metrics });
+    } catch (error) {
+      console.error('Error fetching quality metrics:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch quality metrics' });
+    }
+  });
+  
+  app.post('/api/v1/verification/parts-providers/:providerId/quality-metrics', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    validateBody(insertPartsProviderQualityMetricsSchema), 
+    async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const adminId = (req as AuthenticatedRequest).user.id;
+      
+      const metricsData = {
+        ...req.body,
+        providerId,
+        assessedBy: adminId,
+        lastAssessmentDate: new Date()
+      };
+      
+      const metrics = await storage.createPartsProviderQualityMetrics(metricsData);
+      res.json({ success: true, metrics, message: 'Quality metrics created successfully' });
+    } catch (error) {
+      console.error('Error creating quality metrics:', error);
+      res.status(500).json({ success: false, message: 'Failed to create quality metrics' });
+    }
+  });
+  
+  // Provider Resubmission Endpoints
+  app.post('/api/v1/verification/resubmissions', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    validateBody(insertProviderResubmissionSchema), 
+    async (req, res) => {
+    try {
+      const resubmission = await storage.createProviderResubmission(req.body);
+      res.json({ success: true, resubmission, message: 'Resubmission request created successfully' });
+    } catch (error) {
+      console.error('Error creating resubmission request:', error);
+      res.status(500).json({ success: false, message: 'Failed to create resubmission request' });
+    }
+  });
+  
+  app.get('/api/v1/verification/resubmissions/:providerType/:providerId', 
+    authMiddleware, 
+    async (req, res) => {
+    try {
+      const { providerType, providerId } = req.params;
+      const resubmission = await storage.getProviderResubmission(
+        providerId, 
+        providerType as 'service_provider' | 'parts_provider'
+      );
+      res.json({ success: true, resubmission });
+    } catch (error) {
+      console.error('Error fetching resubmission:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch resubmission' });
+    }
+  });
+  
+  // Verification Notification Preferences
+  app.get('/api/v1/verification/notification-preferences', authMiddleware, async (req, res) => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.id;
+      const preferences = await storage.getVerificationNotificationPreferences(userId);
+      res.json({ success: true, preferences });
+    } catch (error) {
+      console.error('Error fetching notification preferences:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch preferences' });
+    }
+  });
+  
+  app.patch('/api/v1/verification/notification-preferences', 
+    authMiddleware, 
+    validateBody(insertVerificationNotificationPreferencesSchema.partial()), 
+    async (req, res) => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.id;
+      const preferences = await storage.updateVerificationNotificationPreferences(userId, req.body);
+      res.json({ success: true, preferences, message: 'Preferences updated successfully' });
+    } catch (error) {
+      console.error('Error updating notification preferences:', error);
+      res.status(500).json({ success: false, message: 'Failed to update preferences' });
+    }
   });
 
   // Catch-all route REMOVED to prevent 501 errors - let specific routes handle requests

@@ -83,6 +83,183 @@ export const StatusTransitionSchema = z.object({
 });
 export type StatusTransition = z.infer<typeof StatusTransitionSchema>;
 
+// Verification status transitions tracking table
+export const verificationStatusTransitions = pgTable("verification_status_transitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").notNull(), // References either serviceProviders.id or partsProviderBusinessInfo.id
+  providerType: varchar("provider_type", { enum: ["service_provider", "parts_provider"] }).notNull(),
+  
+  // Status Change Details
+  fromStatus: varchar("from_status", { 
+    enum: ["pending", "under_review", "approved", "rejected", "suspended", "resubmission_required"] 
+  }),
+  toStatus: varchar("to_status", { 
+    enum: ["pending", "under_review", "approved", "rejected", "suspended", "resubmission_required"] 
+  }).notNull(),
+  
+  // Change Information
+  changedBy: varchar("changed_by").references(() => users.id), // Admin who made the change
+  reason: text("reason"), // Reason for the change
+  adminNotes: text("admin_notes"), // Internal admin notes
+  publicMessage: text("public_message"), // Message sent to provider
+  
+  // Document specific information
+  documentsReviewed: jsonb("documents_reviewed").$type<{
+    documentType: string;
+    status: 'approved' | 'rejected';
+    notes?: string;
+  }[]>(),
+  
+  // Notification tracking
+  notificationSent: boolean("notification_sent").default(false),
+  notificationMethod: varchar("notification_method", { enum: ["email", "sms", "in_app", "all"] }),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("vst_provider_idx").on(table.providerId, table.providerType),
+  statusIdx: index("vst_status_idx").on(table.toStatus),
+  dateIdx: index("vst_date_idx").on(table.createdAt),
+  adminIdx: index("vst_admin_idx").on(table.changedBy),
+}));
+
+// Parts provider quality assurance tracking
+export const partsProviderQualityMetrics = pgTable("parts_provider_quality_metrics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").references(() => partsProviderBusinessInfo.id).notNull(),
+  
+  // Quality Scores (0-100)
+  catalogQualityScore: integer("catalog_quality_score").default(0), // Product listing quality
+  documentationScore: integer("documentation_score").default(0), // Compliance documentation
+  deliveryScore: integer("delivery_score").default(0), // On-time delivery performance
+  customerSatisfactionScore: integer("customer_satisfaction_score").default(0), // Customer feedback
+  responseTimeScore: integer("response_time_score").default(0), // Communication responsiveness
+  
+  // Overall Quality Metrics
+  overallQualityScore: integer("overall_quality_score").default(0), // Weighted average
+  qualityRating: varchar("quality_rating", { 
+    enum: ["poor", "below_average", "average", "good", "excellent"] 
+  }).default("average"),
+  
+  // Performance Indicators
+  defectRate: decimal("defect_rate", { precision: 5, scale: 2 }).default("0.00"), // % of defective products
+  returnRate: decimal("return_rate", { precision: 5, scale: 2 }).default("0.00"), // % of returned orders
+  onTimeDeliveryRate: decimal("on_time_delivery_rate", { precision: 5, scale: 2 }).default("0.00"),
+  stockAccuracyRate: decimal("stock_accuracy_rate", { precision: 5, scale: 2 }).default("0.00"),
+  
+  // Compliance Status
+  complianceStatus: varchar("compliance_status", { 
+    enum: ["compliant", "non_compliant", "under_review", "pending_verification"] 
+  }).default("pending_verification"),
+  
+  // Last Assessment
+  lastAssessmentDate: timestamp("last_assessment_date"),
+  assessedBy: varchar("assessed_by").references(() => users.id),
+  assessmentNotes: text("assessment_notes"),
+  
+  // Improvement Areas
+  improvementAreas: jsonb("improvement_areas").$type<{
+    area: string;
+    priority: 'low' | 'medium' | 'high';
+    description: string;
+    dueDate?: string;
+  }[]>(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("ppqm_provider_idx").on(table.providerId),
+  qualityIdx: index("ppqm_quality_idx").on(table.overallQualityScore),
+  complianceIdx: index("ppqm_compliance_idx").on(table.complianceStatus),
+  assessmentIdx: index("ppqm_assessment_idx").on(table.lastAssessmentDate),
+}));
+
+// Provider resubmission tracking
+export const providerResubmissions = pgTable("provider_resubmissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerId: varchar("provider_id").notNull(),
+  providerType: varchar("provider_type", { enum: ["service_provider", "parts_provider"] }).notNull(),
+  
+  // Resubmission Details
+  resubmissionCount: integer("resubmission_count").default(1),
+  previousStatus: varchar("previous_status", { 
+    enum: ["pending", "under_review", "approved", "rejected", "suspended", "resubmission_required"] 
+  }).notNull(),
+  
+  // Required Actions
+  requiredActions: jsonb("required_actions").$type<{
+    action: string;
+    description: string;
+    completed: boolean;
+    completedAt?: string;
+  }[]>(),
+  
+  // Documents to Resubmit
+  documentsToResubmit: jsonb("documents_to_resubmit").$type<{
+    documentType: string;
+    reason: string;
+    currentUrl?: string;
+    newUrl?: string;
+    resubmitted: boolean;
+  }[]>(),
+  
+  // Feedback and Instructions
+  rejectionReason: text("rejection_reason"),
+  improvementInstructions: text("improvement_instructions"),
+  adminFeedback: text("admin_feedback"),
+  
+  // Timeline
+  dueDate: timestamp("due_date"), // Deadline for resubmission
+  submittedAt: timestamp("submitted_at"), // When provider resubmitted
+  reviewedAt: timestamp("reviewed_at"), // When admin reviewed resubmission
+  
+  // Status
+  status: varchar("status", { 
+    enum: ["pending_resubmission", "submitted", "under_review", "resolved", "expired"] 
+  }).default("pending_resubmission"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  providerIdx: index("pr_provider_idx").on(table.providerId, table.providerType),
+  statusIdx: index("pr_status_idx").on(table.status),
+  dueDateIdx: index("pr_due_date_idx").on(table.dueDate),
+  countIdx: index("pr_count_idx").on(table.resubmissionCount),
+}));
+
+// Verification notification preferences
+export const verificationNotificationPreferences = pgTable("verification_notification_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  
+  // Email Notifications
+  emailEnabled: boolean("email_enabled").default(true),
+  emailAddress: varchar("email_address"), // Override default user email if needed
+  
+  // SMS Notifications  
+  smsEnabled: boolean("sms_enabled").default(true),
+  phoneNumber: varchar("phone_number"), // Override default user phone if needed
+  
+  // In-App Notifications
+  inAppEnabled: boolean("in_app_enabled").default(true),
+  pushNotificationsEnabled: boolean("push_notifications_enabled").default(true),
+  
+  // Notification Types
+  statusChangeNotifications: boolean("status_change_notifications").default(true),
+  documentRequests: boolean("document_requests").default(true),
+  resubmissionReminders: boolean("resubmission_reminders").default(true),
+  qualityAssessmentUpdates: boolean("quality_assessment_updates").default(true),
+  
+  // Frequency Settings
+  reminderFrequency: varchar("reminder_frequency", { 
+    enum: ["daily", "weekly", "monthly", "disabled"] 
+  }).default("weekly"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  userIdx: index("vnp_user_idx").on(table.userId),
+}));
+
 // Session storage table for Replit Auth
 // This table is mandatory for Replit Auth, don't drop it.
 export const sessions = pgTable(
@@ -2144,6 +2321,42 @@ export type SupportCallbackPriority = z.infer<typeof supportCallbackPriorityEnum
 export type SupportCallbackStatus = z.infer<typeof supportCallbackStatusEnum>;
 export type SupportAgentStatus = z.infer<typeof supportAgentStatusEnum>;
 export type SupportAgentDepartment = z.infer<typeof supportAgentDepartmentEnum>;
+
+// Verification status transitions insert schema and types
+export const insertVerificationStatusTransitionSchema = createInsertSchema(verificationStatusTransitions).omit({ 
+  id: true, 
+  createdAt: true 
+});
+export type InsertVerificationStatusTransition = z.infer<typeof insertVerificationStatusTransitionSchema>;
+export type VerificationStatusTransition = typeof verificationStatusTransitions.$inferSelect;
+
+// Parts provider quality metrics insert schema and types
+export const insertPartsProviderQualityMetricsSchema = createInsertSchema(partsProviderQualityMetrics).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true,
+  overallQualityScore: true // Calculated field
+});
+export type InsertPartsProviderQualityMetrics = z.infer<typeof insertPartsProviderQualityMetricsSchema>;
+export type PartsProviderQualityMetrics = typeof partsProviderQualityMetrics.$inferSelect;
+
+// Provider resubmissions insert schema and types
+export const insertProviderResubmissionSchema = createInsertSchema(providerResubmissions).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertProviderResubmission = z.infer<typeof insertProviderResubmissionSchema>;
+export type ProviderResubmission = typeof providerResubmissions.$inferSelect;
+
+// Verification notification preferences insert schema and types
+export const insertVerificationNotificationPreferencesSchema = createInsertSchema(verificationNotificationPreferences).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertVerificationNotificationPreferences = z.infer<typeof insertVerificationNotificationPreferencesSchema>;
+export type VerificationNotificationPreferences = typeof verificationNotificationPreferences.$inferSelect;
 
 // Service Provider Profile schemas and types
 export type ServiceProviderProfile = typeof serviceProviderProfiles.$inferSelect;

@@ -124,8 +124,8 @@ export const authMiddleware = async (
       console.log('🧹 authMiddleware: Cleared expired JWT cookies, continuing to session auth...');
     }
 
-    // PRIORITY 2: Handle Replit session authentication
-    if (req.user) {
+    // PRIORITY 2: Handle Passport session authentication (including Replit OAuth)
+    if (req.isAuthenticated && req.isAuthenticated() && req.user) {
       // Debug session user object structure
       console.log(`🔍 authMiddleware: Existing user object:`, {
         hasId: !!req.user.id,
@@ -197,6 +197,65 @@ export const authMiddleware = async (
         return res.status(401).json({ 
           message: 'Invalid authentication state' 
         });
+      }
+    } else if (req.user) {
+      // Fallback: Handle session users where req.isAuthenticated() might not be available
+      // This covers cases where session exists but Passport middleware isn't fully initialized
+      console.log(`🔍 authMiddleware: Fallback session check for user object without isAuthenticated():`, {
+        hasId: !!req.user.id,
+        hasClaims: !!req.user.claims,
+        claimsSub: req.user.claims?.sub,
+        userKeys: Object.keys(req.user)
+      });
+      
+      // Extract user ID from session claims
+      if (req.user.claims?.sub) {
+        const userId = req.user.claims.sub;
+        console.log(`🔐 authMiddleware: Fallback session auth detected for userId: ${userId}`);
+        
+        try {
+          // Get user data from database to enrich session user object
+          const user = await storage.getUser(userId);
+          if (!user || !user.isActive) {
+            console.error(`❌ authMiddleware: Fallback session user ${userId} not found or inactive`);
+            return res.status(404).json({ 
+              message: 'User not found or inactive' 
+            });
+          }
+
+          // Normalize user object with consistent interface
+          req.user = {
+            id: user.id,
+            email: user.email || undefined,
+            phone: user.phone || undefined,
+            role: user.role || 'user',
+            isVerified: user.isVerified || false,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            profileImageUrl: user.profileImageUrl,
+            walletBalance: user.walletBalance,
+            fixiPoints: user.fixiPoints,
+            location: user.location,
+            isActive: user.isActive,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            // Preserve original session claims for compatibility
+            claims: req.user.claims
+          };
+
+          console.log(`✅ authMiddleware: Fallback session user ${user.id} normalized with role: ${user.role}`);
+          return next();
+        } catch (error) {
+          console.error('❌ authMiddleware: Error enriching fallback session user:', error);
+          return res.status(500).json({ 
+            message: 'Authentication processing failed' 
+          });
+        }
+      } else if (req.user.id) {
+        // User object already has normalized ID
+        console.log(`✅ authMiddleware: Fallback user already authenticated with ID: ${req.user.id}`);
+        return next();
       }
     }
 

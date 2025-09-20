@@ -24,13 +24,38 @@ const getOidcConfig = memoize(
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
-    ttl: sessionTtl,
-    tableName: "sessions",
-  });
+  
+  // In development, use MemoryStore as fallback or enable createTableIfMissing
+  let sessionStore;
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      const pgStore = connectPg(session);
+      sessionStore = new pgStore({
+        conString: process.env.DATABASE_URL,
+        createTableIfMissing: true, // Enable in development
+        ttl: sessionTtl,
+        tableName: "sessions",
+      });
+      console.log('🔧 Development: Using PostgreSQL session store with auto-create tables');
+    } catch (error) {
+      console.warn('⚠️ Development: PostgreSQL session store failed, falling back to MemoryStore:', error);
+      const MemoryStore = require('memorystore')(session);
+      sessionStore = new MemoryStore({
+        checkPeriod: sessionTtl, // Prune expired entries every TTL
+      });
+    }
+  } else {
+    // Production: Use PostgreSQL only
+    const pgStore = connectPg(session);
+    sessionStore = new pgStore({
+      conString: process.env.DATABASE_URL,
+      createTableIfMissing: false,
+      ttl: sessionTtl,
+      tableName: "sessions",
+    });
+    console.log('🔧 Production: Using PostgreSQL session store');
+  }
+
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
@@ -38,7 +63,8 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === 'production', // Environment-dependent security
+      sameSite: 'lax', // Add sameSite for CSRF protection while allowing OAuth redirects
       maxAge: sessionTtl,
     },
   });

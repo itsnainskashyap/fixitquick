@@ -37,10 +37,13 @@ export async function setupUploadRoutes(app: Express) {
         // Verify with stored hash
         const bcrypt = await import('bcryptjs');
         isValidPassword = await bcrypt.compare(password, admin.password);
-      } else {
-        // Development fallback: Allow development password
-        console.log('🔧 Dev mode: Admin password not set, using development authentication');
+      } else if (process.env.ALLOW_DEV_AUTH === 'true' && process.env.NODE_ENV !== 'production') {
+        // Development fallback: Allow development password ONLY if explicitly enabled
+        console.log('🔧 Dev mode: Admin password not set, using development authentication (ALLOW_DEV_AUTH=true)');
         isValidPassword = (password === 'Sinha@1357');
+      } else {
+        console.log('🚫 Dev authentication disabled: ALLOW_DEV_AUTH not set to true or in production');
+        isValidPassword = false;
       }
       if (!isValidPassword) {
         return res.status(401).json({

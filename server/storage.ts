@@ -253,6 +253,20 @@ import {
   insertOrderChatMessageSchema,
   insertOrderRatingSchema,
   insertServiceSchedulingRuleSchema,
+  // Verification workflow imports
+  verificationStatusTransitions,
+  partsProviderQualityMetrics,
+  providerResubmissions,
+  verificationNotificationPreferences,
+  type VerificationStatusTransition,
+  type InsertVerificationStatusTransition,
+  type PartsProviderQualityMetrics,
+  type InsertPartsProviderQualityMetrics,
+  type ProviderResubmission,
+  type InsertProviderResubmission,
+  type VerificationNotificationPreferences,
+  type InsertVerificationNotificationPreferences,
+  type ServiceProviderVerificationStatusType,
 } from "@shared/schema";
 
 // Single typed combinator utility for WHERE conditions
@@ -372,6 +386,109 @@ export interface IStorage {
   
   // Seed data method for development initialization
   seedData(): Promise<void>;
+  
+  // ========================================
+  // VERIFICATION WORKFLOW METHODS
+  // ========================================
+  
+  // Service Provider Verification Methods
+  getServiceProviderForVerification(userId: string): Promise<ServiceProvider | undefined>;
+  updateServiceProviderVerificationStatus(
+    userId: string, 
+    status: ServiceProviderVerificationStatusType,
+    adminId?: string,
+    reason?: string,
+    notes?: string
+  ): Promise<ServiceProvider | undefined>;
+  
+  getServiceProvidersForVerification(
+    status?: ServiceProviderVerificationStatusType,
+    limit?: number,
+    offset?: number
+  ): Promise<ServiceProvider[]>;
+  
+  // Parts Provider Verification Methods
+  getPartsProviderForVerification(userId: string): Promise<PartsProviderBusinessInfo | undefined>;
+  updatePartsProviderVerificationStatus(
+    userId: string,
+    status: string,
+    adminId?: string, 
+    reason?: string,
+    notes?: string
+  ): Promise<PartsProviderBusinessInfo | undefined>;
+  
+  getPartsProvidersForVerification(
+    status?: string,
+    limit?: number, 
+    offset?: number
+  ): Promise<PartsProviderBusinessInfo[]>;
+  
+  // Verification Status Transitions
+  createVerificationStatusTransition(transition: InsertVerificationStatusTransition): Promise<VerificationStatusTransition>;
+  getVerificationStatusTransitions(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<VerificationStatusTransition[]>;
+  
+  // Parts Provider Quality Metrics
+  createPartsProviderQualityMetrics(metrics: InsertPartsProviderQualityMetrics): Promise<PartsProviderQualityMetrics>;
+  getPartsProviderQualityMetrics(providerId: string): Promise<PartsProviderQualityMetrics | undefined>;
+  updatePartsProviderQualityMetrics(
+    providerId: string,
+    data: Partial<InsertPartsProviderQualityMetrics>
+  ): Promise<PartsProviderQualityMetrics | undefined>;
+  
+  // Provider Resubmissions
+  createProviderResubmission(resubmission: InsertProviderResubmission): Promise<ProviderResubmission>;
+  getProviderResubmission(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider'
+  ): Promise<ProviderResubmission | undefined>;
+  updateProviderResubmissionStatus(
+    id: string,
+    status: string,
+    data?: Partial<InsertProviderResubmission>
+  ): Promise<ProviderResubmission | undefined>;
+  
+  // Verification Notification Preferences
+  createVerificationNotificationPreferences(
+    preferences: InsertVerificationNotificationPreferences
+  ): Promise<VerificationNotificationPreferences>;
+  getVerificationNotificationPreferences(userId: string): Promise<VerificationNotificationPreferences | undefined>;
+  updateVerificationNotificationPreferences(
+    userId: string,
+    data: Partial<InsertVerificationNotificationPreferences>
+  ): Promise<VerificationNotificationPreferences | undefined>;
+  
+  // Document Verification Methods
+  updateDocumentVerificationStatus(
+    providerId: string,
+    providerType: 'service_provider' | 'parts_provider',
+    documentType: string,
+    verified: boolean,
+    adminId?: string,
+    notes?: string
+  ): Promise<{ success: boolean; message?: string }>;
+  
+  // Admin Dashboard Support Methods
+  getVerificationDashboardStats(): Promise<{
+    serviceProviders: {
+      pending: number;
+      underReview: number;
+      approved: number;
+      rejected: number;
+      suspended: number;
+      resubmissionRequired: number;
+    };
+    partsProviders: {
+      pending: number;
+      underReview: number;
+      approved: number;
+      rejected: number;
+    };
+    totalPendingDocuments: number;
+    recentSubmissions: number;
+  }>;
 }
 
 export class PostgresStorage implements IStorage {
