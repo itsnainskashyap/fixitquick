@@ -42,8 +42,12 @@ export async function apiRequest(
   if (res.status === 401) {
     console.warn('🚨 Authentication failed for:', url);
     
-    // Clear potentially invalid tokens
-    localStorage.removeItem('accessToken');
+    // Only clear tokens if this was an authentication-related endpoint
+    // Don't clear tokens for general 401s on other endpoints
+    if (url.includes('/api/auth/') || url.includes('/login') || url.includes('/verify')) {
+      console.log('🧹 Clearing invalid auth tokens for auth endpoint');
+      localStorage.removeItem('accessToken');
+    }
     
     // In development, provide helpful debugging info
     if (import.meta.env.DEV) {

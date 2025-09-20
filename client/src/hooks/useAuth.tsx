@@ -51,12 +51,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           hasUserData: !!userData,
           tokenType: accessToken?.startsWith('dev-token') ? 'dev' : 'production'
         });
+        console.log('🔐 Token stored in localStorage:', localStorage.getItem('accessToken')?.substring(0, 20) + '...');
       }
+      
+      // Add a small delay to ensure token is properly stored
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Refresh user data
       await refetch();
     } catch (error) {
       console.error('Error during SMS sign in:', error);
+      // Don't clear the token on refetch errors - let the user try again
       throw error;
     }
   };

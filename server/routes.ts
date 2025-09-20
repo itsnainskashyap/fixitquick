@@ -612,6 +612,43 @@ export function registerRoutes(app: Express): void {
   // BASIC WORKING ENDPOINTS - ONLY USING EXISTING STORAGE METHODS
   // ============================
 
+  // User authentication state endpoint - required by frontend useAuth hook
+  app.get('/api/auth/user', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ message: 'Authentication required' });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Return user data in the format expected by frontend
+      res.json({
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role || 'user',
+        isVerified: user.isVerified || false,
+        profileImageUrl: user.profileImageUrl,
+        walletBalance: user.walletBalance || 0,
+        fixiPoints: user.fixiPoints || 0,
+        location: user.location,
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      });
+    } catch (error) {
+      console.error('Error fetching user auth state:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch user authentication state' });
+    }
+  });
+
   // User profile endpoint - uses existing getUserByPhone
   app.get('/api/v1/user/profile', authMiddleware, async (req, res) => {
     try {
