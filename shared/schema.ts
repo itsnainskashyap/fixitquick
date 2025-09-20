@@ -103,6 +103,7 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  password: text("password"), // Nullable text field for password hash
   role: varchar("role", { enum: ["user", "service_provider", "parts_provider", "admin"] }).default("user"),
   isVerified: boolean("is_verified").default(false),
   walletBalance: decimal("wallet_balance", { precision: 10, scale: 2 }).default("0.00"),
@@ -223,6 +224,9 @@ export const partsProviderBusinessInfo = pgTable("parts_provider_business_info",
     bankStatement?: { url: string; verified: boolean };
     tradeLicense?: { url: string; verified: boolean };
     insuranceCertificate?: { url: string; verified: boolean };
+    aadharFront?: { url: string; verified: boolean };
+    aadharBack?: { url: string; verified: boolean };
+    photo?: { url: string; verified: boolean };
   }>(),
   
   // Operational Details

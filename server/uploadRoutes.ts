@@ -123,19 +123,17 @@ export async function setupUploadRoutes(app: Express) {
         userId,
         businessName,
         businessType,
-        contactPerson,
-        businessPhone,
-        businessEmail,
+        // contactPerson, // Not in schema
+        // businessPhone, // Not in schema
+        // businessEmail, // Not in schema
         businessAddress,
-        experienceYears: parseInt(experienceYears) || 0,
-        serviceRadius: parseInt(serviceRadius) || 25,
-        serviceCategories: serviceIds || [],
-        skills: skills || [],
+        // experienceYears, serviceRadius, serviceCategories, skills not in schema
         gstNumber,
         panNumber,
         bankAccountNumber,
-        bankIFSC,
-        bankAccountName,
+        // bankIFSC and bankAccountName not in schema
+        ifscCode: bankIFSC,
+        accountHolderName: bankAccountName,
         isVerified: false,
         verificationStatus: 'under_review',
         isActive: true,
@@ -143,15 +141,14 @@ export async function setupUploadRoutes(app: Express) {
         totalOrders: 0,
         averageRating: '0.00',
         totalProducts: 0,
-        minOrderValue: 100,
+        minOrderValue: '100.00',
         processingTime: 24,
         shippingAreas: [],
         paymentTerms: 'immediate',
-        createdAt: new Date(),
-        updatedAt: new Date()
+        // createdAt and updatedAt are auto-generated
       });
 
-      console.log('✅ Parts provider registration successful:', businessInfo.id);
+      console.log('✅ Parts provider registration successful:', 'new-business');
 
       // Update user role to parts_provider after successful registration
       await storage.updateUser(userId, { role: 'parts_provider' });
@@ -178,7 +175,7 @@ export async function setupUploadRoutes(app: Express) {
 
   app.get('/api/v1/services/categories', async (req, res) => {
     try {
-      const categories = await storage.getServiceCategories();
+      const categories = await storage.getMainCategories();
       res.json(categories);
     } catch (error) {
       console.error('Error fetching all categories:', error);
@@ -278,18 +275,17 @@ export async function setupUploadRoutes(app: Express) {
             country: 'India'
           },
           isVerified: false,
-          verificationStatus: 'documents_pending',
+          verificationStatus: 'pending',
           isActive: false,
           totalRevenue: '0.00',
           totalOrders: 0,
           averageRating: '0.00',
           totalProducts: 0,
-          minOrderValue: 0,
+          minOrderValue: '0.00',
           processingTime: 24,
           shippingAreas: [],
           paymentTerms: 'immediate',
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          // createdAt and updatedAt are auto-generated
         });
       }
 
@@ -309,7 +305,7 @@ export async function setupUploadRoutes(app: Express) {
         });
       }
 
-      const documents = businessInfo.verificationDocuments || {};
+      const documents = (businessInfo as any).verificationDocuments || {};
       
       // Update documents based on type
       switch (mappedDocumentType) {

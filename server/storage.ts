@@ -362,6 +362,14 @@ export interface IStorage {
   getJobRequestByPhoneCallId(callSid: string): Promise<ProviderJobRequest | undefined>;
   updateProviderJobRequest(id: string, data: Partial<InsertProviderJobRequest>): Promise<ProviderJobRequest | undefined>;
   
+  // Parts category methods
+  getPartsCategories(): Promise<PartsCategory[]>;
+  
+  // Parts provider business info methods
+  createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo>;
+  getPartsProviderBusinessInfo(userId: string): Promise<PartsProviderBusinessInfo | undefined>;
+  updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined>;
+  
   // Seed data method for development initialization
   seedData(): Promise<void>;
 }
@@ -702,6 +710,45 @@ export class PostgresStorage implements IStorage {
       .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
     
     return await query;
+  }
+
+  // ========================================
+  // PARTS CATEGORY METHODS
+  // ========================================
+
+  async getPartsCategories(): Promise<PartsCategory[]> {
+    return await db.select().from(partsCategories)
+      .where(eq(partsCategories.isActive, true))
+      .orderBy(asc(partsCategories.sortOrder), asc(partsCategories.name));
+  }
+
+  // ========================================
+  // PARTS PROVIDER BUSINESS INFO METHODS
+  // ========================================
+
+  async createPartsProviderBusinessInfo(businessInfo: InsertPartsProviderBusinessInfo): Promise<PartsProviderBusinessInfo> {
+    const result = await db.insert(partsProviderBusinessInfo).values({
+      ...businessInfo,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async getPartsProviderBusinessInfo(userId: string): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.select()
+      .from(partsProviderBusinessInfo)
+      .where(eq(partsProviderBusinessInfo.userId, userId))
+      .limit(1);
+    return result[0];
+  }
+
+  async updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined> {
+    const result = await db.update(partsProviderBusinessInfo)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(partsProviderBusinessInfo.userId, userId))
+      .returning();
+    return result[0];
   }
 
   // ========================================
