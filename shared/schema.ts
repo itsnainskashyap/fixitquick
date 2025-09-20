@@ -852,6 +852,7 @@ export const parts = pgTable("parts", {
 // Orders table - Core order workflow system
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderNumber: varchar("order_number", { length: 50 }).unique(), // Human-readable order number like ORD-2024-00001
   userId: varchar("user_id").references(() => users.id).notNull(),
   serviceId: varchar("service_id").references(() => services.id), // Nullable for parts orders
   addressId: varchar("address_id"), // Customer address reference
@@ -917,6 +918,7 @@ export const orders = pgTable("orders", {
   statusIdx: index("orders_status_idx").on(table.status),
   deadlineIdx: index("orders_deadline_idx").on(table.acceptDeadlineAt),
   createdAtIdx: index("orders_created_at_idx").on(table.createdAt),
+  orderNumberIdx: index("orders_order_number_idx").on(table.orderNumber),
 }));
 
 // Wallet transactions
@@ -1378,6 +1380,7 @@ export const paymentIntents = pgTable("payment_intents", {
 // Enhanced Service Bookings - Replaces and extends orders for services
 export const serviceBookings = pgTable("service_bookings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderNumber: varchar("order_number", { length: 50 }).unique(), // Human-readable order number like SRV-2024-00001
   userId: varchar("user_id").references(() => users.id).notNull(),
   serviceId: varchar("service_id").references(() => services.id).notNull(),
   
@@ -1475,6 +1478,7 @@ export const serviceBookings = pgTable("service_bookings", {
   
   // Performance index for orders needing matching (removed NOW() for immutability)
   needsMatchingIdx: index("sb_needs_matching_idx").on(table.status, table.matchingExpiresAt).where(sql`status IN ('pending', 'provider_search')`),
+  orderNumberIdx: index("sb_order_number_idx").on(table.orderNumber),
 }));
 
 // Provider Job Requests - Race-to-accept system for order workflow with TTL enforcement

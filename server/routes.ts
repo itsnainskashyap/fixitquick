@@ -23,7 +23,7 @@ import WebSocketManager from "./services/websocket";
 let webSocketManager: WebSocketManager | null = null;
 
 // Function to initialize WebSocket manager
-function initializeWebSocket(server: Server) {
+export function initializeWebSocket(server: Server) {
   console.log('🔌 Initializing WebSocket manager with HTTP server...');
   webSocketManager = new WebSocketManager(server);
   console.log('✅ WebSocket manager initialized successfully');
@@ -128,6 +128,7 @@ import {
   handleProviderDocumentUpload,
   handleCategoryImageUpload,
   handleServiceIconUpload,
+  uploadDocument,
   getImageDetails,
   updateImageMetadata,
   deleteImage
@@ -664,6 +665,37 @@ export async function registerRoutes(app: Express): Promise<void> {
       res.status(500).json({
         success: false,
         message: 'Verification failed. Please try again.',
+      });
+    }
+  });
+
+  // POST /api/v1/auth/ws-token - Generate WebSocket authentication token
+  app.post('/api/v1/auth/ws-token', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        console.error('❌ POST /api/v1/auth/ws-token: No user found in request');
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+
+      // Generate WebSocket authentication token using JWT service
+      const wsToken = await jwtService.generateAccessToken(user.id, user.role || 'user');
+      
+      console.log(`✅ POST /api/v1/auth/ws-token: Generated WebSocket token for user ${user.id}`);
+      
+      res.json({
+        success: true,
+        token: wsToken,
+        expiresIn: 7200 // 2 hours in seconds
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/auth/ws-token error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate WebSocket token'
       });
     }
   });
@@ -2190,11 +2222,12 @@ export async function registerRoutes(app: Express): Promise<void> {
             });
           }
 
-          // Check stock availability
-          if (part.stock < item.quantity) {
+          // Check and reserve stock automatically
+          const stockReservation = await storage.reservePartStock(item.partId, item.quantity);
+          if (!stockReservation.success) {
             return res.status(400).json({
               success: false,
-              message: `Insufficient stock for ${part.name}. Available: ${part.stock}, Requested: ${item.quantity}`
+              message: `${stockReservation.message} for part "${part.name}"`
             });
           }
 
@@ -2380,18 +2413,14 @@ export async function registerRoutes(app: Express): Promise<void> {
         rejectionReason: reason || 'Provider declined the order'
       });
 
-      // Release reserved stock
-      if (order.meta?.items) {
-        for (const item of order.meta.items) {
-          if (item.providerId === user.id) {
-            const part = await storage.getPartById(item.partId);
-            if (part) {
-              await storage.updatePartsInventory(item.partId, {
-                stock: part.stock,
-                reservedStock: Math.max(0, (part.reservedStock || 0) - item.quantity)
-              });
-            }
-          }
+      // 🔧 STOCK LIFECYCLE: Release reservations on order cancellation
+      if (order.type === 'parts') {
+        console.log(`🔄 Releasing stock reservations for cancelled parts order ${orderId}`);
+        const stockResult = await storage.onOrderCancellation(orderId);
+        if (stockResult.success) {
+          console.log(`✅ Stock cancellation completed: ${stockResult.itemsReleased} items released`);
+        } else {
+          console.error(`❌ Stock cancellation error: ${stockResult.message}`);
         }
       }
 
@@ -2887,6 +2916,174 @@ export async function registerRoutes(app: Express): Promise<void> {
     }
   });
 
+  // POST /api/v1/orders/:id/pay-test - Test payment simulation
+  app.post('/api/v1/orders/:id/pay-test', authMiddleware, async (req, res) => {
+    try {
+      const user = (req as AuthenticatedRequest).user!;
+      
+      // 🚨 TRIPLE-GATE SECURITY: Block this endpoint with multiple security layers
+      
+      // Gate 1: Production environment check
+      if (process.env.NODE_ENV === 'production') {
+        console.error('🚨 SECURITY ALERT: Test payment endpoint accessed in production');
+        return res.status(403).json({
+          success: false,
+          message: 'Test payment endpoint not available in production'
+        });
+      }
+      
+      // Gate 2: Feature flag check
+      if (process.env.ALLOW_TEST_PAYMENTS !== 'true') {
+        console.error('🚨 SECURITY ALERT: Test payments not enabled via feature flag');
+        return res.status(403).json({
+          success: false,
+          message: 'Test payment endpoint not enabled'
+        });
+      }
+      
+      // Gate 3: Admin role check
+      if (user.role !== 'admin' && user.role !== 'super_admin') {
+        console.error(`🚨 SECURITY ALERT: Non-admin user ${user.id} (role: ${user.role}) attempted test payment access`);
+        return res.status(403).json({
+          success: false,
+          message: 'Test payments restricted to administrators only'
+        });
+      }
+      
+      // 📝 ENHANCED AUDIT: Log triple-gate bypass for security monitoring
+      console.log(`🔐 TRIPLE-GATE PASSED: User ${user.id} (${user.role}) authorized for test payment access from IP: ${req.ip || 'unknown'}`);
+      console.log(`🔐 AUDIT: Environment - NODE_ENV: ${process.env.NODE_ENV}, ALLOW_TEST_PAYMENTS: ${process.env.ALLOW_TEST_PAYMENTS}`);
+      
+      const { id: orderId } = req.params;
+      const { idempotencyKey } = req.body;
+
+      console.log(`🔄 Processing test payment for order ${orderId} by user ${user.id}`);
+      
+      // 🔐 SECURITY: Enforce idempotency to prevent duplicate processing
+      if (idempotencyKey) {
+        const existingOrder = await storage.getOrderByIdempotencyKey(user.id, idempotencyKey);
+        if (existingOrder && existingOrder.paymentStatus === 'paid') {
+          console.log(`⚠️ Idempotency key reused for order ${orderId}`);
+          return res.status(409).json({
+            success: false,
+            message: 'Payment already processed with this idempotency key',
+            data: {
+              orderId: existingOrder.id,
+              paymentStatus: existingOrder.paymentStatus,
+              paidAt: existingOrder.paidAt
+            }
+          });
+        }
+      }
+
+      // Get the order
+      const order = await storage.getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+
+      // Verify user owns this order
+      if (order.userId !== user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only pay for your own orders'
+        });
+      }
+
+      // Check if order is already paid
+      if (order.paymentStatus === 'paid') {
+        return res.status(400).json({
+          success: false,
+          message: 'Order is already paid'
+        });
+      }
+
+      // Generate test payment ID
+      const testPaymentId = `test_pay_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      // 🔐 SECURITY: Use order's actual amount, NOT user-provided amount
+      const paymentAmount = parseFloat(order.totalAmount);
+      
+      // 📝 AUDIT: Log security-sensitive operation
+      console.log(`🔐 AUDIT: Test payment - User: ${user.id}, Order: ${orderId}, Amount: ₹${paymentAmount}, IP: ${req.ip || 'unknown'}`);
+
+      // Update order payment status
+      const updatedOrder = await storage.updateOrderStatus(orderId, 'paid', {
+        paymentMethod: 'test',
+        paymentStatus: 'paid',
+        paidAt: new Date().toISOString(),
+        paymentId: testPaymentId
+      });
+
+      // 🔧 STOCK LIFECYCLE: Convert reservations to decrements on payment success
+      if (order.type === 'parts') {
+        console.log(`🔄 Converting stock reservations to decrements for parts order ${orderId}`);
+        const stockResult = await storage.onPaymentSuccess(orderId);
+        if (stockResult.success) {
+          console.log(`✅ Stock lifecycle completed: ${stockResult.itemsProcessed} items processed`);
+        } else {
+          console.error(`❌ Stock lifecycle error: ${stockResult.message}`);
+        }
+      }
+
+      // Get current wallet balance
+      const currentWallet = await storage.getWalletBalance(user.id);
+      const currentBalance = parseFloat(currentWallet?.balance || '0');
+
+      // Add payment amount to user wallet (simulate payment completion)
+      const newBalance = currentBalance + paymentAmount;
+      
+      // Create wallet transaction record
+      await storage.createWalletTransaction({
+        userId: user.id,
+        type: 'credit',
+        amount: paymentAmount.toString(),
+        description: `Test payment for order #${orderId.slice(-8)}`,
+        category: 'payment',
+        orderId: orderId,
+        reference: testPaymentId,
+        paymentMethod: 'test',
+        status: 'completed',
+        balanceBefore: currentBalance.toString(),
+        balanceAfter: newBalance.toString(),
+        metadata: {
+          paymentGateway: 'test',
+          gatewayTransactionId: testPaymentId,
+          notes: 'Instant test payment simulation'
+        }
+      });
+
+      // Update wallet balance
+      await storage.updateWalletBalance(user.id, newBalance.toString());
+
+      console.log(`✅ Test payment successful for order ${orderId}, amount: ₹${paymentAmount}, new wallet balance: ₹${newBalance}`);
+
+      res.json({
+        success: true,
+        message: 'Test payment completed successfully',
+        paymentId: testPaymentId,
+        data: {
+          orderId: orderId,
+          amount: paymentAmount,
+          paymentMethod: 'test',
+          status: 'paid',
+          paymentId: testPaymentId,
+          walletBalance: newBalance,
+          paidAt: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error processing test payment:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process test payment'
+      });
+    }
+  });
+
   // Provider endpoints (legacy)
   // ========================================
   // PROVIDER APPLICATION ENDPOINTS
@@ -2993,6 +3190,26 @@ export async function registerRoutes(app: Express): Promise<void> {
       });
     }
   });
+
+  // ========================================
+  // DOCUMENT UPLOAD ENDPOINTS
+  // ========================================
+
+  // POST /api/v1/providers/documents/upload - Service provider document upload
+  app.post('/api/v1/providers/documents/upload', 
+    authMiddleware, 
+    uploadLimiter, 
+    uploadDocument, 
+    handleProviderDocumentUpload
+  );
+
+  // POST /api/v1/parts-provider/documents/upload - Parts provider document upload  
+  app.post('/api/v1/parts-provider/documents/upload',
+    authMiddleware,
+    uploadLimiter,
+    uploadDocument,
+    handleProviderDocumentUpload
+  );
 
   // GET /api/v1/providers/applications/:id - Get application status for applicant
   app.get('/api/v1/providers/applications/:id', authMiddleware, async (req: AuthenticatedRequest, res) => {
@@ -3523,6 +3740,185 @@ export async function registerRoutes(app: Express): Promise<void> {
     } catch (error) {
       console.error('Error fetching admin stats:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch statistics' });
+    }
+  });
+
+  // ========================================
+  // MISSING ADMIN ENDPOINTS FOR ADMIN PANEL
+  // ========================================
+
+  // GET /api/v1/admin/services/statistics - Service statistics for admin dashboard
+  app.get('/api/v1/admin/services/statistics', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const [totalServices, activeServices, categoryStats, popularServices] = await Promise.all([
+        db.execute(sql`SELECT COUNT(*) as count FROM services`),
+        db.execute(sql`SELECT COUNT(*) as count FROM services WHERE is_active = true`),
+        db.execute(sql`
+          SELECT sc.name as category, COUNT(s.id) as service_count 
+          FROM service_categories sc 
+          LEFT JOIN services s ON s.category_id = sc.id 
+          WHERE sc.is_active = true 
+          GROUP BY sc.id, sc.name 
+          ORDER BY service_count DESC 
+          LIMIT 10
+        `),
+        db.execute(sql`
+          SELECT s.name, s.total_bookings, s.rating, sc.name as category 
+          FROM services s 
+          JOIN service_categories sc ON s.category_id = sc.id 
+          WHERE s.is_active = true 
+          ORDER BY s.total_bookings DESC 
+          LIMIT 10
+        `)
+      ]);
+
+      const stats = {
+        totalServices: parseInt(totalServices.rows[0].count as string),
+        activeServices: parseInt(activeServices.rows[0].count as string),
+        categoryBreakdown: categoryStats.rows,
+        popularServices: popularServices.rows
+      };
+
+      res.json({ success: true, data: stats });
+    } catch (error) {
+      console.error('Error fetching service statistics:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch service statistics' });
+    }
+  });
+
+  // GET /api/v1/admin/promotional-media - Promotional media management
+  app.get('/api/v1/admin/promotional-media', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { mediaType, placement, limit = 20, offset = 0 } = req.query;
+      
+      let query = sql`SELECT * FROM promotional_media WHERE 1=1`;
+      
+      if (mediaType && mediaType !== 'all') {
+        query = sql`${query} AND media_type = ${mediaType}`;
+      }
+      
+      if (placement && placement !== 'all') {
+        query = sql`${query} AND placement = ${placement}`;
+      }
+      
+      query = sql`${query} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+      
+      const mediaList = await db.execute(query);
+      const totalCount = await db.execute(sql`SELECT COUNT(*) as count FROM promotional_media`);
+
+      res.json({ 
+        success: true, 
+        data: mediaList.rows,
+        pagination: {
+          total: parseInt(totalCount.rows[0].count as string),
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string)
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching promotional media:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch promotional media' });
+    }
+  });
+
+  // GET /api/v1/admin/promotional-media/statistics - Media statistics
+  app.get('/api/v1/admin/promotional-media/statistics', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const [totalMedia, activeMedia, typeStats] = await Promise.all([
+        db.execute(sql`SELECT COUNT(*) as count FROM promotional_media`),
+        db.execute(sql`SELECT COUNT(*) as count FROM promotional_media WHERE is_active = true`),
+        db.execute(sql`
+          SELECT media_type, COUNT(*) as count 
+          FROM promotional_media 
+          GROUP BY media_type
+        `)
+      ]);
+
+      const stats = {
+        totalMedia: parseInt(totalMedia.rows[0].count as string),
+        activeMedia: parseInt(activeMedia.rows[0].count as string),
+        mediaByType: typeStats.rows
+      };
+
+      res.json({ success: true, data: stats });
+    } catch (error) {
+      console.error('Error fetching media statistics:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch media statistics' });
+    }
+  });
+
+  // GET /api/v1/admin/taxes - Tax management
+  app.get('/api/v1/admin/taxes', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { categoryId, type, limit = 20, offset = 0 } = req.query;
+      
+      let query = sql`
+        SELECT t.*, tc.name as category_name 
+        FROM taxes t 
+        LEFT JOIN tax_categories tc ON t.category_id = tc.id 
+        WHERE 1=1
+      `;
+      
+      if (categoryId && categoryId !== 'all') {
+        query = sql`${query} AND t.category_id = ${categoryId}`;
+      }
+      
+      if (type && type !== 'all') {
+        query = sql`${query} AND t.type = ${type}`;
+      }
+      
+      query = sql`${query} ORDER BY t.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+      
+      const taxes = await db.execute(query);
+      const totalCount = await db.execute(sql`SELECT COUNT(*) as count FROM taxes`);
+
+      res.json({ 
+        success: true, 
+        data: taxes.rows,
+        pagination: {
+          total: parseInt(totalCount.rows[0].count as string),
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string)
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching taxes:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch taxes' });
+    }
+  });
+
+  // GET /api/v1/admin/coupons - Coupon management
+  app.get('/api/v1/admin/coupons', authMiddleware, requireRole(['admin']), async (req, res) => {
+    try {
+      const { type, isActive, limit = 20, offset = 0 } = req.query;
+      
+      let query = sql`SELECT * FROM coupons WHERE 1=1`;
+      
+      if (type && type !== 'all') {
+        query = sql`${query} AND type = ${type}`;
+      }
+      
+      if (isActive !== undefined) {
+        query = sql`${query} AND is_active = ${isActive === 'true'}`;
+      }
+      
+      query = sql`${query} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+      
+      const coupons = await db.execute(query);
+      const totalCount = await db.execute(sql`SELECT COUNT(*) as count FROM coupons`);
+
+      res.json({ 
+        success: true, 
+        data: coupons.rows,
+        pagination: {
+          total: parseInt(totalCount.rows[0].count as string),
+          limit: parseInt(limit as string),
+          offset: parseInt(offset as string)
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching coupons:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch coupons' });
     }
   });
 

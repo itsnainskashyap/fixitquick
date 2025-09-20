@@ -139,7 +139,9 @@ export default function Services() {
         priceRange: priceRange || 'all',
         searchQuery: searchQuery || ''
       });
-      return await apiRequest('GET', `/api/v1/services?${params.toString()}`);
+      const response = await apiRequest('GET', `/api/v1/services?${params.toString()}`);
+      // Extract services array from response object
+      return Array.isArray(response?.services) ? response.services : [];
     },
     staleTime: 2 * 60 * 1000, // 2 minutes cache
     retry: 3,

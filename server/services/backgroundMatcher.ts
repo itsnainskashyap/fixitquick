@@ -958,6 +958,18 @@ export class BackgroundMatcher {
         cancelReason: reason,
       });
 
+      // 🔧 STOCK LIFECYCLE: Release reservations for parts orders on cancellation
+      const order = await storage.getOrderById(bookingId);
+      if (order && order.type === 'parts') {
+        console.log(`🔄 Releasing stock reservations for cancelled parts order ${bookingId}`);
+        const stockResult = await storage.onOrderCancellation(bookingId);
+        if (stockResult.success) {
+          console.log(`✅ Stock cancellation completed: ${stockResult.itemsReleased} items released`);
+        } else {
+          console.error(`❌ Stock cancellation error: ${stockResult.message}`);
+        }
+      }
+
       // Cancel any pending job requests
       await storage.cancelAllJobRequests(bookingId);
 

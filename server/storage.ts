@@ -1,6 +1,7 @@
 import { eq, and, desc, asc, count, like, ilike, inArray, sql, type SQL, or, gte, lte, not } from "drizzle-orm";
 import { db } from "./db";
 import { laundryStorage } from "./laundryStorage";
+import { generateUniqueOrderNumber, type OrderType } from "./utils/orderNumbers";
 import {
   type User,
   type InsertUser,
@@ -423,6 +424,12 @@ export interface IStorage {
   }): Promise<{ orders: Order[]; total: number }>;
   getPartsProviderInventory(providerId: string): Promise<Part[]>;
   updatePartsInventory(partId: string, stockData: { stock: number; reservedStock?: number }): Promise<Part | undefined>;
+  
+  // 🔧 STOCK LIFECYCLE COMPLETION METHODS
+  onPaymentSuccess(orderId: string): Promise<{ success: boolean; message: string; itemsProcessed?: number }>;
+  onOrderCancellation(orderId: string): Promise<{ success: boolean; message: string; itemsReleased?: number }>;
+  releasePartStockReservation(partId: string, quantity: number): Promise<{ success: boolean; message: string }>;
+  convertPartStockReservationToDecrement(partId: string, quantity: number): Promise<{ success: boolean; message: string }>;
   
   // Seed data method for development initialization
   seedData(): Promise<void>;
@@ -1319,6 +1326,215 @@ export class PostgresStorage implements IStorage {
       .where(eq(parts.id, partId))
       .returning();
     return result[0];
+  }
+
+  // Automatic stock decrement for parts orders
+  async decrementPartStock(partId: string, quantity: number): Promise<{ success: boolean; message: string; availableStock?: number }> {
+    try {
+      const part = await this.getPartById(partId);
+      
+      if (!part) {
+        return { success: false, message: 'Part not found' };
+      }
+
+      const availableStock = part.stock - (part.reservedStock || 0);
+      
+      if (availableStock < quantity) {
+        return { 
+          success: false, 
+          message: `Insufficient stock. Available: ${availableStock}, Requested: ${quantity}`,
+          availableStock 
+        };
+      }
+
+      // Decrement stock and update reserved stock
+      const newStock = part.stock - quantity;
+      await this.updatePartsInventory(partId, { 
+        stock: newStock,
+        reservedStock: part.reservedStock
+      });
+
+      return { success: true, message: 'Stock decremented successfully' };
+    } catch (error) {
+      console.error('Error decrementing part stock:', error);
+      return { success: false, message: 'Failed to decrement stock' };
+    }
+  }
+
+  // Reserve stock for pending orders
+  async reservePartStock(partId: string, quantity: number): Promise<{ success: boolean; message: string }> {
+    try {
+      const part = await this.getPartById(partId);
+      
+      if (!part) {
+        return { success: false, message: 'Part not found' };
+      }
+
+      const availableStock = part.stock - (part.reservedStock || 0);
+      
+      if (availableStock < quantity) {
+        return { 
+          success: false, 
+          message: `Insufficient stock to reserve. Available: ${availableStock}, Requested: ${quantity}` 
+        };
+      }
+
+      // Increase reserved stock
+      const newReservedStock = (part.reservedStock || 0) + quantity;
+      await this.updatePartsInventory(partId, { 
+        stock: part.stock,
+        reservedStock: newReservedStock
+      });
+
+      return { success: true, message: 'Stock reserved successfully' };
+    } catch (error) {
+      console.error('Error reserving part stock:', error);
+      return { success: false, message: 'Failed to reserve stock' };
+    }
+  }
+
+  // 🔧 STOCK LIFECYCLE COMPLETION: Convert reservations to decrements on payment success
+  async onPaymentSuccess(orderId: string): Promise<{ success: boolean; message: string; itemsProcessed?: number }> {
+    try {
+      console.log(`🔄 Processing payment success for order ${orderId} - converting stock reservations to decrements`);
+      
+      // Get the order with its items
+      const order = await this.getOrderById(orderId);
+      if (!order) {
+        return { success: false, message: 'Order not found' };
+      }
+
+      // Parse order items to convert reservations
+      let itemsProcessed = 0;
+      const orderItems = order.items || [];
+
+      for (const item of orderItems) {
+        if (item.type === 'part' && item.partId && item.quantity) {
+          const result = await this.convertPartStockReservationToDecrement(item.partId, item.quantity);
+          if (result.success) {
+            itemsProcessed++;
+            console.log(`✅ Converted reservation to decrement for part ${item.partId}, quantity: ${item.quantity}`);
+          } else {
+            console.error(`❌ Failed to convert reservation for part ${item.partId}: ${result.message}`);
+          }
+        }
+      }
+
+      console.log(`✅ Payment success processing complete for order ${orderId}: ${itemsProcessed} items processed`);
+      return { 
+        success: true, 
+        message: `Successfully processed ${itemsProcessed} items`, 
+        itemsProcessed 
+      };
+    } catch (error) {
+      console.error('Error processing payment success:', error);
+      return { success: false, message: 'Failed to process payment success' };
+    }
+  }
+
+  // 🔧 STOCK LIFECYCLE COMPLETION: Release reservations on order cancellation
+  async onOrderCancellation(orderId: string): Promise<{ success: boolean; message: string; itemsReleased?: number }> {
+    try {
+      console.log(`🔄 Processing order cancellation for order ${orderId} - releasing stock reservations`);
+      
+      // Get the order with its items
+      const order = await this.getOrderById(orderId);
+      if (!order) {
+        return { success: false, message: 'Order not found' };
+      }
+
+      // Parse order items to release reservations
+      let itemsReleased = 0;
+      const orderItems = order.items || [];
+
+      for (const item of orderItems) {
+        if (item.type === 'part' && item.partId && item.quantity) {
+          const result = await this.releasePartStockReservation(item.partId, item.quantity);
+          if (result.success) {
+            itemsReleased++;
+            console.log(`✅ Released reservation for part ${item.partId}, quantity: ${item.quantity}`);
+          } else {
+            console.error(`❌ Failed to release reservation for part ${item.partId}: ${result.message}`);
+          }
+        }
+      }
+
+      console.log(`✅ Order cancellation processing complete for order ${orderId}: ${itemsReleased} items released`);
+      return { 
+        success: true, 
+        message: `Successfully released ${itemsReleased} reservations`, 
+        itemsReleased 
+      };
+    } catch (error) {
+      console.error('Error processing order cancellation:', error);
+      return { success: false, message: 'Failed to process order cancellation' };
+    }
+  }
+
+  // 🔧 Helper: Release reserved stock back to available inventory
+  async releasePartStockReservation(partId: string, quantity: number): Promise<{ success: boolean; message: string }> {
+    try {
+      const part = await this.getPartById(partId);
+      
+      if (!part) {
+        return { success: false, message: 'Part not found' };
+      }
+
+      const currentReservedStock = part.reservedStock || 0;
+      
+      if (currentReservedStock < quantity) {
+        return { 
+          success: false, 
+          message: `Cannot release more than reserved. Reserved: ${currentReservedStock}, Requested: ${quantity}` 
+        };
+      }
+
+      // Decrease reserved stock (release back to available)
+      const newReservedStock = Math.max(0, currentReservedStock - quantity);
+      await this.updatePartsInventory(partId, { 
+        stock: part.stock,
+        reservedStock: newReservedStock
+      });
+
+      return { success: true, message: 'Stock reservation released successfully' };
+    } catch (error) {
+      console.error('Error releasing part stock reservation:', error);
+      return { success: false, message: 'Failed to release stock reservation' };
+    }
+  }
+
+  // 🔧 Helper: Convert reserved stock to actual decrement (sold inventory)
+  async convertPartStockReservationToDecrement(partId: string, quantity: number): Promise<{ success: boolean; message: string }> {
+    try {
+      const part = await this.getPartById(partId);
+      
+      if (!part) {
+        return { success: false, message: 'Part not found' };
+      }
+
+      const currentReservedStock = part.reservedStock || 0;
+      
+      if (currentReservedStock < quantity) {
+        return { 
+          success: false, 
+          message: `Cannot convert more than reserved. Reserved: ${currentReservedStock}, Requested: ${quantity}` 
+        };
+      }
+
+      // Decrease both total stock and reserved stock (actual sale)
+      const newStock = Math.max(0, part.stock - quantity);
+      const newReservedStock = Math.max(0, currentReservedStock - quantity);
+      
+      await this.updatePartsInventory(partId, { 
+        stock: newStock,
+        reservedStock: newReservedStock
+      });
+
+      return { success: true, message: 'Stock reservation converted to decrement successfully' };
+    } catch (error) {
+      console.error('Error converting part stock reservation to decrement:', error);
+      return { success: false, message: 'Failed to convert stock reservation to decrement' };
+    }
   }
 
   // ========================================
@@ -2511,8 +2727,12 @@ export class PostgresStorage implements IStorage {
   // ========================================
 
   async createServiceBooking(bookingData: InsertServiceBooking): Promise<ServiceBooking> {
+    // Generate human-readable order number
+    const orderNumber = generateUniqueOrderNumber('service');
+    
     const result = await db.insert(serviceBookings).values({
       ...bookingData,
+      orderNumber,
       createdAt: new Date(),
       updatedAt: new Date()
     }).returning();

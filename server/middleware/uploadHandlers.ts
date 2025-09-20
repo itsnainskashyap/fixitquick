@@ -60,6 +60,18 @@ export const uploadProductImages = createMulterConfig({
   allowedTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
 }).array('images', 15);
 
+// Document upload configuration for provider verification documents
+export const uploadDocument = createMulterConfig({
+  maxFileSize: 10 * 1024 * 1024, // 10MB for documents
+  maxFiles: 1,
+  allowedTypes: [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/webp', // Images
+    'application/pdf', // PDF documents
+    'application/msword', // DOC files
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document' // DOCX files
+  ],
+}).single('file');
+
 // Validation schemas
 const imageMetadataSchema = z.object({
   caption: z.string().optional(),

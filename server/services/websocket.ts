@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
 import { auth, db } from '../services/firebase';
 import crypto from 'crypto';
+import { jwtService } from '../utils/jwt';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -251,13 +252,13 @@ class WebSocketManager {
 
       const { token } = authData;
       
-      // SECURITY FIX: Properly validate JWT token
+      // SECURITY FIX: Use same JWT service as token generation
       let decodedPayload;
       try {
-        const sessionSecret = process.env.SESSION_SECRET || 'fallback-secret-for-development';
-        decodedPayload = jwt.verify(token, sessionSecret) as any;
+        // Use jwtService for consistent token validation
+        decodedPayload = await jwtService.verifyAccessToken(token);
       } catch (tokenError) {
-        console.error('JWT token verification failed:', tokenError);
+        console.error('🚨 WebSocket JWT verification failed:', tokenError);
         this.sendToConnection(connectionId, {
           type: 'auth_failed',
           data: { message: 'Invalid or expired token' }
@@ -266,20 +267,19 @@ class WebSocketManager {
         return;
       }
 
-      // Validate token expiration - FIXED: Compare seconds to seconds, not milliseconds to seconds
-      if (decodedPayload.exp && Math.floor(Date.now() / 1000) > decodedPayload.exp) {
+      // SECURITY FIX: JWT service already handles token validation and user verification
+      if (!decodedPayload) {
         this.sendToConnection(connectionId, {
           type: 'auth_failed',
-          data: { message: 'Token expired' }
+          data: { message: 'Token verification failed' }
         });
-        ws.close(1008, 'Token expired');
+        ws.close(1008, 'Token verification failed');
         return;
       }
 
-      // Get user data from storage using JWT payload
+      // Get user data from storage using validated JWT payload
       let userData;
       try {
-        // Use PostgreSQL storage as primary source
         const user = await storage.getUser(decodedPayload.userId);
         if (!user) {
           this.sendToConnection(connectionId, {
@@ -310,11 +310,13 @@ class WebSocketManager {
         return;
       }
 
-      // Set authenticated connection properties from JWT payload (not client)
+      // Set authenticated connection properties from validated JWT payload
       const userId = decodedPayload.userId;
       ws.userId = userId;
-      ws.userRole = decodedPayload.role;
+      ws.userRole = decodedPayload.role || userData.role || 'user';
       ws.isAuthenticated = true;
+      
+      console.log(`🔐 WebSocket: User ${userId} authenticated successfully with role: ${ws.userRole}`);
 
       // Close any existing connections for this user (prevent multiple sessions)
       const oldConnectionId = this.userConnections.get(userId);

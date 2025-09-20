@@ -244,12 +244,15 @@ app.use((req, res, next) => {
   const { createServer } = await import('http');
   const server = createServer(app);
   
+  // CRITICAL FIX: Initialize WebSocket server AFTER HTTP server is created
+  console.log('🚀 Initializing WebSocket server...');
+  const { initializeWebSocket, getWebSocketManager } = await import('./routes');
+  const webSocketManager = initializeWebSocket(server);
+  console.log('✅ WebSocket server initialized successfully');
+  
   // Initialize Background Matcher Service with WebSocket integration
   console.log('🚀 Initializing Background Matcher Service...');
   try {
-    // Import WebSocketManager to get the instance created in registerRoutes
-    const { getWebSocketManager } = await import('./routes');
-    const webSocketManager = getWebSocketManager();
     
     if (webSocketManager) {
       // Initialize background matcher with WebSocket manager
