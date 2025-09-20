@@ -656,6 +656,56 @@ export function registerRoutes(app: Express): void {
     }
   });
 
+  // POST /api/v1/services - Create new service
+  app.post('/api/v1/services', authMiddleware, requireRole(['admin']), async (req: Request, res: Response) => {
+    try {
+      console.log('🔄 POST /api/v1/services: Creating new service');
+      
+      // Validate required fields
+      if (!req.body.name || !req.body.categoryId || req.body.basePrice == null) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields: name, categoryId, and basePrice are required'
+        });
+      }
+
+      // Generate slug from name
+      const slug = req.body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      
+      const serviceData = {
+        ...req.body,
+        slug,
+        basePrice: req.body.basePrice.toString(), // Convert to string for decimal type
+        isActive: req.body.isActive ?? true,
+        rating: "0.00",
+        totalBookings: 0,
+        allowInstantBooking: req.body.allowInstantBooking ?? true,
+        allowScheduledBooking: req.body.allowScheduledBooking ?? true,
+        advanceBookingDays: req.body.advanceBookingDays ?? 7,
+        isTestService: false
+      };
+
+      // Insert the service directly into database
+      const [newService] = await db.insert(services).values(serviceData).returning();
+      
+      console.log('✅ POST /api/v1/services: Service created successfully:', newService.id);
+      
+      res.status(201).json({
+        success: true, 
+        data: newService,
+        message: 'Service created successfully'
+      });
+    } catch (error) {
+      console.error('❌ POST /api/v1/services error:', error);
+      res.status(500).json({
+        success: false,
+        message: process.env.NODE_ENV === 'development' 
+          ? `Failed to create service: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to create service'
+      });
+    }
+  });
+
   // Suggested services endpoint - returns popular and recommended services
   app.get('/api/v1/services/suggested', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
