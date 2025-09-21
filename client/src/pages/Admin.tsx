@@ -185,6 +185,659 @@ import {
 } from 'lucide-react';
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+// Comprehensive Provider Applications Management System Component
+const ProviderApplicationsManagementSystem = () => {
+  // State management for provider applications
+  const [selectedApplications, setSelectedApplications] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [providerTypeFilter, setProviderTypeFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedApplicationDetails, setSelectedApplicationDetails] = useState<any>(null);
+  const [isApplicationDetailsOpen, setIsApplicationDetailsOpen] = useState(false);
+  const [isStatusUpdateOpen, setIsStatusUpdateOpen] = useState(false);
+  const [statusUpdateData, setStatusUpdateData] = useState({
+    applicationId: '',
+    providerType: '',
+    status: '',
+    reason: '',
+    adminNotes: '',
+    publicMessage: ''
+  });
+
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch provider applications with filtering
+  const { data: applicationsData, isLoading: applicationsLoading, refetch: refetchApplications } = useQuery({
+    queryKey: ['admin-provider-applications', {
+      search: searchTerm,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      providerType: providerTypeFilter === 'all' ? undefined : providerTypeFilter,
+      limit: 20,
+      offset: (currentPage - 1) * 20
+    }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchTerm) params.append('search', searchTerm);
+      if (statusFilter !== 'all') params.append('status', statusFilter);
+      if (providerTypeFilter !== 'all') params.append('providerType', providerTypeFilter);
+      params.append('limit', '20');
+      params.append('offset', String((currentPage - 1) * 20));
+
+      return await apiRequest('GET', `/api/v1/admin/provider-applications?${params.toString()}`);
+    }
+  });
+
+  // Get application details
+  const getApplicationDetails = async (applicationId: string, providerType: string) => {
+    try {
+      const response = await apiRequest('GET', `/api/v1/admin/provider-applications/${applicationId}/${providerType}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching application details:', error);
+      throw error;
+    }
+  };
+
+  // Update application status mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async (data: {
+      applicationId: string;
+      providerType: string;
+      status: string;
+      reason?: string;
+      adminNotes?: string;
+      publicMessage?: string;
+    }) => {
+      return await apiRequest('PATCH', `/api/v1/admin/provider-applications/${data.applicationId}/${data.providerType}/status`, {
+        status: data.status,
+        reason: data.reason,
+        adminNotes: data.adminNotes,
+        publicMessage: data.publicMessage
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-provider-applications'] });
+      toast({
+        title: "Status Updated",
+        description: "Application status has been updated successfully.",
+      });
+      setIsStatusUpdateOpen(false);
+      setIsApplicationDetailsOpen(false);
+      refetchApplications();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update application status",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Handle viewing application details
+  const handleViewApplication = async (application: any) => {
+    try {
+      const details = await getApplicationDetails(application.id, application.type);
+      setSelectedApplicationDetails(details);
+      setIsApplicationDetailsOpen(true);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to load application details",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle status update
+  const handleStatusUpdate = (application: any, status: string) => {
+    setStatusUpdateData({
+      applicationId: application.id,
+      providerType: application.type,
+      status,
+      reason: '',
+      adminNotes: '',
+      publicMessage: ''
+    });
+    setIsStatusUpdateOpen(true);
+  };
+
+  // Submit status update
+  const submitStatusUpdate = () => {
+    if (!statusUpdateData.status) {
+      toast({
+        title: "Error",
+        description: "Please select a status",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateStatusMutation.mutate(statusUpdateData);
+  };
+
+  // Get status badge variant
+  const getStatusBadgeVariant = (status: string) => {
+    switch (status) {
+      case 'approved': return 'default';
+      case 'rejected': return 'destructive';
+      case 'pending': return 'secondary';
+      case 'under_review': return 'outline';
+      case 'suspended': return 'destructive';
+      case 'resubmission_required': return 'outline';
+      default: return 'secondary';
+    }
+  };
+
+  // Get status icon
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'approved': return <CheckCircle className="w-4 h-4" />;
+      case 'rejected': return <XCircle className="w-4 h-4" />;
+      case 'pending': return <Clock className="w-4 h-4" />;
+      case 'under_review': return <Eye className="w-4 h-4" />;
+      case 'suspended': return <AlertTriangle className="w-4 h-4" />;
+      case 'resubmission_required': return <RefreshCw className="w-4 h-4" />;
+      default: return <Clock className="w-4 h-4" />;
+    }
+  };
+
+  const applications = applicationsData?.data || [];
+  const totalApplications = applicationsData?.pagination?.total || 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold">Provider Applications</h2>
+          <p className="text-sm text-muted-foreground">
+            Review and manage provider applications and verification status
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => refetchApplications()}
+          data-testid="refresh-applications"
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <Card>
+          <CardContent className="p-4 text-center">
+            <Clock className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-foreground">
+              {applications.filter((app: any) => app.verificationStatus === 'pending').length}
+            </div>
+            <div className="text-xs text-muted-foreground">Pending</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <Eye className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-foreground">
+              {applications.filter((app: any) => app.verificationStatus === 'under_review').length}
+            </div>
+            <div className="text-xs text-muted-foreground">Under Review</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-foreground">
+              {applications.filter((app: any) => app.verificationStatus === 'approved').length}
+            </div>
+            <div className="text-xs text-muted-foreground">Approved</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <XCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-foreground">
+              {applications.filter((app: any) => app.verificationStatus === 'rejected').length}
+            </div>
+            <div className="text-xs text-muted-foreground">Rejected</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <Users className="w-8 h-8 text-purple-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-foreground">{totalApplications}</div>
+            <div className="text-xs text-muted-foreground">Total Applications</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex-1">
+          <Input
+            placeholder="Search by business name, email, or phone..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-sm"
+            data-testid="applications-search"
+          />
+        </div>
+        
+        <div className="flex gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40" data-testid="status-filter">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="under_review">Under Review</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="suspended">Suspended</SelectItem>
+              <SelectItem value="resubmission_required">Resubmission Required</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={providerTypeFilter} onValueChange={setProviderTypeFilter}>
+            <SelectTrigger className="w-40" data-testid="provider-type-filter">
+              <SelectValue placeholder="Provider Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="service_provider">Service Provider</SelectItem>
+              <SelectItem value="parts_provider">Parts Provider</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Applications Table */}
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Business Name</TableHead>
+                <TableHead>Provider Type</TableHead>
+                <TableHead>Contact</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Submitted</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {applicationsLoading ? (
+                [...Array(5)].map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-40" /></TableCell>
+                    <TableCell><Skeleton className="h-6 w-20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                    <TableCell><Skeleton className="h-8 w-24" /></TableCell>
+                  </TableRow>
+                ))
+              ) : applications.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-8">
+                    <UserCheck className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                    <p className="text-sm text-muted-foreground">No applications found</p>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                applications.map((application: any) => (
+                  <TableRow key={application.id} data-testid={`application-row-${application.id}`}>
+                    <TableCell className="font-medium">
+                      {application.businessName || 'Not Provided'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {application.type === 'service_provider' ? 'Service Provider' : 'Parts Provider'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        <div>{application.user?.firstName} {application.user?.lastName}</div>
+                        <div className="text-muted-foreground">{application.user?.email}</div>
+                        <div className="text-muted-foreground">{application.user?.phone}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={getStatusBadgeVariant(application.verificationStatus)}>
+                        {getStatusIcon(application.verificationStatus)}
+                        <span className="ml-1 capitalize">
+                          {application.verificationStatus.replace('_', ' ')}
+                        </span>
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {new Date(application.submittedAt).toLocaleDateString()}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewApplication(application)}
+                          data-testid={`view-application-${application.id}`}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                        {application.verificationStatus === 'pending' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleStatusUpdate(application, 'approved')}
+                              data-testid={`approve-application-${application.id}`}
+                            >
+                              <CheckCircle className="w-4 h-4 text-green-600" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleStatusUpdate(application, 'rejected')}
+                              data-testid={`reject-application-${application.id}`}
+                            >
+                              <XCircle className="w-4 h-4 text-red-600" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Application Details Dialog */}
+      <Dialog open={isApplicationDetailsOpen} onOpenChange={setIsApplicationDetailsOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Application Details</DialogTitle>
+          </DialogHeader>
+          
+          {selectedApplicationDetails && (
+            <div className="space-y-6">
+              {/* Business Information */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Business Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium">Business Name</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.application?.businessName || 'Not provided'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Business Type</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.application?.businessType || 'Not provided'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">GST Number</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.application?.gstNumber || 'Not provided'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">PAN Number</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.application?.panNumber || 'Not provided'}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* User Information */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Contact Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium">Name</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.user?.firstName} {selectedApplicationDetails.user?.lastName}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Email</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.user?.email}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Phone</Label>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedApplicationDetails.user?.phone}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Current Status</Label>
+                      <Badge variant={getStatusBadgeVariant(selectedApplicationDetails.application?.verificationStatus)}>
+                        {getStatusIcon(selectedApplicationDetails.application?.verificationStatus)}
+                        <span className="ml-1 capitalize">
+                          {selectedApplicationDetails.application?.verificationStatus?.replace('_', ' ')}
+                        </span>
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Documents */}
+              {selectedApplicationDetails.documents && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Documents</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {Object.entries(selectedApplicationDetails.documents).map(([key, doc]: [string, any]) => (
+                        <div key={key} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <FileText className="w-5 h-5 text-blue-500" />
+                            <div>
+                              <p className="text-sm font-medium capitalize">
+                                {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {doc?.filename || 'Document uploaded'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Badge variant={doc?.verified ? 'default' : 'secondary'}>
+                              {doc?.verified ? 'Verified' : 'Pending'}
+                            </Badge>
+                            {doc?.url && (
+                              <Button size="sm" variant="outline" asChild>
+                                <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                  <Eye className="w-4 h-4" />
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Status History */}
+              {selectedApplicationDetails.statusHistory && selectedApplicationDetails.statusHistory.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Status History</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {selectedApplicationDetails.statusHistory.map((transition: any, index: number) => (
+                        <div key={index} className="flex items-start space-x-3 p-3 border rounded-lg">
+                          <div className="mt-1">
+                            {getStatusIcon(transition.toStatus)}
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between">
+                              <Badge variant={getStatusBadgeVariant(transition.toStatus)}>
+                                {transition.toStatus.replace('_', ' ')}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(transition.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            {transition.reason && (
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {transition.reason}
+                              </p>
+                            )}
+                            {transition.publicMessage && (
+                              <p className="text-sm mt-1">
+                                {transition.publicMessage}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleStatusUpdate(selectedApplicationDetails.application, 'under_review')}
+                  data-testid="set-under-review"
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  Set Under Review
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleStatusUpdate(selectedApplicationDetails.application, 'resubmission_required')}
+                  data-testid="request-resubmission"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Request Resubmission
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleStatusUpdate(selectedApplicationDetails.application, 'approved')}
+                  className="text-green-600 border-green-600 hover:bg-green-50"
+                  data-testid="approve-application"
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Approve
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleStatusUpdate(selectedApplicationDetails.application, 'rejected')}
+                  className="text-red-600 border-red-600 hover:bg-red-50"
+                  data-testid="reject-application"
+                >
+                  <XCircle className="w-4 h-4 mr-2" />
+                  Reject
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Status Update Dialog */}
+      <Dialog open={isStatusUpdateOpen} onOpenChange={setIsStatusUpdateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Application Status</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div>
+              <Label>Status</Label>
+              <Select value={statusUpdateData.status} onValueChange={(value) => 
+                setStatusUpdateData(prev => ({ ...prev, status: value }))
+              }>
+                <SelectTrigger data-testid="status-update-select">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="under_review">Under Review</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="suspended">Suspended</SelectItem>
+                  <SelectItem value="resubmission_required">Resubmission Required</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Reason (Internal)</Label>
+              <Textarea
+                placeholder="Enter internal reason for status change..."
+                value={statusUpdateData.reason}
+                onChange={(e) => setStatusUpdateData(prev => ({ ...prev, reason: e.target.value }))}
+                data-testid="status-reason"
+              />
+            </div>
+
+            <div>
+              <Label>Admin Notes (Internal)</Label>
+              <Textarea
+                placeholder="Enter internal admin notes..."
+                value={statusUpdateData.adminNotes}
+                onChange={(e) => setStatusUpdateData(prev => ({ ...prev, adminNotes: e.target.value }))}
+                data-testid="admin-notes"
+              />
+            </div>
+
+            <div>
+              <Label>Message to Provider</Label>
+              <Textarea
+                placeholder="Enter message that will be sent to the provider..."
+                value={statusUpdateData.publicMessage}
+                onChange={(e) => setStatusUpdateData(prev => ({ ...prev, publicMessage: e.target.value }))}
+                data-testid="public-message"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsStatusUpdateOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={submitStatusUpdate} 
+              disabled={updateStatusMutation.isPending}
+              data-testid="submit-status-update"
+            >
+              {updateStatusMutation.isPending ? 'Updating...' : 'Update Status'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
 // Comprehensive Promotional Media Management System Component
 const PromotionalMediaManagementSystem = () => {
   // State management for promotional media
@@ -200,6 +853,24 @@ const PromotionalMediaManagementSystem = () => {
   const [selectedMediaItem, setSelectedMediaItem] = useState<any>(null);
   const [isSchedulingDialogOpen, setIsSchedulingDialogOpen] = useState(false);
   const [isAnalyticsDialogOpen, setIsAnalyticsDialogOpen] = useState(false);
+  
+  // Provider applications state
+  const [providerAppsFilter, setProviderAppsFilter] = useState({
+    status: 'all',
+    providerType: 'all',
+    searchTerm: '',
+    currentPage: 1
+  });
+  const [selectedApplications, setSelectedApplications] = useState<string[]>([]);
+  const [selectedApplicationDetails, setSelectedApplicationDetails] = useState<any>(null);
+  const [isApplicationDetailsOpen, setIsApplicationDetailsOpen] = useState(false);
+  const [isStatusUpdateOpen, setIsStatusUpdateOpen] = useState(false);
+  const [statusUpdateData, setStatusUpdateData] = useState({
+    status: '',
+    reason: '',
+    adminNotes: '',
+    publicMessage: ''
+  });
   
   // Form state for media creation/editing
   const [mediaForm, setMediaForm] = useState({
@@ -1051,6 +1722,21 @@ const TaxManagementSystem = () => {
     }
   });
 
+  // Fetch provider applications with filters
+  const { data: providerApplicationsData, isLoading: providerApplicationsLoading } = useQuery({
+    queryKey: ['admin-provider-applications', providerAppsFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (providerAppsFilter.status !== 'all') params.append('status', providerAppsFilter.status);
+      if (providerAppsFilter.providerType !== 'all') params.append('providerType', providerAppsFilter.providerType);
+      if (providerAppsFilter.searchTerm) params.append('search', providerAppsFilter.searchTerm);
+      params.append('limit', '20');
+      params.append('offset', String((providerAppsFilter.currentPage - 1) * 20));
+      
+      return await apiRequest('GET', `/api/v1/admin/provider-applications?${params.toString()}`);
+    }
+  });
+
   // Create tax mutation
   const createTaxMutation = useMutation({
     mutationFn: async (taxData: InsertTax) => await apiRequest('POST', '/api/v1/admin/taxes', taxData),
@@ -1129,6 +1815,65 @@ const TaxManagementSystem = () => {
         title: 'Error creating category', 
         description: error.message || 'Failed to create category', 
         variant: 'destructive' 
+      });
+    }
+  });
+
+  // Provider application status update mutation
+  const updateProviderApplicationStatusMutation = useMutation({
+    mutationFn: async ({ applicationId, providerType, statusData }: {
+      applicationId: string;
+      providerType: 'service_provider' | 'parts_provider';
+      statusData: {
+        status: string;
+        reason?: string;
+        adminNotes?: string;
+        publicMessage?: string;
+      };
+    }) => {
+      return await apiRequest(
+        'PATCH',
+        `/api/v1/admin/provider-applications/${applicationId}/${providerType}/status`,
+        statusData
+      );
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-provider-applications'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
+      setIsStatusUpdateOpen(false);
+      setSelectedApplicationDetails(null);
+      setStatusUpdateData({ status: '', reason: '', adminNotes: '', publicMessage: '' });
+      toast({
+        title: 'Application status updated',
+        description: `Application has been ${variables.statusData.status.toLowerCase()}.`
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error updating application status',
+        description: error.message || 'Failed to update application status',
+        variant: 'destructive'
+      });
+    }
+  });
+
+  // Fetch application details mutation
+  const fetchApplicationDetailsMutation = useMutation({
+    mutationFn: async ({ applicationId, providerType }: {
+      applicationId: string;
+      providerType: 'service_provider' | 'parts_provider';
+    }) => {
+      return await apiRequest('GET', `/api/v1/admin/provider-applications/${applicationId}/${providerType}`);
+    },
+    onSuccess: (data) => {
+      setSelectedApplicationDetails(data.data);
+      setIsApplicationDetailsOpen(true);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error fetching application details',
+        description: error.message || 'Failed to fetch application details',
+        variant: 'destructive'
       });
     }
   });
@@ -5718,7 +6463,7 @@ export default function Admin() {
     <div className="min-h-screen bg-background">
       <main className="p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-12 lg:grid-cols-14">
+          <TabsList className="grid w-full grid-cols-12 lg:grid-cols-15">
             <TabsTrigger value="dashboard" data-testid="dashboard-tab">Dashboard</TabsTrigger>
             <TabsTrigger value="users" data-testid="users-tab">
               Users ({userList?.length || 0})
@@ -5742,6 +6487,10 @@ export default function Admin() {
             <TabsTrigger value="taxes" data-testid="taxes-tab">
               <Calculator className="h-4 w-4 mr-2" />
               Tax Management
+            </TabsTrigger>
+            <TabsTrigger value="provider-applications" data-testid="provider-applications-tab">
+              <UserCheck className="h-4 w-4 mr-2" />
+              Applications
             </TabsTrigger>
             <TabsTrigger value="verifications" data-testid="verifications-tab">
               Verifications ({verifications?.length || 0})
@@ -6354,9 +7103,6 @@ export default function Admin() {
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
-
-          <TabsContent value="verifications" className="mt-6">
             <div className="space-y-6">
               {/* Verification Header */}
               <div className="flex items-center justify-between">
@@ -6522,6 +7268,11 @@ export default function Admin() {
           {/* ===== COMPREHENSIVE PROMOTIONAL MEDIA MANAGEMENT SYSTEM ===== */}
           <TabsContent value="promotional-media" className="mt-6">
             <PromotionalMediaManagementSystem />
+          </TabsContent>
+
+          {/* ===== PROVIDER APPLICATIONS MANAGEMENT SYSTEM ===== */}
+          <TabsContent value="provider-applications" className="mt-6">
+            <ProviderApplicationsManagementSystem />
           </TabsContent>
 
           <TabsContent value="services" className="mt-6">

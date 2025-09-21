@@ -4129,12 +4129,40 @@ export async function registerRoutes(app: Express): Promise<void> {
                 reason
               }
             });
-            console.log(`📱 Notification sent to provider ${userId} about status change to ${status}`);
+            console.log(`📱 Push notification sent to provider ${userId} about status change to ${status}`);
           }
         }
       } catch (notificationError) {
-        console.error('Failed to send notification:', notificationError);
+        console.error('Failed to send push notification:', notificationError);
         // Don't fail the whole request if notification fails
+      }
+
+      // Send real-time WebSocket notification to provider
+      try {
+        if (result.application && webSocketManager) {
+          const userId = type === 'service_provider' 
+            ? (result.application as any).userId 
+            : (result.application as any).userId;
+          
+          if (userId) {
+            webSocketManager.sendToUser(userId, {
+              type: 'provider_application_status_updated',
+              data: {
+                applicationId: id,
+                providerType: type,
+                status: status,
+                reason: reason,
+                publicMessage: publicMessage,
+                updatedAt: new Date().toISOString(),
+                statusTransition: result.statusTransition
+              }
+            });
+            console.log(`🔌 WebSocket notification sent to provider ${userId} about status change to ${status}`);
+          }
+        }
+      } catch (webSocketError) {
+        console.error('Failed to send WebSocket notification:', webSocketError);
+        // Don't fail the whole request if WebSocket notification fails
       }
 
       console.log(`✅ Admin ${adminId} updated ${type} application ${id} status to ${status}`);
