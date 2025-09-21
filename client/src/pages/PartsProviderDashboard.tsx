@@ -1498,6 +1498,10 @@ function InventoryManagement({ dashboardData, isLoading, user, queryClient, toas
   const [filterCategory, setFilterCategory] = useState('all');
   const [stockFilter, setStockFilter] = useState('all'); // all, inStock, lowStock, outOfStock
   const [sortBy, setSortBy] = useState('name'); // name, price, stock, sold
+  
+  // Define missing variables to prevent undefined errors
+  const selectedCategory = filterCategory;
+  const categories = dashboardData?.categories || [];
 
   // Fetch inventory data
   const { data: partsData, isLoading: partsLoading } = useQuery({
