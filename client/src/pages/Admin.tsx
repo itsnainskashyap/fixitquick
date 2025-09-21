@@ -1649,7 +1649,7 @@ const TaxManagementSystem = () => {
                               <p className="text-sm text-muted-foreground mb-2">{category.description}</p>
                             )}
                             <div className="text-xs text-muted-foreground">
-                              {category.subCategoriesCount || 0} subcategories • {category.serviceCount || 0} total services
+                              {category.subcategoryCount || 0} subcategories • {category.serviceCount || 0} total services
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -6828,7 +6828,7 @@ export default function Admin() {
                             </div>
                             <div className="flex items-center space-x-2">
                               <Badge variant="secondary" className="text-xs">
-                                {category.children?.length || 0} sub
+                                {category.subcategoryCount || 0} sub
                               </Badge>
                               <Badge variant="secondary" className="text-xs">
                                 {category.serviceCount || 0} services
