@@ -37,23 +37,25 @@ export default function Subcategories() {
 
   // Fetch subcategories for the main category
   const { data: subcategories = [], isLoading: loadingSubcategories } = useQuery<ServiceCategory[]>({
-    queryKey: ['/api/v1/services/categories/subcategories', categoryId],
+    queryKey: ['/api/v1/service-categories', categoryId],
     queryFn: async () => {
       if (!categoryId) return [];
-      return await apiRequest('GET', `/api/v1/services/categories/${categoryId}/subcategories`);
+      return await apiRequest('GET', `/api/v1/service-categories?parentId=${categoryId}`);
     },
     enabled: !!categoryId,
   });
 
-  // Fetch main category details to show in breadcrumb
-  const { data: mainCategory, isLoading: loadingMainCategory } = useQuery<ServiceCategory>({
-    queryKey: ['/api/v1/services/categories/detail', categoryId],
+  // Fetch main category details to show in breadcrumb  
+  const { data: mainCategories = [], isLoading: loadingMainCategory } = useQuery<ServiceCategory[]>({
+    queryKey: ['/api/v1/service-categories', 'main'],
     queryFn: async () => {
-      if (!categoryId) return null;
-      return await apiRequest('GET', `/api/v1/services/categories/${categoryId}`);
+      return await apiRequest('GET', '/api/v1/service-categories?level=0');
     },
     enabled: !!categoryId,
   });
+  
+  // Find the main category from the list
+  const mainCategory = mainCategories.find(cat => cat.id === categoryId);
 
   const handleSubcategoryClick = (subcategoryId: string) => {
     // Navigate to services filtered by subcategory
