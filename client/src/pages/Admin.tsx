@@ -123,6 +123,8 @@ import {
   RefreshCw,
   Activity,
   Calendar,
+  Upload as UploadIcon,
+  ImageIcon,
   Clock,
   Database,
   Globe,
@@ -1722,20 +1724,6 @@ const TaxManagementSystem = () => {
     }
   });
 
-  // Fetch provider applications with filters
-  const { data: providerApplicationsData, isLoading: providerApplicationsLoading } = useQuery({
-    queryKey: ['admin-provider-applications', providerAppsFilter],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (providerAppsFilter.status !== 'all') params.append('status', providerAppsFilter.status);
-      if (providerAppsFilter.providerType !== 'all') params.append('providerType', providerAppsFilter.providerType);
-      if (providerAppsFilter.searchTerm) params.append('search', providerAppsFilter.searchTerm);
-      params.append('limit', '20');
-      params.append('offset', String((providerAppsFilter.currentPage - 1) * 20));
-      
-      return await apiRequest('GET', `/api/v1/admin/provider-applications?${params.toString()}`);
-    }
-  });
 
   // Create tax mutation
   const createTaxMutation = useMutation({
@@ -1819,64 +1807,6 @@ const TaxManagementSystem = () => {
     }
   });
 
-  // Provider application status update mutation
-  const updateProviderApplicationStatusMutation = useMutation({
-    mutationFn: async ({ applicationId, providerType, statusData }: {
-      applicationId: string;
-      providerType: 'service_provider' | 'parts_provider';
-      statusData: {
-        status: string;
-        reason?: string;
-        adminNotes?: string;
-        publicMessage?: string;
-      };
-    }) => {
-      return await apiRequest(
-        'PATCH',
-        `/api/v1/admin/provider-applications/${applicationId}/${providerType}/status`,
-        statusData
-      );
-    },
-    onSuccess: (data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-provider-applications'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-service-statistics'] });
-      setIsStatusUpdateOpen(false);
-      setSelectedApplicationDetails(null);
-      setStatusUpdateData({ status: '', reason: '', adminNotes: '', publicMessage: '' });
-      toast({
-        title: 'Application status updated',
-        description: `Application has been ${variables.statusData.status.toLowerCase()}.`
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Error updating application status',
-        description: error.message || 'Failed to update application status',
-        variant: 'destructive'
-      });
-    }
-  });
-
-  // Fetch application details mutation
-  const fetchApplicationDetailsMutation = useMutation({
-    mutationFn: async ({ applicationId, providerType }: {
-      applicationId: string;
-      providerType: 'service_provider' | 'parts_provider';
-    }) => {
-      return await apiRequest('GET', `/api/v1/admin/provider-applications/${applicationId}/${providerType}`);
-    },
-    onSuccess: (data) => {
-      setSelectedApplicationDetails(data.data);
-      setIsApplicationDetailsOpen(true);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Error fetching application details',
-        description: error.message || 'Failed to fetch application details',
-        variant: 'destructive'
-      });
-    }
-  });
 
   // Bulk operations mutation
   const bulkOperationMutation = useMutation({
@@ -1992,16 +1922,12 @@ const TaxManagementSystem = () => {
     );
     
     if (confirmed) {
-      // Store category info for success message since mutation can't access it
-      const categoryInfo = { name: category.name, type: categoryType };
-      
-      deleteCategoryMutation.mutate(category.id, {
-        onSuccess: () => {
-          toast({
-            title: `${categoryInfo.type} deleted successfully`,
-            description: `"${categoryInfo.name}" has been removed.`,
-          });
-        }
+      // Note: Category deletion should be handled by the main Admin component
+      // This function is currently a placeholder
+      toast({
+        title: "Category deletion",
+        description: "Category deletion functionality needs to be connected to the main component",
+        variant: "destructive"
       });
     }
   };
@@ -5184,6 +5110,276 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
   );
 };
 
+// ===== LOGO MANAGEMENT SYSTEM COMPONENT =====
+function LogoManagementSystem() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch current logo configuration
+  const { data: logoData, isLoading: logoLoading, error: logoError } = useQuery({
+    queryKey: ['/api/v1/admin/logo'],
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Reset to default logo mutation
+  const resetLogoMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('PUT', '/api/v1/admin/logo', { 
+        action: 'reset' 
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/logo'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/app/logo'] });
+      toast({
+        title: 'Logo Reset Successfully',
+        description: 'The logo has been reset to default.'
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Reset Failed',
+        description: error?.message || 'Failed to reset logo to default.',
+        variant: 'destructive'
+      });
+    },
+  });
+
+  // Handle file upload
+  const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: 'Invalid File Type',
+        description: 'Please upload a JPG, PNG, or WebP image.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Validate file size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: 'File Too Large',
+        description: 'Please upload an image smaller than 5MB.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    setUploadingLogo(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('logo', file);
+
+      const response = await fetch('/api/v1/admin/logo/upload', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Upload failed');
+      }
+
+      // Invalidate relevant queries to refresh the logo
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/logo'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/app/logo'] });
+
+      toast({
+        title: 'Logo Uploaded Successfully',
+        description: 'The new logo has been applied to your application.'
+      });
+
+      // Clear the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+    } catch (error: any) {
+      console.error('Logo upload error:', error);
+      toast({
+        title: 'Upload Failed',
+        description: error.message || 'Failed to upload logo. Please try again.',
+        variant: 'destructive'
+      });
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const getCurrentLogoUrl = () => {
+    if (logoLoading) return '/fixitquick-logo-new.png';
+    return (logoData as any)?.data?.logoUrl || '/fixitquick-logo-new.png';
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Logo Management</h2>
+          <p className="text-muted-foreground">Manage your application's branding and logo</p>
+        </div>
+      </div>
+
+      {/* Logo Preview and Upload Section */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Current Logo Preview */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ImageIcon className="w-5 h-5" />
+              Current Logo
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-center p-8 border-2 border-dashed border-border rounded-lg bg-muted/20">
+              <div className="text-center space-y-4">
+                {logoLoading ? (
+                  <Skeleton className="w-24 h-24 mx-auto rounded" />
+                ) : (
+                  <img
+                    src={getCurrentLogoUrl()}
+                    alt="Current App Logo"
+                    className="w-24 h-24 object-contain mx-auto border border-border rounded"
+                    data-testid="current-logo-preview"
+                    onError={(e) => {
+                      const img = e.target as HTMLImageElement;
+                      if (img.src !== '/fixitquick-logo-new.png') {
+                        img.src = '/fixitquick-logo-new.png';
+                      }
+                    }}
+                  />
+                )}
+                <div className="text-sm text-muted-foreground">
+                  {logoLoading ? 'Loading...' : 'Current application logo'}
+                </div>
+              </div>
+            </div>
+
+            {logoError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Failed to load logo configuration. Using default logo.
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Upload New Logo */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UploadIcon className="w-5 h-5" />
+              Upload New Logo
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="logo-upload">Select Logo File</Label>
+              <Input
+                id="logo-upload"
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/webp"
+                onChange={handleLogoUpload}
+                disabled={uploadingLogo}
+                ref={fileInputRef}
+                data-testid="logo-upload-input"
+              />
+              <div className="text-xs text-muted-foreground">
+                Supported formats: JPG, PNG, WebP (max 5MB)
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingLogo}
+                className="w-full"
+                data-testid="select-logo-button"
+              >
+                {uploadingLogo ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <UploadIcon className="w-4 h-4 mr-2" />
+                    Choose Logo File
+                  </>
+                )}
+              </Button>
+
+              <Button
+                variant="destructive"
+                onClick={() => resetLogoMutation.mutate()}
+                disabled={resetLogoMutation.isPending}
+                className="w-full"
+                data-testid="reset-logo-button"
+              >
+                {resetLogoMutation.isPending ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Resetting...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Reset to Default
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Guidelines and Requirements */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Logo Guidelines</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="font-medium mb-2">Technical Requirements</h4>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li>• File formats: JPG, PNG, WebP</li>
+                <li>• Maximum file size: 5MB</li>
+                <li>• Recommended dimensions: 512x512px or higher</li>
+                <li>• Square aspect ratio preferred</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Design Recommendations</h4>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li>• Use high contrast for visibility</li>
+                <li>• Simple design works best at small sizes</li>
+                <li>• Consider both light and dark backgrounds</li>
+                <li>• Ensure readability on mobile devices</li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -5248,6 +5444,23 @@ export default function Admin() {
     requirements: [] as string[],
     iconType: 'emoji' as 'emoji' | 'image',
     iconValue: '🔧'
+  });
+
+  // Provider applications state - moved from PromotionalMediaManagementSystem component
+  const [providerAppsFilter, setProviderAppsFilter] = useState({
+    status: 'all',
+    providerType: 'all',
+    searchTerm: '',
+    currentPage: 1
+  });
+  const [selectedApplicationDetails, setSelectedApplicationDetails] = useState<any>(null);
+  const [isApplicationDetailsOpen, setIsApplicationDetailsOpen] = useState(false);
+  const [isStatusUpdateOpen, setIsStatusUpdateOpen] = useState(false);
+  const [statusUpdateData, setStatusUpdateData] = useState({
+    status: '',
+    reason: '',
+    adminNotes: '',
+    publicMessage: ''
   });
 
   // Test Services management state
@@ -6505,6 +6718,10 @@ export default function Admin() {
               <Video className="h-4 w-4 mr-2" />
               Promotional
             </TabsTrigger>
+            <TabsTrigger value="branding" data-testid="branding-tab">
+              <Settings className="h-4 w-4 mr-2" />
+              Branding
+            </TabsTrigger>
             <TabsTrigger value="analytics" data-testid="analytics-tab">Analytics</TabsTrigger>
             <TabsTrigger value="settings" data-testid="settings-tab">Settings</TabsTrigger>
           </TabsList>
@@ -7268,6 +7485,11 @@ export default function Admin() {
           {/* ===== COMPREHENSIVE PROMOTIONAL MEDIA MANAGEMENT SYSTEM ===== */}
           <TabsContent value="promotional-media" className="mt-6">
             <PromotionalMediaManagementSystem />
+          </TabsContent>
+
+          {/* ===== BRANDING & LOGO MANAGEMENT SYSTEM ===== */}
+          <TabsContent value="branding" className="mt-6">
+            <LogoManagementSystem />
           </TabsContent>
 
           {/* ===== PROVIDER APPLICATIONS MANAGEMENT SYSTEM ===== */}

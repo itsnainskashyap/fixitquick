@@ -637,6 +637,12 @@ export interface IStorage {
   validateStatusUpdate(orderId: string, newStatus: string): Promise<boolean>;
   updateOrder(orderId: string, updateData: any): Promise<Order | undefined>;
   getChatMessages(orderId: string): Promise<ChatMessage[]>;
+
+  // App Logo Management Methods
+  getAppLogo(): Promise<{ logoUrl: string; fallbackUrl: string } | undefined>;
+  setAppLogo(logoUrl: string, uploadedBy: string): Promise<{ success: boolean; logoUrl: string }>;
+  getAppSetting(key: string): Promise<any>;
+  setAppSetting(key: string, value: any, description?: string): Promise<{ success: boolean }>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -3763,6 +3769,113 @@ export class PostgresStorage implements IStorage {
       .where(eq(chatMessages.orderId, orderId))
       .orderBy(chatMessages.createdAt);
     return result;
+  }
+
+  // App Logo Management Implementation
+  async getAppLogo(): Promise<{ logoUrl: string; fallbackUrl: string } | undefined> {
+    try {
+      const result = await db.select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'app_logo'))
+        .limit(1);
+      
+      const logoSetting = result[0];
+      const defaultLogo = "/fixitquick-logo-new.png"; // Use the new uploaded logo as default
+      const fallbackLogo = "/fixitquick-logo.jpg"; // Original logo as fallback
+      
+      if (logoSetting && logoSetting.value) {
+        const logoData = logoSetting.value as any;
+        return {
+          logoUrl: logoData.logoUrl || defaultLogo,
+          fallbackUrl: fallbackLogo
+        };
+      }
+      
+      return {
+        logoUrl: defaultLogo,
+        fallbackUrl: fallbackLogo
+      };
+    } catch (error) {
+      console.error('Error getting app logo:', error);
+      return {
+        logoUrl: "/fixitquick-logo-new.png",
+        fallbackUrl: "/fixitquick-logo.jpg"
+      };
+    }
+  }
+
+  async setAppLogo(logoUrl: string, uploadedBy: string): Promise<{ success: boolean; logoUrl: string }> {
+    try {
+      const logoData = {
+        logoUrl,
+        uploadedBy,
+        uploadedAt: new Date().toISOString(),
+        version: Date.now() // For cache busting
+      };
+
+      const result = await db.insert(appSettings)
+        .values({
+          key: 'app_logo',
+          value: logoData,
+          description: 'Application logo configuration'
+        })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: {
+            value: logoData,
+            updatedAt: sql`NOW()`
+          }
+        })
+        .returning();
+
+      return {
+        success: true,
+        logoUrl: logoUrl
+      };
+    } catch (error) {
+      console.error('Error setting app logo:', error);
+      return {
+        success: false,
+        logoUrl: logoUrl
+      };
+    }
+  }
+
+  async getAppSetting(key: string): Promise<any> {
+    try {
+      const result = await db.select()
+        .from(appSettings)
+        .where(eq(appSettings.key, key))
+        .limit(1);
+      
+      return result[0]?.value || null;
+    } catch (error) {
+      console.error(`Error getting app setting ${key}:`, error);
+      return null;
+    }
+  }
+
+  async setAppSetting(key: string, value: any, description?: string): Promise<{ success: boolean }> {
+    try {
+      await db.insert(appSettings)
+        .values({
+          key,
+          value,
+          description: description || `Application setting: ${key}`
+        })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: {
+            value,
+            updatedAt: sql`NOW()`
+          }
+        });
+
+      return { success: true };
+    } catch (error) {
+      console.error(`Error setting app setting ${key}:`, error);
+      return { success: false };
+    }
   }
 }
 

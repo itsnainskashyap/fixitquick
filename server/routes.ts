@@ -120,7 +120,7 @@ function transformServicesForFrontend(services: any[]) {
 }
 
 import multer from "multer";
-import { validateUpload, getUploadConfig } from "./middleware/fileUpload";
+import { validateUpload, getUploadConfig, uploadDocument } from "./middleware/fileUpload";
 import { objectStorageService, getStoredFile } from "./services/objectStorage";
 import { 
   handleMultipleImageUpload,
@@ -1428,6 +1428,224 @@ export async function registerRoutes(app: Express): Promise<void> {
   });
 
   // /api/login - Remove conflicting fallback, let replitAuth.ts handle it
+
+  // ========================================
+  // APP LOGO MANAGEMENT ENDPOINTS
+  // ========================================
+
+  // GET /api/v1/app/logo - Get current app logo (public endpoint)
+  app.get('/api/v1/app/logo', async (req: Request, res: Response) => {
+    try {
+      const logoData = await storage.getAppLogo();
+      
+      res.json({
+        success: true,
+        data: {
+          logoUrl: logoData?.logoUrl || '/fixitquick-logo-new.png',
+          fallbackUrl: logoData?.fallbackUrl || '/fixitquick-logo.jpg'
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/app/logo error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch app logo',
+        data: {
+          logoUrl: '/fixitquick-logo-new.png',
+          fallbackUrl: '/fixitquick-logo.jpg'
+        }
+      });
+    }
+  });
+
+  // GET /api/v1/admin/logo - Get current app logo with admin info (admin only)
+  app.get('/api/v1/admin/logo', authMiddleware, requireRole(['admin']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const logoSetting = await storage.getAppSetting('app_logo');
+      const logoData = await storage.getAppLogo();
+      
+      res.json({
+        success: true,
+        data: {
+          logoUrl: logoData?.logoUrl || '/fixitquick-logo-new.png',
+          fallbackUrl: logoData?.fallbackUrl || '/fixitquick-logo.jpg',
+          settings: logoSetting,
+          canUpload: true
+        }
+      });
+    } catch (error) {
+      console.error('❌ /api/v1/admin/logo error:', error);
+      res.status(500).json({
+        success: false,
+        message: process.env.NODE_ENV === 'development'
+          ? `Failed to fetch admin logo data: ${error instanceof Error ? error.message : 'Unknown error'}`
+          : 'Failed to fetch admin logo data'
+      });
+    }
+  });
+
+  // POST /api/v1/admin/logo/upload - Upload new logo (admin only)
+  app.post('/api/v1/admin/logo/upload',
+    authMiddleware,
+    requireRole(['admin']),
+    uploadLimiter,
+    multer({ 
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+      fileFilter: (req, file, cb) => {
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (allowedTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new Error('Invalid file type. Only JPG, PNG, and WebP are allowed.'));
+        }
+      }
+    }).single('logo'),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const userId = req.user?.id;
+        if (!userId) {
+          return res.status(401).json({ 
+            success: false, 
+            message: 'Authentication required' 
+          });
+        }
+
+        const files = req.files as Express.Multer.File[] | undefined;
+        if (!files || files.length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'No logo file provided'
+          });
+        }
+
+        const logoFile = files[0];
+        
+        // Validate file type and size
+        const validation = objectStorageService.validateFile(logoFile, ['image/jpeg', 'image/png', 'image/webp']);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid logo file',
+            errors: validation.errors
+          });
+        }
+
+        // Upload logo to object storage
+        const uploadResult = await objectStorageService.uploadFile(
+          logoFile,
+          'app_logo',
+          userId,
+          true // Make it public
+        );
+
+        if (!uploadResult.success) {
+          return res.status(500).json({
+            success: false,
+            message: uploadResult.error || 'Failed to upload logo'
+          });
+        }
+
+        // Update app logo setting
+        const logoUrl = uploadResult.url!;
+        const setLogoResult = await storage.setAppLogo(logoUrl, userId);
+
+        if (!setLogoResult.success) {
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to save logo configuration'
+          });
+        }
+
+        res.json({
+          success: true,
+          message: 'Logo uploaded successfully',
+          data: {
+            logoUrl: logoUrl,
+            metadata: uploadResult.metadata
+          }
+        });
+
+      } catch (error) {
+        console.error('❌ POST /api/v1/admin/logo/upload error:', error);
+        res.status(500).json({
+          success: false,
+          message: process.env.NODE_ENV === 'development'
+            ? `Failed to upload logo: ${error instanceof Error ? error.message : 'Unknown error'}`
+            : 'Failed to upload logo'
+        });
+      }
+    }
+  );
+
+  // PUT /api/v1/admin/logo - Update logo settings (admin only)
+  app.put('/api/v1/admin/logo', 
+    authMiddleware, 
+    requireRole(['admin']), 
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const userId = req.user?.id;
+        if (!userId) {
+          return res.status(401).json({ 
+            success: false, 
+            message: 'Authentication required' 
+          });
+        }
+
+        const { logoUrl, action } = req.body;
+
+        if (action === 'reset') {
+          // Reset to default logo
+          const defaultLogoUrl = '/fixitquick-logo-new.png';
+          const setLogoResult = await storage.setAppLogo(defaultLogoUrl, userId);
+          
+          return res.json({
+            success: setLogoResult.success,
+            message: setLogoResult.success ? 'Logo reset to default successfully' : 'Failed to reset logo',
+            data: {
+              logoUrl: defaultLogoUrl
+            }
+          });
+        }
+
+        if (!logoUrl) {
+          return res.status(400).json({
+            success: false,
+            message: 'Logo URL is required'
+          });
+        }
+
+        // Validate URL format
+        try {
+          new URL(logoUrl, 'http://localhost'); // Validate URL format
+        } catch {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid logo URL format'
+          });
+        }
+
+        const setLogoResult = await storage.setAppLogo(logoUrl, userId);
+
+        res.json({
+          success: setLogoResult.success,
+          message: setLogoResult.success ? 'Logo updated successfully' : 'Failed to update logo',
+          data: {
+            logoUrl: setLogoResult.logoUrl
+          }
+        });
+
+      } catch (error) {
+        console.error('❌ PUT /api/v1/admin/logo error:', error);
+        res.status(500).json({
+          success: false,
+          message: process.env.NODE_ENV === 'development'
+            ? `Failed to update logo: ${error instanceof Error ? error.message : 'Unknown error'}`
+            : 'Failed to update logo'
+        });
+      }
+    }
+  );
 
   // ============================
   // 501 NOT IMPLEMENTED RESPONSES FOR OTHER ENDPOINTS

@@ -14,6 +14,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { Link } from 'wouter';
+// Default logo imports using @assets alias
+import defaultLogo from '@assets/image_1758482448875.png';
 
 interface HeaderProps {
   onCartClick?: () => void;
@@ -80,6 +82,13 @@ export function Header({
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
+  // Fetch app logo configuration
+  const { data: logoData, isLoading: logoLoading } = useQuery({
+    queryKey: ['/api/v1/app/logo'],
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchInterval: 30 * 60 * 1000, // Refresh every 30 minutes
+  });
+
   const handleWalletClick = () => {
     setLocation('/wallet');
   };
@@ -97,6 +106,28 @@ export function Header({
       return city;
     } else {
       return 'Unknown Location';
+    }
+  };
+
+  // Get app logo URL with fallback handling
+  const getLogoUrl = () => {
+    if (logoLoading) {
+      return defaultLogo; // Show default logo while loading
+    }
+    
+    if (logoData?.success && logoData?.data?.logoUrl) {
+      return logoData.data.logoUrl;
+    }
+    
+    // Fallback to default logo if API fails or no custom logo set
+    return defaultLogo;
+  };
+
+  // Handle logo load error - fallback to default logo
+  const handleLogoError = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = event.target as HTMLImageElement;
+    if (img.src !== defaultLogo) {
+      img.src = defaultLogo;
     }
   };
 
@@ -119,9 +150,11 @@ export function Header({
               whileTap={{ scale: 0.98 }}
             >
               <img 
-                src="/fixitquick-logo.jpg" 
+                src={getLogoUrl()} 
                 alt="FixitQuick Logo" 
                 className="w-8 h-8 object-contain"
+                onError={handleLogoError}
+                data-testid="app-logo"
               />
               <span className="font-bold text-lg text-foreground">FixitQuick</span>
             </motion.div>
