@@ -95,7 +95,8 @@ import {
   serviceCategories,
   walletTransactions,
   orders,
-  serviceBookings
+  serviceBookings,
+  partsInventoryMovements
 } from "@shared/schema";
 import { twilioService } from "./services/twilio";
 import { jwtService } from "./utils/jwt";

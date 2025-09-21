@@ -618,6 +618,25 @@ export interface IStorage {
     application?: ServiceProvider | PartsProviderBusinessInfo;
     statusTransition?: VerificationStatusTransition;
   }>;
+
+  // Order methods - CRITICAL for routes.ts
+  getOrderById(orderId: string): Promise<Order | undefined>;
+  createOrder(orderData: InsertOrder): Promise<Order>;
+  updateOrderStatus(orderId: string, status: string, updateData?: any): Promise<Order | undefined>;
+  getOrdersByCustomer(userId: string, filters?: any): Promise<{ orders: Order[]; total: number }>;
+
+  // Wallet methods - CRITICAL for payment processing
+  getWalletBalance(userId: string): Promise<number>;
+  createWalletTransaction(transactionData: InsertWalletTransaction): Promise<WalletTransaction>;
+  updateWalletBalance(userId: string, amount: number): Promise<User | undefined>;
+
+  // Additional methods for websocket compatibility
+  getOrder(orderId: string): Promise<Order | undefined>;
+  createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage>;
+  createNotification(notificationData: InsertNotification): Promise<Notification>;
+  validateStatusUpdate(orderId: string, newStatus: string): Promise<boolean>;
+  updateOrder(orderId: string, updateData: any): Promise<Order | undefined>;
+  getChatMessages(orderId: string): Promise<ChatMessage[]>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -3438,6 +3457,113 @@ export class PostgresStorage implements IStorage {
       application,
       statusTransition
     };
+  }
+
+  // Order methods implementation - CRITICAL for routes.ts
+  async getOrderById(orderId: string): Promise<Order | undefined> {
+    const result = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    return result[0];
+  }
+
+  async createOrder(orderData: InsertOrder): Promise<Order> {
+    const result = await db.insert(orders).values(orderData).returning();
+    return result[0];
+  }
+
+  async updateOrderStatus(orderId: string, status: string, updateData?: any): Promise<Order | undefined> {
+    const updateFields = {
+      status,
+      updatedAt: new Date(),
+      ...updateData
+    };
+    const result = await db.update(orders).set(updateFields).where(eq(orders.id, orderId)).returning();
+    return result[0];
+  }
+
+  async getOrdersByCustomer(userId: string, filters?: any): Promise<{ orders: Order[]; total: number }> {
+    const whereConditions = [eq(orders.userId, userId)];
+    
+    if (filters?.status) {
+      whereConditions.push(eq(orders.status, filters.status));
+    }
+    
+    let query = db.select().from(orders).where(and(...whereConditions));
+    
+    if (filters?.limit) {
+      query = query.limit(filters.limit);
+    }
+    
+    if (filters?.offset) {
+      query = query.offset(filters.offset);
+    }
+    
+    query = query.orderBy(desc(orders.createdAt));
+    
+    const orderResults = await query;
+    const totalResult = await db.select({ count: count() }).from(orders).where(and(...whereConditions));
+    
+    return {
+      orders: orderResults,
+      total: totalResult[0].count
+    };
+  }
+
+  // Wallet methods implementation - CRITICAL for payment processing
+  async getWalletBalance(userId: string): Promise<number> {
+    const user = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    return parseFloat(user[0]?.walletBalance || '0');
+  }
+
+  async createWalletTransaction(transactionData: InsertWalletTransaction): Promise<WalletTransaction> {
+    const result = await db.insert(walletTransactions).values(transactionData).returning();
+    return result[0];
+  }
+
+  async updateWalletBalance(userId: string, amount: number): Promise<User | undefined> {
+    const result = await db.update(users)
+      .set({ 
+        walletBalance: amount.toString(),
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return result[0];
+  }
+
+  // Additional method implementations for websocket compatibility
+  async getOrder(orderId: string): Promise<Order | undefined> {
+    return this.getOrderById(orderId);
+  }
+
+  async createChatMessage(messageData: InsertChatMessage): Promise<ChatMessage> {
+    const result = await db.insert(chatMessages).values(messageData).returning();
+    return result[0];
+  }
+
+  async createNotification(notificationData: InsertNotification): Promise<Notification> {
+    const result = await db.insert(notifications).values(notificationData).returning();
+    return result[0];
+  }
+
+  async validateStatusUpdate(orderId: string, newStatus: string): Promise<boolean> {
+    const order = await this.getOrderById(orderId);
+    if (!order) return false;
+    
+    // Basic validation - can be expanded with business logic
+    const validStatuses = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+    return validStatuses.includes(newStatus);
+  }
+
+  async updateOrder(orderId: string, updateData: any): Promise<Order | undefined> {
+    return this.updateOrderStatus(orderId, updateData.status || 'pending', updateData);
+  }
+
+  async getChatMessages(orderId: string): Promise<ChatMessage[]> {
+    const result = await db.select()
+      .from(chatMessages)
+      .where(eq(chatMessages.orderId, orderId))
+      .orderBy(chatMessages.createdAt);
+    return result;
   }
 }
 

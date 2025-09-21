@@ -22,6 +22,12 @@ interface SocketMessage {
   data: any;
   timestamp?: number;
   messageId?: string;
+  orderId?: string;
+  bookingId?: string;
+  status?: string;
+  providerId?: string;
+  serviceId?: string;
+  finalAmount?: number;
 }
 
 class WebSocketManager {

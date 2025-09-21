@@ -2282,6 +2282,7 @@ export type InsertPart = z.infer<typeof insertPartSchema>;
 export type ServiceProvider = typeof serviceProviders.$inferSelect;
 export type InsertServiceProvider = z.infer<typeof insertServiceProviderSchema>;
 export type PartsCategory = typeof partsCategories.$inferSelect;
+export type InsertPartsCategory = z.infer<typeof insertPartsCategorySchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type Notification = typeof notifications.$inferSelect;
