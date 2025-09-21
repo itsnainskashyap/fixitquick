@@ -328,25 +328,6 @@ export async function registerRoutes(app: Express): Promise<void> {
   // CRITICAL: Category GET routes MUST be registered first to avoid 404s
   // ============================
   
-  // GET /api/v1/service-categories - Public list of active service categories
-  app.get('/api/v1/service-categories', async (req: Request, res: Response) => {
-    try {
-      const categories = await storage.getMainCategories(true); // Only active categories
-      console.log('✅ GET /api/v1/service-categories: Retrieved', categories.length, 'categories');
-      res.json({ 
-        success: true, 
-        data: categories
-      });
-    } catch (error) {
-      console.error('❌ GET /api/v1/service-categories error:', error);
-      res.status(500).json({ 
-        success: false,
-        message: process.env.NODE_ENV === 'development' 
-          ? `Failed to fetch service categories: ${error instanceof Error ? error.message : 'Unknown error'}`
-          : 'Failed to fetch service categories'
-      });
-    }
-  });
 
   // POST /api/v1/service-categories - Backward compatibility alias for category creation (delegates to admin logic)
   app.post('/api/v1/service-categories', authMiddleware, requireRole(['admin']), async (req: Request, res: Response) => {
@@ -1091,15 +1072,24 @@ export async function registerRoutes(app: Express): Promise<void> {
   // /api/v1/service-categories - Get service categories with optional filters
   app.get('/api/v1/service-categories', async (req: Request, res: Response) => {
     try {
-      const { level, activeOnly = 'true' } = req.query;
+      const { level, activeOnly = 'true', parentId } = req.query;
       const isActiveOnly = activeOnly === 'true';
       
       let categories;
-      if (level !== undefined) {
+      
+      // CRITICAL FIX: Prioritize parentId parameter for subcategory fetching
+      if (parentId) {
+        console.log(`🔍 Fetching subcategories for parentId: ${parentId}, activeOnly: ${isActiveOnly}`);
+        categories = await storage.getSubCategories(parentId as string, isActiveOnly);
+      } else if (level !== undefined) {
+        console.log(`🔍 Fetching categories by level: ${level}, activeOnly: ${isActiveOnly}`);
         categories = await storage.getServiceCategoriesByLevel(parseInt(level as string), isActiveOnly);
       } else {
+        console.log(`🔍 Fetching main categories, activeOnly: ${isActiveOnly}`);
         categories = await storage.getMainCategories(isActiveOnly);
       }
+      
+      console.log(`✅ GET /api/v1/service-categories: Retrieved ${categories.length} categories${parentId ? ` for parent ${parentId}` : level !== undefined ? ` at level ${level}` : ''}`);
       
       res.json({ 
         success: true, 
