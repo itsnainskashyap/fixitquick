@@ -51,7 +51,14 @@ export default function Home() {
 
   // Fetch main categories (level 0) from backend for home page
   const { data: serviceCategories = [], isLoading: loadingCategories } = useQuery<ServiceCategory[]>({
-    queryKey: ['/api/v1/services/categories/main'],
+    queryKey: ['/api/v1/service-categories', { level: 0, activeOnly: true }],
+    queryFn: async () => {
+      const response = await fetch('/api/v1/service-categories?level=0&activeOnly=true');
+      if (!response.ok) {
+        throw new Error('Failed to fetch categories');
+      }
+      return response.json();
+    },
     select: (data: any) => {
       // Handle different response formats
       if (Array.isArray(data)) {
