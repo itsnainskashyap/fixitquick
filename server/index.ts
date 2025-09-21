@@ -45,9 +45,7 @@ function validateProductionSafety() {
   if (isProduction) {
     const requiredEnvVars = [
       'DATABASE_URL',
-      'JWT_SECRET_KEY',
-      'TWILIO_ACCOUNT_SID',
-      'TWILIO_AUTH_TOKEN'
+      'JWT_SECRET_KEY'
     ];
     
     const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
@@ -60,6 +58,17 @@ function validateProductionSafety() {
       });
       console.error('🚨 Application cannot start safely in production.');
       process.exit(1);
+    }
+    
+    // Optional services validation (non-blocking)
+    const optionalEnvVars = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'];
+    const missingOptional = optionalEnvVars.filter(varName => !process.env[varName]);
+    
+    if (missingOptional.length > 0) {
+      console.log('⚠️  Optional services will use STUB mode:');
+      missingOptional.forEach(varName => {
+        console.log(`⚠️    - ${varName} (Twilio SMS will be stubbed)`);
+      });
     }
     
     console.log('✅ Production environment validated successfully');
