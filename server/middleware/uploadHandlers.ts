@@ -497,19 +497,23 @@ export const handleProviderDocumentUpload = async (
         });
       }
 
+      // Create image object for frontend compatibility
+      const imageData = {
+        id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        url: uploadResult.url,
+        filename: file.originalname,
+        size: file.size,
+        mimeType: file.mimetype,
+        documentType,
+        status: 'pending',
+        metadata: uploadResult.metadata,
+      };
+
       res.json({
         success: true,
         message: 'Document uploaded successfully',
-        document: {
-          id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          url: uploadResult.url,
-          filename: file.originalname,
-          size: file.size,
-          mimeType: file.mimetype,
-          documentType,
-          status: 'pending',
-          metadata: uploadResult.metadata,
-        }
+        image: imageData,  // Frontend expects 'image' property
+        document: imageData  // Keep 'document' for backward compatibility
       });
 
     } catch (error) {

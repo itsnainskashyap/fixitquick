@@ -159,9 +159,9 @@ export default function ProviderPending() {
     },
   });
 
-  const isLoading = profileLoading || statusLoading;
-  const provider = response?.data?.application as ProviderProfile | undefined;
-  const statusHistory = response?.data?.statusHistory || [];
+  const isLoading = applicationsLoading || detailsLoading;
+  const provider = detailsResponse?.data?.application as ProviderProfile | undefined;
+  const statusHistory = detailsResponse?.data?.statusHistory || [];
 
   if (!user) {
     setLocation('/login');
