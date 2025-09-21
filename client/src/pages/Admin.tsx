@@ -4564,45 +4564,45 @@ export default function Admin() {
   });
   const orders = ordersResponse?.data || ordersResponse || [];
 
-  // Fetch pending verifications
+  // Fetch pending service provider verifications
   const { data: verificationsResponse } = useQuery({
-    queryKey: ['/api/v1/admin/verifications/pending'],
+    queryKey: ['/api/v1/verification/service-providers', { status: 'pending' }],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/verifications/pending');
+      return await apiRequest('GET', '/api/v1/verification/service-providers?status=pending');
     },
     enabled: !!user,
   });
-  const verifications = (verificationsResponse as any)?.data || [];
+  const verifications = (verificationsResponse as any)?.providers || [];
 
-  // Fetch all provider applications (including approved/rejected) - Updated to use new endpoint
+  // Fetch all service provider applications (including approved/rejected)
   const { data: allProviderApplicationsResponse } = useQuery({
-    queryKey: ['/api/v1/admin/provider-applications'],
+    queryKey: ['/api/v1/verification/service-providers'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/provider-applications');
+      return await apiRequest('GET', '/api/v1/verification/service-providers');
     },
     enabled: !!user,
   });
-  const allProviders = (allProviderApplicationsResponse as any)?.data || [];
+  const allProviders = (allProviderApplicationsResponse as any)?.providers || [];
 
   // Fetch parts provider verifications
   const { data: partsProvidersResponse } = useQuery({
-    queryKey: ['/api/v1/admin/parts-providers'],
+    queryKey: ['/api/v1/verification/parts-providers'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/parts-providers');
+      return await apiRequest('GET', '/api/v1/verification/parts-providers');
     },
     enabled: !!user,
   });
-  const partsProviders = (partsProvidersResponse as any)?.data || [];
+  const partsProviders = (partsProvidersResponse as any)?.providers || [];
 
   // Fetch pending parts provider verifications
   const { data: pendingPartsProvidersResponse } = useQuery({
-    queryKey: ['/api/v1/admin/parts-providers/pending'],
+    queryKey: ['/api/v1/verification/parts-providers', { status: 'pending' }],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/admin/parts-providers/pending');
+      return await apiRequest('GET', '/api/v1/verification/parts-providers?status=pending');
     },
     enabled: !!user,
   });
-  const pendingPartsProviders = (pendingPartsProvidersResponse as any)?.data || [];
+  const pendingPartsProviders = { data: (pendingPartsProvidersResponse as any)?.providers || [] };
 
   // Fetch category hierarchy with error handling
   const { data: categoryHierarchyResponse, isLoading: categoryHierarchyLoading, error: categoryHierarchyError } = useQuery({
@@ -4720,15 +4720,15 @@ export default function Admin() {
         'rejected': 'reject'
       };
       
-      return await apiRequest('POST', `/api/v1/admin/verifications/${providerId}/status`, {
-        action: actionMap[status] || status,
-        notes: notes,
+      return await apiRequest('PATCH', `/api/v1/verification/service-providers/${providerId}/status`, {
+        status: actionMap[status] || status,
+        reason: notes,
+        adminNotes: notes,
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/verifications/pending'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/providers'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/verification/service-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/dashboard-stats'] });
       toast({
         title: "Provider verification updated",
         description: "Provider verification status has been updated.",
@@ -4744,16 +4744,14 @@ export default function Admin() {
       notes?: string;
       rejectionReason?: string;
     }) => {
-      return await apiRequest('POST', `/api/v1/admin/parts-providers/${providerId}/status`, {
-        action,
-        notes,
-        rejectionReason,
+      return await apiRequest('PATCH', `/api/v1/verification/parts-providers/${providerId}/status`, {
+        status: action,
+        reason: notes,
+        adminNotes: rejectionReason,
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/verification/parts-providers'] });
       toast({
         title: "Parts provider verification updated",
         description: "Parts provider verification status has been updated.",
@@ -4777,9 +4775,7 @@ export default function Admin() {
       });
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers/pending'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/parts-providers'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/v1/admin/stats'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/v1/verification/parts-providers'] });
       toast({
         title: "Bulk operation completed",
         description: `${data?.summary?.successCount || 0} providers processed successfully`,
