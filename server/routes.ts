@@ -737,15 +737,41 @@ export async function registerRoutes(app: Express): Promise<void> {
     }
   });
 
-  // Services endpoint - uses existing getServices
+  // Services endpoint - uses existing getServices - FIXED RESPONSE FORMAT
   app.get('/api/v1/services', async (req, res) => {
     try {
       const services = await storage.getServices();
       const transformedServices = transformServicesForFrontend(services);
-      res.json({ success: true, services: transformedServices });
+      res.json({ success: true, data: transformedServices, services: transformedServices });
     } catch (error) {
       console.error('Error fetching services:', error);
       res.status(500).json({ message: 'Failed to fetch services' });
+    }
+  });
+
+  // Get services by category - CRITICAL FIX
+  app.get('/api/v1/services/categories/:categoryId', async (req, res) => {
+    try {
+      const { categoryId } = req.params;
+      const services = await storage.getServicesByCategory(categoryId);
+      const transformedServices = transformServicesForFrontend(services);
+      res.json({ success: true, data: transformedServices });
+    } catch (error) {
+      console.error('Error fetching services by category:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch services' });
+    }
+  });
+
+  // Get services by subcategory - CRITICAL FIX
+  app.get('/api/v1/services/categories/:categoryId/subcategories/:subcategoryId', async (req, res) => {
+    try {
+      const { subcategoryId } = req.params;
+      const services = await storage.getServicesBySubcategory(subcategoryId);
+      const transformedServices = transformServicesForFrontend(services);
+      res.json({ success: true, data: transformedServices });
+    } catch (error) {
+      console.error('Error fetching services by subcategory:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch services' });
     }
   });
 

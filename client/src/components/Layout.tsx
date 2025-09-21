@@ -27,12 +27,12 @@ export function Layout({
   const lastHeaderHeight = useRef<number>(0);
   const lastBottomNavHeight = useRef<number>(0);
   
-  // Consistent height management - mobile-first approach with extra padding
+  // Consistent height management - mobile-first approach with reasonable padding
   const [headerHeight, setHeaderHeight] = useState(() => {
     if (typeof window !== 'undefined') {
-      return window.innerWidth < 640 ? 250 : 320; // Extremely high defaults to completely prevent overlap
+      return window.innerWidth < 640 ? 60 : 80; // Reasonable defaults for proper spacing
     }
-    return 320;
+    return 80;
   });
   
   // Bottom navigation height tracking for precise spacing

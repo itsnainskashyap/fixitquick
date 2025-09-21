@@ -303,6 +303,8 @@ export interface IStorage {
   // Service methods - basic CRUD
   getServices(): Promise<Service[]>;
   getService(id: string): Promise<Service | undefined>;
+  getServicesByCategory(categoryId: string): Promise<Service[]>;
+  getServicesBySubcategory(subcategoryId: string): Promise<Service[]>;
   createService(service: InsertService): Promise<Service>;
   updateService(id: string, data: Partial<InsertService>): Promise<Service | undefined>;
   deleteService(id: string): Promise<{ success: boolean; message: string }>;
@@ -726,6 +728,19 @@ export class PostgresStorage implements IStorage {
   async deleteService(id: string): Promise<{ success: boolean; message: string }> {
     await db.delete(services).where(eq(services.id, id));
     return { success: true, message: 'Service deleted successfully' };
+  }
+
+  async getServicesByCategory(categoryId: string): Promise<Service[]> {
+    return await db.select().from(services)
+      .where(and(eq(services.categoryId, categoryId), eq(services.isActive, true)))
+      .orderBy(asc(services.name));
+  }
+
+  async getServicesBySubcategory(subcategoryId: string): Promise<Service[]> {
+    // For subcategories, we need to get services that belong to that specific subcategory
+    return await db.select().from(services)
+      .where(and(eq(services.categoryId, subcategoryId), eq(services.isActive, true)))
+      .orderBy(asc(services.name));
   }
 
   async expireOldJobRequests(): Promise<number> {

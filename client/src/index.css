@@ -42,7 +42,7 @@
   --font-mono: 'Monaco', monospace;
   
   /* Dynamic Layout Variables - Mobile-first responsive */
-  --header-height: 320px; /* Default header height - extremely high to completely prevent overlap */
+  --header-height: 80px; /* Fixed header height - reasonable default */
   --bottom-nav-height: 80px; /* Default bottom navigation height */
   
   /* Safe Area Variables for modern devices with notches/dynamic islands */
@@ -119,9 +119,10 @@
   }
   
   .main-content {
-    min-height: calc(100vh - var(--header-height, 320px) - var(--bottom-nav-height, 80px));
+    min-height: calc(100vh - var(--header-height, 80px) - var(--bottom-nav-height, 80px));
     transition: all 0.3s ease;
     position: relative;
+    padding-top: var(--header-height, 80px);
   }
   
   /* Enhanced responsive layout adjustments - Mobile-first approach */

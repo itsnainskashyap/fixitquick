@@ -581,14 +581,11 @@ export default function EnhancedProviderRegistration() {
   // Submit registration mutation
   const registerMutation = useMutation({
     mutationFn: async (data: ProviderRegistrationForm) => {
-      const response = await apiRequest('/api/provider/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...data,
-          documents: uploadedDocuments,
-          authMethod: 'google',
-          googleUserId: googleUser?.uid
-        }),
+      const response = await apiRequest('/api/provider/register', 'POST', {
+        ...data,
+        documents: uploadedDocuments,
+        authMethod: 'google',
+        googleUserId: googleUser?.uid
       });
       return response;
     },
