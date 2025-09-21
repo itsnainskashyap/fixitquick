@@ -2891,6 +2891,127 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
+  // Calculate comprehensive provider profile metrics
+  async calculateProviderProfileMetrics(providerId: string): Promise<{
+    completionRate: number;
+    averageRating: number;
+    totalEarnings: number;
+    monthlyEarnings: number;
+    totalJobs: number;
+    averageResponseTime: number; // in minutes
+    onTimePercentage: number;
+    activeStreak: number; // days since last activity
+  }> {
+    try {
+      // Get current date for monthly calculations
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      // 1. Calculate total jobs and completion rate
+      const totalOrdersResult = await db.select({
+        totalOrders: count(),
+        completedOrders: sql<number>`COUNT(CASE WHEN ${orders.status} = 'completed' THEN 1 END)`,
+        totalEarnings: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} = 'completed' AND ${orders.meta}->>'totalAmount' IS NOT NULL THEN CAST(${orders.meta}->>'totalAmount' AS DECIMAL) ELSE 0 END), 0)`
+      })
+      .from(orders)
+      .where(eq(orders.providerId, providerId));
+
+      const orderStats = totalOrdersResult[0] || { totalOrders: 0, completedOrders: 0, totalEarnings: 0 };
+      const totalJobs = Number(orderStats.totalOrders) || 0;
+      const completedJobs = Number(orderStats.completedOrders) || 0;
+      const completionRate = totalJobs > 0 ? (completedJobs / totalJobs) * 100 : 0;
+      const totalEarnings = Number(orderStats.totalEarnings) || 0;
+
+      // 2. Calculate monthly earnings
+      const monthlyEarningsResult = await db.select({
+        monthlyEarnings: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} = 'completed' AND ${orders.meta}->>'totalAmount' IS NOT NULL THEN CAST(${orders.meta}->>'totalAmount' AS DECIMAL) ELSE 0 END), 0)`
+      })
+      .from(orders)
+      .where(and(
+        eq(orders.providerId, providerId),
+        gte(orders.createdAt, startOfMonth)
+      ));
+      
+      const monthlyEarnings = Number(monthlyEarningsResult[0]?.monthlyEarnings) || 0;
+
+      // 3. Calculate average rating
+      const ratingsResult = await db.select({
+        averageRating: sql<number>`COALESCE(AVG(CAST(${reviews.rating} AS DECIMAL)), 0)`,
+        totalRatings: count()
+      })
+      .from(reviews)
+      .where(eq(reviews.revieweeId, providerId));
+
+      const averageRating = Number(ratingsResult[0]?.averageRating) || 0;
+
+      // 4. Calculate average response time
+      const responseTimeResult = await db.select({
+        avgResponseMinutes: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${providerJobRequests.respondedAt} - ${providerJobRequests.sentAt})) / 60), 0)`
+      })
+      .from(providerJobRequests)
+      .where(and(
+        eq(providerJobRequests.providerId, providerId),
+        not(sql`${providerJobRequests.respondedAt} IS NULL`),
+        not(sql`${providerJobRequests.sentAt} IS NULL`)
+      ));
+
+      const averageResponseTime = Number(responseTimeResult[0]?.avgResponseMinutes) || 0;
+
+      // 5. Calculate on-time percentage (orders completed within estimated time)
+      const onTimeResult = await db.select({
+        totalCompletedOrders: sql<number>`COUNT(*)`,
+        onTimeOrders: sql<number>`COUNT(CASE WHEN ${orders.meta}->>'estimatedDuration' IS NOT NULL AND EXTRACT(EPOCH FROM (${orders.updatedAt} - ${orders.createdAt})) / 60 <= CAST(${orders.meta}->>'estimatedDuration' AS INTEGER) THEN 1 END)`
+      })
+      .from(orders)
+      .where(and(
+        eq(orders.providerId, providerId),
+        eq(orders.status, 'completed')
+      ));
+
+      const onTimeStats = onTimeResult[0] || { totalCompletedOrders: 0, onTimeOrders: 0 };
+      const onTimePercentage = Number(onTimeStats.totalCompletedOrders) > 0 
+        ? (Number(onTimeStats.onTimeOrders) / Number(onTimeStats.totalCompletedOrders)) * 100 
+        : 100; // Default to 100% if no data
+
+      // 6. Calculate active streak (days since last activity)
+      const userResult = await db.select({
+        lastLoginAt: users.lastLoginAt
+      })
+      .from(users)
+      .where(eq(users.id, providerId))
+      .limit(1);
+
+      const lastLogin = userResult[0]?.lastLoginAt;
+      const activeStreak = lastLogin 
+        ? Math.floor((now.getTime() - new Date(lastLogin).getTime()) / (1000 * 60 * 60 * 24))
+        : 999; // High number if never logged in
+
+      return {
+        completionRate: Math.round(completionRate * 100) / 100, // Round to 2 decimal places
+        averageRating: Math.round(averageRating * 100) / 100,
+        totalEarnings: Math.round(totalEarnings * 100) / 100,
+        monthlyEarnings: Math.round(monthlyEarnings * 100) / 100,
+        totalJobs,
+        averageResponseTime: Math.round(averageResponseTime * 100) / 100,
+        onTimePercentage: Math.round(onTimePercentage * 100) / 100,
+        activeStreak
+      };
+    } catch (error) {
+      console.error('Error calculating provider profile metrics:', error);
+      // Return default values on error
+      return {
+        completionRate: 0,
+        averageRating: 0,
+        totalEarnings: 0,
+        monthlyEarnings: 0,
+        totalJobs: 0,
+        averageResponseTime: 0,
+        onTimePercentage: 100,
+        activeStreak: 999
+      };
+    }
+  }
+
   async cancelAllJobRequestsForBooking(bookingId: string): Promise<void> {
     await db.update(providerJobRequests)
       .set({ 

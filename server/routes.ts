@@ -2729,31 +2729,62 @@ export async function registerRoutes(app: Express): Promise<void> {
     }
   });
 
-  // GET /api/v1/providers/profile - Get provider profile data
+  // GET /api/v1/providers/profile - Get provider profile data with calculated metrics
   app.get('/api/v1/providers/profile', authMiddleware, requireRole(['service_provider']), async (req, res) => {
     try {
       const user = (req as AuthenticatedRequest).user!;
+      console.log(`🔍 GET /api/v1/providers/profile: Calculating metrics for provider ${user.id}`);
       
-      // Get provider profile from storage
-      const profile = await storage.getServiceProviderProfile(user.id);
+      // Calculate comprehensive provider metrics
+      const metrics = await storage.calculateProviderProfileMetrics(user.id);
       
-      if (!profile) {
-        return res.status(404).json({
-          success: false,
-          message: 'Provider profile not found'
-        });
-      }
+      // Get basic profile info (optional, for additional details)
+      const basicProfile = await storage.getServiceProviderProfile(user.id);
+      
+      // Combine calculated metrics with basic profile
+      const profile = {
+        // Calculated performance metrics (matching frontend field names)
+        completionRate: metrics.completionRate,
+        averageRating: metrics.averageRating,
+        totalEarnings: metrics.totalEarnings,
+        monthlyEarnings: metrics.monthlyEarnings,
+        totalJobs: metrics.totalJobs,
+        averageResponseTime: metrics.averageResponseTime, // Frontend expects this name
+        onTimePercentage: metrics.onTimePercentage, // Frontend expects this name  
+        activeStreak: metrics.activeStreak,
+        
+        // Basic profile info (if available)
+        ...basicProfile,
+        
+        // User info for additional context
+        userId: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        profileImageUrl: user.profileImageUrl,
+        
+        // Timestamp for cache management
+        calculatedAt: new Date().toISOString()
+      };
 
-      console.log(`✅ GET /api/v1/providers/profile: Retrieved profile for provider ${user.id}`);
+      console.log(`✅ GET /api/v1/providers/profile: Calculated metrics for provider ${user.id}:`, {
+        completionRate: metrics.completionRate,
+        averageRating: metrics.averageRating,
+        totalJobs: metrics.totalJobs,
+        totalEarnings: metrics.totalEarnings
+      });
+      
       res.json({
         success: true,
         profile: profile
       });
     } catch (error) {
-      console.error('❌ Error fetching provider profile:', error);
+      console.error('❌ Error calculating provider profile metrics:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch provider profile'
+        message: 'Failed to calculate provider profile metrics',
+        error: process.env.NODE_ENV === 'development' ? error : undefined
       });
     }
   });

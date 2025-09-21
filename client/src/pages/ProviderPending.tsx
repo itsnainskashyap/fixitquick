@@ -239,11 +239,35 @@ export default function ProviderPending() {
     );
   }
 
+  // Early return if provider is undefined (should not happen at this point)
+  if (!provider) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Card className="max-w-md">
+          <CardContent className="p-8 text-center space-y-4">
+            <AlertCircle className="w-16 h-16 text-muted-foreground mx-auto" />
+            <h2 className="text-xl font-semibold">No Application Found</h2>
+            <p className="text-muted-foreground">
+              You haven't submitted a provider application yet.
+            </p>
+            <Button 
+              onClick={() => setLocation('/provider/register')}
+              data-testid="button-start-application"
+            >
+              Start Application
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   const statusInfo = getStatusInfo(provider.verificationStatus);
   const StatusIcon = statusInfo.icon;
 
   // Calculate completion percentage
   const getCompletionPercentage = () => {
+    if (!provider) return 0;
     switch (provider.verificationStatus) {
       case 'pending': return 25;
       case 'under_review': return 50;
@@ -344,15 +368,15 @@ export default function ProviderPending() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Business Name</Label>
-                    <p className="font-medium" data-testid="business-name">{provider.businessName}</p>
+                    <p className="font-medium" data-testid="business-name">{provider.businessName || 'N/A'}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Application ID</Label>
-                    <p className="font-mono text-sm" data-testid="application-id">#{provider.userId.slice(-8).toUpperCase()}</p>
+                    <p className="font-mono text-sm" data-testid="application-id">#{provider.userId?.slice(-8)?.toUpperCase() || 'N/A'}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Submitted</Label>
-                    <p data-testid="submitted-date">{new Date(provider.createdAt).toLocaleDateString()}</p>
+                    <p data-testid="submitted-date">{provider.createdAt ? new Date(provider.createdAt).toLocaleDateString() : 'N/A'}</p>
                   </div>
                   {provider.updatedAt && (
                     <div>

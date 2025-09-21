@@ -427,153 +427,20 @@ export default function ServiceProviderDashboard() {
     }
   });
 
-  // Mock performance data - would come from API in real implementation
+  // Real performance data from API
   const performanceStats = {
-    completionRate: providerStats?.completionRate || '95.5',
-    averageRating: providerStats?.rating || '4.8',
-    totalEarnings: providerStats?.totalEarnings || '₹45,230',
-    monthlyEarnings: providerStats?.monthlyEarnings || '₹12,450',
-    totalJobs: providerStats?.totalJobs || '127',
-    responseTime: providerStats?.responseTime || '2.3',
-    onTimeRate: providerStats?.onTimeRate || '92.1',
-    activeStreak: providerStats?.activeStreak || '12'
+    completionRate: providerStats?.completionRate?.toString() || '0',
+    averageRating: providerStats?.averageRating?.toString() || '0',
+    totalEarnings: providerStats?.totalEarnings ? `₹${providerStats.totalEarnings}` : '₹0',
+    monthlyEarnings: providerStats?.monthlyEarnings ? `₹${providerStats.monthlyEarnings}` : '₹0',
+    totalJobs: providerStats?.totalJobs?.toString() || '0',
+    responseTime: providerStats?.averageResponseTime?.toString() || '0',
+    onTimeRate: providerStats?.onTimePercentage?.toString() || '0',
+    activeStreak: providerStats?.activeStreak?.toString() || '0'
   };
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6 bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 min-h-screen">
-      {/* Enhanced Header with Service Provider Branding */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center space-x-3 mb-2">
-            <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
-              <Wrench className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-blue-900 dark:text-white">
-                Service Provider Hub
-              </h1>
-              <div className="flex items-center space-x-2">
-                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                  <Shield className="h-3 w-3 mr-1" />
-                  Verified Provider
-                </Badge>
-                {isConnected ? (
-                  <Badge variant="default" className="bg-green-100 text-green-800">
-                    🟢 Live Connected
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="bg-orange-100 text-orange-800">
-                    🔄 Reconnecting...
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </div>
-          <p className="text-muted-foreground ml-15">
-            Welcome back, {user.firstName}! Ready to serve customers today.
-          </p>
-        </div>
-        
-        <div className="flex items-center space-x-4">
-          {/* PWA Notification Status Indicator */}
-          <div className="flex items-center space-x-2">
-            {!pwaEnabled && permissionState === 'denied' && (
-              <Badge variant="destructive" className="text-xs">
-                🔕 Notifications Blocked
-              </Badge>
-            )}
-            {shouldUseFallback && (
-              <Badge variant="secondary" className="text-xs">
-                📡 Backup Mode
-              </Badge>
-            )}
-            {hasEmergencyNotifications && (
-              <Badge variant="destructive" className="text-xs animate-pulse">
-                🚨 Emergency Alert
-              </Badge>
-            )}
-          </div>
-
-          {/* Enhanced Notification Center */}
-          <div className="relative">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setShowNotifications(!showNotifications);
-                // Mark all notifications as read when opening
-                if (!showNotifications) {
-                  setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-                }
-              }}
-              data-testid="button-notifications"
-              className={`${hasEmergencyNotifications ? 'border-red-500 bg-red-50' : ''}`}
-            >
-              {notifications.filter(n => !n.read).length > 0 || fallbackUnreadCount > 0 ? (
-                <BellRing className={`h-4 w-4 ${hasEmergencyNotifications ? 'text-red-500 animate-pulse' : 'text-blue-500'}`} />
-              ) : (
-                <Bell className="h-4 w-4" />
-              )}
-              {(notifications.filter(n => !n.read).length + fallbackUnreadCount) > 0 && (
-                <Badge className={`absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 text-xs ${hasEmergencyNotifications ? 'bg-red-500 animate-pulse' : 'bg-red-500'}`}>
-                  {notifications.filter(n => !n.read).length + fallbackUnreadCount}
-                </Badge>
-              )}
-            </Button>
-            
-            {showNotifications && (
-              <Card className="absolute right-0 top-12 w-80 max-h-96 overflow-y-auto z-50 shadow-lg">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Notifications</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {notifications.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">No notifications yet</p>
-                  ) : (
-                    notifications.map((notification) => (
-                      <div 
-                        key={notification.id}
-                        className={`p-2 rounded-md border ${notification.read ? 'bg-muted/20' : 'bg-blue-50 dark:bg-blue-950/30'}`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{notification.title}</p>
-                            <p className="text-xs text-muted-foreground">{notification.message}</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {notification.timestamp.toLocaleTimeString()}
-                            </p>
-                          </div>
-                          {!notification.read && (
-                            <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
-            )}
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium">Available</span>
-            <Switch 
-              checked={isOnline}
-              onCheckedChange={handleOnlineToggle}
-              data-testid="toggle-online-status"
-            />
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/v1/providers/me/job-requests'] })}
-            data-testid="button-refresh-jobs"
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-        </div>
-      </div>
 
       {/* Enhanced Performance Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
