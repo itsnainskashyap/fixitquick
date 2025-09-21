@@ -303,7 +303,7 @@ export class BackgroundMatcher {
       console.log(`📞 BackgroundMatcher: Sending phone notification to provider ${provider.userId} for booking ${booking.id}`);
 
       // Get provider's phone number from their profile
-      const providerProfile = await storage.getServiceProvider(provider.userId);
+      const providerProfile = await storage.getServiceProviderProfile(provider.userId);
       if (!providerProfile || !providerProfile.phoneNumber) {
         console.log(`📞 BackgroundMatcher: No phone number found for provider ${provider.userId}, skipping phone notification`);
         return;
