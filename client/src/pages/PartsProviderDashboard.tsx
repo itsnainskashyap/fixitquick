@@ -367,15 +367,6 @@ export default function PartsProviderDashboard() {
         </div>
       </div>
 
-      {/* Status message */}
-      <div className="text-center py-8">
-        <p className="text-muted-foreground">
-          Dashboard loaded successfully. Header removed as requested.
-        </p>
-        <p className="text-sm text-muted-foreground mt-2">
-          Welcome, {user?.firstName}! You are now set as a service provider.
-        </p>
-      </div>
     </div>
   );
 }
