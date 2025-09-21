@@ -271,21 +271,21 @@ function Router() {
       {/* Service Provider Routes */}
       <Route 
         path="/provider" 
-        component={() => <Layout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></Layout>} 
+        component={() => <MinimalLayout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></MinimalLayout>} 
       />
       <Route 
         path="/service-provider-dashboard" 
-        component={() => <Layout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></Layout>} 
+        component={() => <MinimalLayout><ProtectedRoute component={ServiceProviderDashboard} allowedRoles={['service_provider']} /></MinimalLayout>} 
       />
       
       {/* Parts Provider Routes */}
       <Route 
         path="/parts-provider" 
-        component={() => <Layout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></Layout>} 
+        component={() => <MinimalLayout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></MinimalLayout>} 
       />
       <Route 
         path="/parts-provider-dashboard" 
-        component={() => <Layout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></Layout>} 
+        component={() => <MinimalLayout><ProtectedRoute component={PartsProviderDashboard} allowedRoles={['parts_provider']} /></MinimalLayout>} 
       />
       
       {/* Admin Routes */}
