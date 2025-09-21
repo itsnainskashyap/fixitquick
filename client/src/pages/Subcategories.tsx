@@ -40,7 +40,8 @@ export default function Subcategories() {
     queryKey: ['/api/v1/service-categories', categoryId],
     queryFn: async () => {
       if (!categoryId) return [];
-      return await apiRequest('GET', `/api/v1/service-categories?parentId=${categoryId}`);
+      const response = await apiRequest('GET', `/api/v1/service-categories?parentId=${categoryId}`);
+      return response.data || response; // Handle both API response formats
     },
     enabled: !!categoryId,
   });
@@ -49,7 +50,8 @@ export default function Subcategories() {
   const { data: mainCategories = [], isLoading: loadingMainCategory } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/service-categories', 'main'],
     queryFn: async () => {
-      return await apiRequest('GET', '/api/v1/service-categories?level=0');
+      const response = await apiRequest('GET', '/api/v1/service-categories?level=0');
+      return response.data || response; // Handle both API response formats
     },
     enabled: !!categoryId,
   });

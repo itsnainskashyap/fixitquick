@@ -102,8 +102,9 @@ export default function Services() {
   // Load category breadcrumb path
   const loadCategoryPath = async (categoryId: string) => {
     try {
-      const path = await apiRequest('GET', `/api/v1/categories/${categoryId}/path`);
-      // Ensure path is always an array to prevent .map errors
+      const response = await apiRequest('GET', `/api/v1/categories/${categoryId}/path`);
+      // Handle API response format and ensure path is always an array
+      const path = response.data || response;
       setSelectedCategoryPath(Array.isArray(path) ? path : []);
     } catch (error) {
       console.error('Error loading category path:', error);
@@ -114,7 +115,10 @@ export default function Services() {
   // Fetch hierarchical category tree with error handling
   const { data: categoryTree, isLoading: loadingCategories, error: categoryTreeError } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/categories/tree'],
-    queryFn: async () => await apiRequest('GET', '/api/v1/categories/tree'),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/categories/tree');
+      return response.data || response; // Handle both API response formats
+    },
     staleTime: 5 * 60 * 1000, // 5 minutes cache
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
@@ -123,7 +127,10 @@ export default function Services() {
   // Fetch main categories (root level) with error handling
   const { data: mainCategories, isLoading: loadingMainCategories, error: mainCategoriesError } = useQuery<ServiceCategory[]>({
     queryKey: ['/api/v1/service-categories', { level: 0, activeOnly: true }],
-    queryFn: async () => await apiRequest('GET', '/api/v1/service-categories?level=0&activeOnly=true'),
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/v1/service-categories?level=0&activeOnly=true');
+      return response.data || response; // Handle both API response formats
+    },
     staleTime: 5 * 60 * 1000,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
