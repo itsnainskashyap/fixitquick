@@ -993,21 +993,108 @@ export class PostgresStorage implements IStorage {
   // SERVICE CATEGORY METHODS - CRITICAL FOR CATEGORIES API
   // ========================================
 
-  async getServiceCategoriesByLevel(level: number, activeOnly = true): Promise<ServiceCategory[]> {
+  async getServiceCategoriesByLevel(level: number, activeOnly = true, includeCounts = false): Promise<ServiceCategory[]> {
     const conditions: Array<SQL<boolean> | SQL<unknown> | undefined> = [eq(serviceCategories.level, level)];
     if (activeOnly) {
       conditions.push(eq(serviceCategories.isActive, true));
     }
     
     const whereClause = whereAll(...conditions);
-    return await db.select().from(serviceCategories)
-      .where(whereClause!)
-      .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    
+    if (!includeCounts) {
+      // Simple query without counts for backward compatibility
+      return await db.select().from(serviceCategories)
+        .where(whereClause!)
+        .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+    }
+    
+    // Enhanced query with count calculations
+    if (level === 0) {
+      // For main categories, get all categories first then calculate counts separately
+      const mainCategories = await db.select().from(serviceCategories)
+        .where(whereClause!)
+        .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+      
+      // Calculate counts for each main category
+      const result = [];
+      for (const category of mainCategories) {
+        // Count subcategories (level 1 with this category as parent)
+        const subcategoryCountResult = await db
+          .select({ count: count() })
+          .from(serviceCategories)
+          .where(and(
+            eq(serviceCategories.parentId, category.id),
+            eq(serviceCategories.level, 1),
+            eq(serviceCategories.isActive, true)
+          ));
+        
+        // Count total services under all subcategories of this main category
+        const serviceCountResult = await db
+          .select({ count: count(services.id) })
+          .from(serviceCategories)
+          .innerJoin(services, eq(serviceCategories.id, services.categoryId))
+          .where(and(
+            eq(serviceCategories.parentId, category.id),
+            eq(serviceCategories.level, 1),
+            eq(serviceCategories.isActive, true),
+            eq(services.isActive, true)
+          ));
+        
+        result.push({
+          ...category,
+          subcategoryCount: subcategoryCountResult[0]?.count || 0,
+          serviceCount: serviceCountResult[0]?.count || 0
+        });
+      }
+      
+      return result;
+    } else {
+      // For subcategories, calculate service count using the existing working query
+      const query = db
+        .select({
+          id: serviceCategories.id,
+          parentId: serviceCategories.parentId,
+          name: serviceCategories.name,
+          slug: serviceCategories.slug,
+          icon: serviceCategories.icon,
+          imageUrl: serviceCategories.imageUrl,
+          description: serviceCategories.description,
+          level: serviceCategories.level,
+          sortOrder: serviceCategories.sortOrder,
+          isActive: serviceCategories.isActive,
+          // No subcategory count for level 1+ categories
+          subcategoryCount: sql<number>`0`.as('subcategoryCount'),
+          // Count services directly under this category
+          serviceCount: sql<number>`CAST(COUNT(CASE WHEN ${services.isActive} = true THEN ${services.id} END) AS INTEGER)`.as('serviceCount'),
+          createdAt: serviceCategories.createdAt,
+          updatedAt: serviceCategories.updatedAt,
+        })
+        .from(serviceCategories)
+        .leftJoin(services, eq(serviceCategories.id, services.categoryId))
+        .where(whereClause!)
+        .groupBy(
+          serviceCategories.id,
+          serviceCategories.parentId,
+          serviceCategories.name,
+          serviceCategories.slug,
+          serviceCategories.icon,
+          serviceCategories.imageUrl,
+          serviceCategories.description,
+          serviceCategories.level,
+          serviceCategories.sortOrder,
+          serviceCategories.isActive,
+          serviceCategories.createdAt,
+          serviceCategories.updatedAt
+        )
+        .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+      
+      return await query;
+    }
   }
 
   async getMainCategories(activeOnly = true): Promise<ServiceCategory[]> {
-    // Main categories are level 0 (top-level categories)
-    return await this.getServiceCategoriesByLevel(0, activeOnly);
+    // Main categories are level 0 (top-level categories) WITH counts
+    return await this.getServiceCategoriesByLevel(0, activeOnly, true);
   }
 
   async getSubCategories(parentId: string, activeOnly = true): Promise<ServiceCategory[]> {
