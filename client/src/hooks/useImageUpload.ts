@@ -177,6 +177,9 @@ export const useImageUpload = (options: ImageUploadOptions = {}) => {
           fieldName = 'avatar';
         } else if (files.length > 1) {
           fieldName = 'images';
+        } else if (endpoint.includes('/documents/upload')) {
+          // Document upload endpoints expect 'file' field name
+          fieldName = 'file';
         } else {
           fieldName = 'image';
         }
