@@ -462,7 +462,7 @@ export const handleProviderDocumentUpload = async (
 
       // Update provider documents in the database
       try {
-        const provider = await storage.getServiceProvider(userId);
+        const provider = await storage.getServiceProviderApplication(userId);
         if (provider) {
           const currentDocs = provider.documents || {};
           const updatedDocs = {
@@ -474,9 +474,7 @@ export const handleProviderDocumentUpload = async (
             }
           };
 
-          await storage.updateServiceProvider(provider.id, {
-            documents: updatedDocs
-          });
+          await storage.updateServiceProviderDocuments(provider.id, updatedDocs);
 
           // Check if all required documents are uploaded
           const requiredDocs = ['aadhar_front', 'aadhar_back', 'photo'];
@@ -485,9 +483,7 @@ export const handleProviderDocumentUpload = async (
           );
 
           if (allRequiredUploaded && provider.verificationStatus === 'pending') {
-            await storage.updateServiceProvider(provider.id, {
-              verificationStatus: 'under_review'
-            });
+            await storage.updateServiceProviderVerificationStatus(provider.id, 'under_review');
           }
         }
       } catch (dbError) {
