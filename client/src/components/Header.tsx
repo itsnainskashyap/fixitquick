@@ -308,8 +308,8 @@ export function Header({
             </div>
           </div>
 
-          {/* User Greeting and Promotional Media Section */}
-          {isAuthenticated && user && (
+          {/* User Greeting and Promotional Media Section - Hidden for provider dashboards */}
+          {isAuthenticated && user && user.role !== 'service_provider' && user.role !== 'parts_provider' && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}

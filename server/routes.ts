@@ -2072,7 +2072,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   // GET /api/v1/parts-provider/inventory - Parts provider inventory
   app.get('/api/v1/parts-provider/inventory', authMiddleware, requireRole(['parts_provider']), async (req, res) => {
     try {
-      const user = (req as AuthenticatedRequest).user;
+      const user = (req as AuthenticatedRequest).user!;
       const inventory = await storage.getPartsProviderInventory(user.id);
       
       res.json({
@@ -2131,7 +2131,7 @@ export async function registerRoutes(app: Express): Promise<void> {
           type: 'order_status_update',
           orderId: orderId,
           status: 'confirmed',
-          message: 'Your parts order has been confirmed and is being processed'
+          data: { message: 'Your parts order has been confirmed and is being processed' }
         });
       }
 
@@ -2447,7 +2447,7 @@ export async function registerRoutes(app: Express): Promise<void> {
           type: 'order_status_update',
           orderId: orderId,
           status: 'cancelled',
-          message: 'Your parts order has been cancelled by the provider'
+          data: { message: 'Your parts order has been cancelled by the provider' }
         });
       }
 
@@ -2526,7 +2526,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         for (const item of order.meta.items) {
           if (item.providerId === user.id) {
             const part = await storage.getPartById(item.partId);
-            if (part) {
+            if (part && part.stock !== null && item.partId) {
               await storage.updatePartsInventory(item.partId, {
                 stock: part.stock,
                 reservedStock: Math.max(0, (part.reservedStock || 0) - item.quantity)
@@ -2534,14 +2534,16 @@ export async function registerRoutes(app: Express): Promise<void> {
               
               // Create inventory movement record
               await db.insert(partsInventoryMovements).values({
-                partId: item.partId,
+                id: crypto.randomUUID(),
                 providerId: user.id,
                 movementType: 'sold',
                 quantity: -item.quantity,
                 previousStock: part.stock + item.quantity,
                 newStock: part.stock,
                 orderId: orderId,
-                reason: 'Order delivered'
+                reason: 'Order delivered',
+                createdAt: new Date(),
+                createdBy: user.id
               });
             }
           }
@@ -2565,9 +2567,11 @@ export async function registerRoutes(app: Express): Promise<void> {
           type: 'order_status_update',
           orderId: orderId,
           status: status,
-          message: statusMessages[status as keyof typeof statusMessages],
-          trackingNumber,
-          estimatedDeliveryDate
+          data: { 
+            message: statusMessages[status as keyof typeof statusMessages],
+            trackingNumber,
+            estimatedDeliveryDate
+          }
         });
       }
 
