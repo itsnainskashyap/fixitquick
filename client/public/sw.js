@@ -25,7 +25,7 @@ const CACHE_RESOURCES = [
 
 // Safe API endpoints that can be cached (public, non-sensitive only)
 const SAFE_CACHE_API_PATTERNS = [
-  '/api/v1/services/categories', // Public service categories
+  '/api/v1/service-categories', // Public service categories
   '/api/v1/regions/public', // Public region data
   '/api/v1/app/version', // App version info
   // NO authenticated endpoints, NO user data, NO sensitive information

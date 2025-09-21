@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles, TrendingUp, Clock, Star, MapPin, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import PromotionalMediaCarousel from '@/components/PromotionalMediaCarousel';
+import { PWAInstallFloatingButton } from '@/components/FloatingPWAButton';
 
 interface ServiceCategory {
   id: string;
@@ -96,6 +97,7 @@ export default function Home() {
         price: suggestedService.price,
         type: 'service',
         category: suggestedService.category,
+        categoryId: suggestedService.category,
         icon: suggestedService.icon,
       });
     }
@@ -512,6 +514,9 @@ export default function Home() {
           )}
         </motion.div>
       </div>
+      
+      {/* Floating PWA Install Button */}
+      <PWAInstallFloatingButton />
     </Layout>
   );
 }

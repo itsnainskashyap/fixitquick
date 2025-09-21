@@ -36,36 +36,6 @@
     <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32">
     <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16">
     
-    <!-- Service Worker Registration Script - Production Only -->
-    <script type="module">
-      if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-              console.log('SW registered: ', registration);
-            })
-            .catch((registrationError) => {
-              console.log('SW registration failed: ', registrationError);
-            });
-        });
-      } else if (!import.meta.env.PROD && 'serviceWorker' in navigator) {
-        // Aggressively unregister and clear caches in development
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => {
-            registration.unregister();
-            console.log('SW unregistered for development:', registration);
-          });
-        });
-        if ('caches' in window) {
-          caches.keys().then(cacheNames => {
-            cacheNames.forEach(cacheName => {
-              caches.delete(cacheName);
-              console.log('Cache cleared:', cacheName);
-            });
-          });
-        }
-      }
-    </script>
   </head>
   <body>
     <div id="root"></div>

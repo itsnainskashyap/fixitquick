@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { X, Download, Sparkles } from 'lucide-react';
+import { X, Download, Share, Plus, Smartphone } from 'lucide-react';
 
 interface PWAInstallPromptProps {
   onInstall?: () => void;
@@ -12,16 +12,28 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPrompt, setShowPrompt] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
-    // Check if app is already installed
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-    const isFullscreen = window.matchMedia('(display-mode: fullscreen)').matches;
-    const isMinimalUI = window.matchMedia('(display-mode: minimal-ui)').matches;
+    // Detect iOS devices
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
+                               (window.navigator as any).standalone === true;
     
-    setIsInstalled(isStandalone || isFullscreen || isMinimalUI);
+    setIsIOS(isIOSDevice);
+    setIsStandalone(isInStandaloneMode);
+    setIsInstalled(isInStandaloneMode);
+    
+    // For non-iOS devices, check standard PWA installation states
+    if (!isIOSDevice) {
+      const isFullscreen = window.matchMedia('(display-mode: fullscreen)').matches;
+      const isMinimalUI = window.matchMedia('(display-mode: minimal-ui)').matches;
+      setIsInstalled(isInStandaloneMode || isFullscreen || isMinimalUI);
+    }
 
-    // Listen for the beforeinstallprompt event
+    // Listen for the beforeinstallprompt event (not available on iOS)
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -34,6 +46,16 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
         }, 3000);
       }
     };
+    
+    // For iOS devices, show manual install prompt after delay
+    if (isIOSDevice && !isInStandaloneMode) {
+      const isDismissed = localStorage.getItem('pwa-install-dismissed-ios');
+      if (!isDismissed) {
+        setTimeout(() => {
+          setShowPrompt(true);
+        }, 5000); // Longer delay for iOS manual instructions
+      }
+    }
 
     // Listen for successful installation
     const handleAppInstalled = () => {
@@ -43,16 +65,26 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
       onInstall?.();
     };
 
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+    // Only add beforeinstallprompt listener for non-iOS devices
+    if (!isIOSDevice) {
+      window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.addEventListener('appinstalled', handleAppInstalled);
+    }
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      if (!isIOSDevice) {
+        window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        window.removeEventListener('appinstalled', handleAppInstalled);
+      }
     };
   }, [isInstalled, onInstall]);
 
   const handleInstallClick = async () => {
+    if (isIOS) {
+      // For iOS, we can't trigger install programmatically, just show instructions
+      return;
+    }
+    
     if (!deferredPrompt) return;
 
     try {
@@ -74,7 +106,9 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
 
   const handleDismiss = () => {
     setShowPrompt(false);
-    localStorage.setItem('pwa-install-dismissed', 'true');
+    // Use different storage keys for iOS vs non-iOS
+    const storageKey = isIOS ? 'pwa-install-dismissed-ios' : 'pwa-install-dismissed';
+    localStorage.setItem(storageKey, 'true');
     onDismiss?.();
   };
 
@@ -95,7 +129,7 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
         >
           <div className="max-w-md mx-auto p-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 flex-1">
                 <motion.div
                   animate={{ 
                     scale: [1, 1.1, 1],
@@ -110,23 +144,44 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
                 >
                   <span className="text-primary font-bold text-lg">FQ</span>
                 </motion.div>
-                <div>
-                  <h3 className="font-semibold text-sm">Install FixitQuick</h3>
-                  <p className="text-xs opacity-90">For offline bookings & faster access</p>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-sm">
+                    {isIOS ? 'Add FixitQuick to Home Screen' : 'Install FixitQuick'}
+                  </h3>
+                  <p className="text-xs opacity-90">
+                    {isIOS 
+                      ? 'Get the full app experience on your device' 
+                      : 'For offline bookings & faster access'
+                    }
+                  </p>
                 </div>
               </div>
               
               <div className="flex items-center space-x-2">
-                <Button
-                  onClick={handleInstallClick}
-                  size="sm"
-                  variant="secondary"
-                  className="bg-primary-foreground text-primary hover:bg-primary-foreground/90 transition-colors"
-                  data-testid="install-button"
-                >
-                  <Download className="w-4 h-4 mr-1" />
-                  Install
-                </Button>
+                {isIOS ? (
+                  <div className="flex items-center space-x-2 text-xs">
+                    <div className="flex items-center space-x-1 bg-primary-foreground/20 px-2 py-1 rounded">
+                      <Share className="w-3 h-3" />
+                      <span>Share</span>
+                    </div>
+                    <span>→</span>
+                    <div className="flex items-center space-x-1 bg-primary-foreground/20 px-2 py-1 rounded">
+                      <Plus className="w-3 h-3" />
+                      <span>Add to Home Screen</span>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={handleInstallClick}
+                    size="sm"
+                    variant="secondary"
+                    className="bg-primary-foreground text-primary hover:bg-primary-foreground/90 transition-colors"
+                    data-testid="install-button"
+                  >
+                    <Download className="w-4 h-4 mr-1" />
+                    Install
+                  </Button>
+                )}
                 
                 <Button
                   onClick={handleDismiss}
@@ -139,6 +194,28 @@ export function PWAInstallPrompt({ onInstall, onDismiss }: PWAInstallPromptProps
                 </Button>
               </div>
             </div>
+
+            {/* Detailed iOS Instructions */}
+            {isIOS && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                transition={{ delay: 0.3, duration: 0.5 }}
+                className="mt-3 pt-3 border-t border-primary-foreground/20"
+              >
+                <div className="flex items-start space-x-2 text-xs">
+                  <Smartphone className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-medium">iOS Installation Steps:</p>
+                    <ol className="space-y-1 list-decimal list-inside opacity-90">
+                      <li>Tap the Share button <Share className="w-3 h-3 inline" /> in Safari</li>
+                      <li>Scroll down and tap "Add to Home Screen" <Plus className="w-3 h-3 inline" /></li>
+                      <li>Tap "Add" to confirm</li>
+                    </ol>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </div>
 
           {/* Confetti effect on successful installation */}
@@ -180,9 +257,16 @@ export function usePWAInstall() {
   const [canInstall, setCanInstall] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    // Detect iOS devices
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    setIsIOS(isIOSDevice);
+
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                         (window.navigator as any).standalone === true;
     setIsInstalled(isStandalone);
 
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -197,16 +281,29 @@ export function usePWAInstall() {
       setDeferredPrompt(null);
     };
 
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+    // Only add listeners for non-iOS devices
+    if (!isIOSDevice) {
+      window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.addEventListener('appinstalled', handleAppInstalled);
+    } else {
+      // For iOS, we can install but need manual process
+      setCanInstall(!isStandalone);
+    }
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      if (!isIOSDevice) {
+        window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        window.removeEventListener('appinstalled', handleAppInstalled);
+      }
     };
   }, []);
 
   const install = async () => {
+    if (isIOS) {
+      // For iOS, we can't programmatically install, return false to indicate manual process needed
+      return false;
+    }
+
     if (!deferredPrompt) return false;
 
     try {
@@ -226,6 +323,7 @@ export function usePWAInstall() {
   return {
     canInstall,
     isInstalled,
+    isIOS,
     install,
   };
 }

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { CartProvider } from "@/hooks/useCart";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
+import { PWASplashScreen } from "@/components/PWASplashScreen";
 import { useEffect, lazy, Suspense, useState } from "react";
 // Feature flag for i18n functionality
 const I18N_ENABLED = import.meta.env.VITE_I18N_ENABLED === 'true';
@@ -316,6 +317,40 @@ function Router() {
 }
 
 function App() {
+  const [showSplash, setShowSplash] = useState(true);
+  const [appLoaded, setAppLoaded] = useState(false);
+
+  // Accessibility: Check for reduced motion preference
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  useEffect(() => {
+    // Performance: Pause animations when document is hidden
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Document is hidden, pause heavy animations if needed
+        document.body.classList.add('app-hidden');
+      } else {
+        document.body.classList.remove('app-hidden');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    // Simulate app loading time or wait for critical resources
+    const timer = setTimeout(() => {
+      setAppLoaded(true);
+    }, 1000); // Minimum splash duration
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleSplashComplete = () => {
+    setShowSplash(false);
+  };
+
   const AppContent = (
     <CartProvider>
       <TooltipProvider>
@@ -328,6 +363,13 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        {/* PWA Splash Screen */}
+        <PWASplashScreen 
+          isVisible={showSplash && !prefersReducedMotion}
+          onComplete={handleSplashComplete}
+          duration={prefersReducedMotion ? 1000 : 2500} // Shorter duration for reduced motion
+        />
+        
         {I18N_ENABLED && LocalizationProvider ? (
           <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="loading-spinner" /></div>}>
             <LocalizationProvider>
