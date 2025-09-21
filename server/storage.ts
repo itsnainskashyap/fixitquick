@@ -735,7 +735,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async createService(service: InsertService): Promise<Service> {
-    const result = await db.insert(services).values([service]).returning();
+    const result = await db.insert(services).values(service as any).returning();
     return result[0];
   }
 
@@ -1010,44 +1010,33 @@ export class PostgresStorage implements IStorage {
     
     // Enhanced query with count calculations
     if (level === 0) {
-      // For main categories, get all categories first then calculate counts separately
-      const mainCategories = await db.select().from(serviceCategories)
-        .where(whereClause!)
-        .orderBy(asc(serviceCategories.sortOrder), asc(serviceCategories.name));
+      // For main categories, use raw SQL that matches the proven working pattern
+      const activeOnlyFilter = activeOnly ? ' AND c.is_active = true' : '';
+      const rawQuery = sql<ServiceCategory & { subcategoryCount: number; serviceCount: number }>`
+        SELECT 
+            c.id,
+            c.parent_id as "parentId",
+            c.name,
+            c.slug,
+            c.icon,
+            c.image_url as "imageUrl",
+            c.description,
+            c.level,
+            c.sort_order as "sortOrder",
+            c.is_active as "isActive",
+            c.created_at as "createdAt",
+            c.updated_at as "updatedAt",
+            CAST(COUNT(DISTINCT CASE WHEN sc.is_active = true THEN sc.id END) AS INTEGER) as "subcategoryCount",
+            CAST(COUNT(DISTINCT CASE WHEN s.is_active = true THEN s.id END) AS INTEGER) as "serviceCount"
+        FROM service_categories c
+        LEFT JOIN service_categories sc ON sc.parent_id = c.id AND sc.is_active = true
+        LEFT JOIN services s ON s.category_id = sc.id AND s.is_active = true
+        WHERE c.level = 0${sql.raw(activeOnlyFilter)}
+        GROUP BY c.id, c.parent_id, c.name, c.slug, c.icon, c.image_url, c.description, c.level, c.sort_order, c.is_active, c.created_at, c.updated_at
+        ORDER BY c.sort_order, c.name
+      `;
       
-      // Calculate counts for each main category
-      const result = [];
-      for (const category of mainCategories) {
-        // Count subcategories (level 1 with this category as parent)
-        const subcategoryCountResult = await db
-          .select({ count: count() })
-          .from(serviceCategories)
-          .where(and(
-            eq(serviceCategories.parentId, category.id),
-            eq(serviceCategories.level, 1),
-            eq(serviceCategories.isActive, true)
-          ));
-        
-        // Count total services under all subcategories of this main category
-        const serviceCountResult = await db
-          .select({ count: count(services.id) })
-          .from(serviceCategories)
-          .innerJoin(services, eq(serviceCategories.id, services.categoryId))
-          .where(and(
-            eq(serviceCategories.parentId, category.id),
-            eq(serviceCategories.level, 1),
-            eq(serviceCategories.isActive, true),
-            eq(services.isActive, true)
-          ));
-        
-        result.push({
-          ...category,
-          subcategoryCount: subcategoryCountResult[0]?.count || 0,
-          serviceCount: serviceCountResult[0]?.count || 0
-        });
-      }
-      
-      return result;
+      return await db.execute(rawQuery).then(result => result.rows as any[]);
     } else {
       // For subcategories, calculate service count using the existing working query
       const query = db
@@ -1179,7 +1168,7 @@ export class PostgresStorage implements IStorage {
       ...part,
       createdAt: new Date(),
       updatedAt: new Date()
-    }).returning();
+    } as any).returning();
     return result[0];
   }
 
@@ -1228,7 +1217,7 @@ export class PostgresStorage implements IStorage {
           ilike(parts.name, `%${search}%`),
           ilike(parts.description, `%${search}%`),
           ilike(parts.brand, `%${search}%`)
-        )
+        ) as any
       );
     }
     
@@ -1245,33 +1234,33 @@ export class PostgresStorage implements IStorage {
     const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
     
     if (whereClause) {
-      query = query.where(whereClause);
-      countQuery = countQuery.where(whereClause);
+      query = query.where(whereClause) as any;
+      countQuery = countQuery.where(whereClause) as any;
     }
 
     // Add sorting
     switch (sortBy) {
       case 'price_low':
-        query = query.orderBy(asc(parts.price));
+        query = query.orderBy(asc(parts.price)) as any;
         break;
       case 'price_high':
-        query = query.orderBy(desc(parts.price));
+        query = query.orderBy(desc(parts.price)) as any;
         break;
       case 'rating':
-        query = query.orderBy(desc(parts.rating));
+        query = query.orderBy(desc(parts.rating)) as any;
         break;
       case 'popular':
-        query = query.orderBy(desc(parts.totalSold));
+        query = query.orderBy(desc(parts.totalSold)) as any;
         break;
       case 'newest':
-        query = query.orderBy(desc(parts.createdAt));
+        query = query.orderBy(desc(parts.createdAt)) as any;
         break;
       default:
-        query = query.orderBy(asc(parts.name));
+        query = query.orderBy(asc(parts.name)) as any;
     }
 
     // Add pagination
-    query = query.limit(limit).offset(offset);
+    query = query.limit(limit).offset(offset) as any;
 
     const [partsResult, totalResult] = await Promise.all([
       query,
@@ -1294,7 +1283,7 @@ export class PostgresStorage implements IStorage {
 
   async updatePart(id: string, data: Partial<InsertPart>): Promise<Part | undefined> {
     const result = await db.update(parts)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as any)
       .where(eq(parts.id, id))
       .returning();
     return result[0];
@@ -1322,16 +1311,18 @@ export class PostgresStorage implements IStorage {
   }
 
   async getPartsSuppliers(providerId?: string): Promise<PartsSupplier[]> {
-    let query = db.select().from(partsSuppliers).where(eq(partsSuppliers.isActive, true));
-    
     if (providerId) {
-      query = query.where(and(
-        eq(partsSuppliers.isActive, true),
-        eq(partsSuppliers.providerId, providerId)
-      ));
+      return await db.select().from(partsSuppliers)
+        .where(and(
+          eq(partsSuppliers.isActive, true),
+          eq(partsSuppliers.providerId, providerId)
+        ))
+        .orderBy(asc(partsSuppliers.name));
     }
-
-    return await query.orderBy(asc(partsSuppliers.name));
+    
+    return await db.select().from(partsSuppliers)
+      .where(eq(partsSuppliers.isActive, true))
+      .orderBy(asc(partsSuppliers.name));
   }
 
   async getPartsSupplierById(id: string): Promise<PartsSupplier | undefined> {
@@ -1458,7 +1449,7 @@ export class PostgresStorage implements IStorage {
         return { success: false, message: 'Part not found' };
       }
 
-      const availableStock = part.stock - (part.reservedStock || 0);
+      const availableStock = (part.stock || 0) - (part.reservedStock || 0);
       
       if (availableStock < quantity) {
         return { 
@@ -1469,10 +1460,10 @@ export class PostgresStorage implements IStorage {
       }
 
       // Decrement stock and update reserved stock
-      const newStock = part.stock - quantity;
+      const newStock = (part.stock || 0) - quantity;
       await this.updatePartsInventory(partId, { 
         stock: newStock,
-        reservedStock: part.reservedStock
+        reservedStock: part.reservedStock || 0
       });
 
       return { success: true, message: 'Stock decremented successfully' };
@@ -1491,7 +1482,7 @@ export class PostgresStorage implements IStorage {
         return { success: false, message: 'Part not found' };
       }
 
-      const availableStock = part.stock - (part.reservedStock || 0);
+      const availableStock = (part.stock || 0) - (part.reservedStock || 0);
       
       if (availableStock < quantity) {
         return { 
@@ -1503,7 +1494,7 @@ export class PostgresStorage implements IStorage {
       // Increase reserved stock
       const newReservedStock = (part.reservedStock || 0) + quantity;
       await this.updatePartsInventory(partId, { 
-        stock: part.stock,
+        stock: part.stock || 0,
         reservedStock: newReservedStock
       });
 
@@ -1527,7 +1518,7 @@ export class PostgresStorage implements IStorage {
 
       // Parse order items to convert reservations
       let itemsProcessed = 0;
-      const orderItems = order.items || [];
+      const orderItems = (order.meta as any)?.items || [];
 
       for (const item of orderItems) {
         if (item.type === 'part' && item.partId && item.quantity) {
@@ -1566,7 +1557,7 @@ export class PostgresStorage implements IStorage {
 
       // Parse order items to release reservations
       let itemsReleased = 0;
-      const orderItems = order.items || [];
+      const orderItems = (order.meta as any)?.items || [];
 
       for (const item of orderItems) {
         if (item.type === 'part' && item.partId && item.quantity) {
@@ -1613,7 +1604,7 @@ export class PostgresStorage implements IStorage {
       // Decrease reserved stock (release back to available)
       const newReservedStock = Math.max(0, currentReservedStock - quantity);
       await this.updatePartsInventory(partId, { 
-        stock: part.stock,
+        stock: part.stock || 0,
         reservedStock: newReservedStock
       });
 
@@ -1643,7 +1634,7 @@ export class PostgresStorage implements IStorage {
       }
 
       // Decrease both total stock and reserved stock (actual sale)
-      const newStock = Math.max(0, part.stock - quantity);
+      const newStock = Math.max(0, (part.stock || 0) - quantity);
       const newReservedStock = Math.max(0, currentReservedStock - quantity);
       
       await this.updatePartsInventory(partId, { 
@@ -1667,7 +1658,7 @@ export class PostgresStorage implements IStorage {
       ...businessInfo,
       createdAt: new Date(),
       updatedAt: new Date()
-    }).returning();
+    } as any).returning();
     return result[0];
   }
 
@@ -1681,7 +1672,7 @@ export class PostgresStorage implements IStorage {
 
   async updatePartsProviderBusinessInfo(userId: string, data: Partial<InsertPartsProviderBusinessInfo>): Promise<PartsProviderBusinessInfo | undefined> {
     const result = await db.update(partsProviderBusinessInfo)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date() } as any)
       .where(eq(partsProviderBusinessInfo.userId, userId))
       .returning();
     return result[0];
@@ -2242,7 +2233,7 @@ export class PostgresStorage implements IStorage {
       };
       
       const result = await db.insert(orderLocationUpdates)
-        .values([processedData])
+        .values(processedData as any)
         .returning();
 
       return result[0];
@@ -2604,7 +2595,7 @@ export class PostgresStorage implements IStorage {
   ): Promise<PartsProviderBusinessInfo | undefined> {
     const result = await db.update(partsProviderBusinessInfo)
       .set({ 
-        verificationStatus: status,
+        verificationStatus: status as any,
         updatedAt: new Date()
       })
       .where(eq(partsProviderBusinessInfo.userId, userId))
